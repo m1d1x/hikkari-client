@@ -46,16 +46,18 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  /// Initial load + start the health poll. Call once after the FFI handle
-  /// is initialised.
+  /// Initial load + start the periodic poll. Call once after the FFI handle
+  /// is initialised. Health and uptime tick together at 1Hz so a single
+  /// notifyListeners() updates everything that depends on either.
   void start() {
     _safeReload(() {
       _profiles = _core.profiles();
       _whitelist = _core.whitelist();
       _health = _core.health();
+      _uptime = _core.uptimeHistory();
     });
     _healthTimer ??=
-        Timer.periodic(const Duration(seconds: 1), (_) => _tickHealth());
+        Timer.periodic(const Duration(seconds: 1), (_) => _tick());
   }
 
   @override
@@ -135,8 +137,11 @@ class AppState extends ChangeNotifier {
 
   // ----- internals -----
 
-  void _tickHealth() {
-    _safeReload(() => _health = _core.health());
+  void _tick() {
+    _safeReload(() {
+      _health = _core.health();
+      _uptime = _core.uptimeHistory();
+    });
   }
 
   Future<void> _withBusy(FutureOr<void> Function() body) async {
