@@ -27,6 +27,7 @@ class AppState extends ChangeNotifier {
       const Whitelist(domains: [], ips: [], processes: []);
   Map<String, List<PingSample>> _uptime = const {};
   bool _busy = false;
+  bool _whitelistDirty = false;
   String? _lastError;
 
   AppState(this._core);
@@ -37,6 +38,7 @@ class AppState extends ChangeNotifier {
   Whitelist get whitelist => _whitelist;
   Map<String, List<PingSample>> get uptime => _uptime;
   bool get busy => _busy;
+  bool get whitelistDirty => _whitelistDirty;
   String? get lastError => _lastError;
   bool get isRunning => _health?.running ?? false;
   String? get activeProfileName {
@@ -106,6 +108,7 @@ class AppState extends ChangeNotifier {
     await _withBusy(() {
       _core.addRule(category, value);
       _whitelist = _core.whitelist();
+      _whitelistDirty = true;
     });
   }
 
@@ -113,12 +116,18 @@ class AppState extends ChangeNotifier {
     await _withBusy(() {
       _core.removeRule(category, value);
       _whitelist = _core.whitelist();
+      _whitelistDirty = true;
     });
   }
 
+  /// Apply pending whitelist changes by restarting the core. The dirty flag
+  /// clears regardless of whether the core was running — if it wasn't, the
+  /// new rules take effect on the next StartVPN anyway.
   Future<void> applyRules() async {
-    if (!isRunning) return;
-    await _withBusy(() => _core.restartVpn());
+    await _withBusy(() async {
+      if (isRunning) _core.restartVpn();
+      _whitelistDirty = false;
+    });
   }
 
   /// Refreshes uptime history. Cheap-ish (one FFI call + dart-side copies);

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
+import '../widgets/apply_bar.dart';
 import '../widgets/brand_header.dart';
 import '../widgets/power_toggle.dart';
 import '../widgets/profiles_list.dart';
+import '../widgets/route_section.dart';
 
 /// The single-page home of the app. Stacks the same vertical sections the
 /// Svelte UI uses; each section is its own widget so refactors are cheap.
@@ -34,6 +36,8 @@ class _HomeScreenState extends State<HomeScreen> {
               if (_logOpen) _LogPlaceholder(onClose: _toggleLog),
               const ProfilesList(),
               const PowerToggle(),
+              const RouteSection(),
+              const ApplyBar(),
               // Profiles, route/whitelist, items, apply-bar all land here
               // in follow-up tasks. Layout is intentionally bare for now —
               // it has to look right with just header + power before we
