@@ -123,14 +123,29 @@ func TestCall_AddRule_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestInit_TwiceFails(t *testing.T) {
+func TestInit_TwiceWithDifferentBaseDirFails(t *testing.T) {
 	c := New()
 	if err := c.Init(t.TempDir()); err != nil {
 		t.Fatalf("first Init: %v", err)
 	}
 	defer c.Shutdown()
 	if err := c.Init(t.TempDir()); err == nil {
-		t.Fatal("expected error on double Init")
+		t.Fatal("expected error when re-initing with a different baseDir")
+	}
+}
+
+// Init must be idempotent for the same baseDir — Flutter hot restart reboots
+// the Dart isolate but the host DLL stays loaded, and the smoke-test app
+// calls Init in every initState().
+func TestInit_SameBaseDirIsNoop(t *testing.T) {
+	c := New()
+	dir := t.TempDir()
+	if err := c.Init(dir); err != nil {
+		t.Fatalf("first Init: %v", err)
+	}
+	defer c.Shutdown()
+	if err := c.Init(dir); err != nil {
+		t.Fatalf("re-Init with same dir should be no-op, got %v", err)
 	}
 }
 

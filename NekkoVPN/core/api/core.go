@@ -70,11 +70,18 @@ func (c *Core) Init(baseDir string) error {
 func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.ctx != nil {
-		return errors.New("api.Core: already initialised")
-	}
 	if baseDir == "" {
 		return errors.New("api.Core: baseDir is required")
+	}
+	if c.ctx != nil {
+		// Idempotent re-init: tolerated when the baseDir matches (this is
+		// the common case under Flutter hot restart, where the Dart isolate
+		// reboots but the host DLL is still loaded). A *different* baseDir
+		// is still a programming error — refuse it loudly.
+		if c.baseDir == baseDir {
+			return nil
+		}
+		return errors.New("api.Core: already initialised with a different baseDir")
 	}
 	if factory == nil {
 		factory = DefaultVPNFactory

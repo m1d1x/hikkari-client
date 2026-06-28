@@ -1,17 +1,18 @@
-// Minimal smoke-test UI for the FFI bridge. One button toggles the VPN
-// core; a status row polls Health() once a second so we can see end-to-end
-// behaviour without any state-management plumbing yet. This is throwaway —
-// gets replaced with the real UI once the bridge is proven solid.
+// App entry: loads the FFI bridge, boots AppState, applies the theme,
+// hands off to HomeScreen. Everything else is composed from screens/ and
+// widgets/.
 
-import 'dart:async';
 import 'dart:io' show File, Platform;
 
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as p;
+import 'package:provider/provider.dart';
 
-import 'core/models.dart';
 import 'core/nekkobox_core.dart';
 import 'core/nekkobox_ffi.dart';
+import 'screens/home_screen.dart';
+import 'state/app_state.dart';
+import 'theme/app_theme.dart';
+import 'theme/tokens.dart';
 
 void main() {
   runApp(const NekkoboxApp());
@@ -23,182 +24,123 @@ class NekkoboxApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Nekkobox',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6B7CFF),
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
-      home: const SmokeTestScreen(),
+      title: 'Nekko VPN',
+      debugShowCheckedModeBanner: false,
+      theme: buildAppTheme(),
+      home: const _BootGate(),
     );
   }
 }
 
-class SmokeTestScreen extends StatefulWidget {
-  const SmokeTestScreen({super.key});
+/// Loads the DLL, initialises the engine, then mounts the real UI under a
+/// Provider. If FFI init fails we render an error screen instead of the app
+/// — clearer than a black window plus stderr-only stack trace.
+class _BootGate extends StatefulWidget {
+  const _BootGate();
+
   @override
-  State<SmokeTestScreen> createState() => _SmokeTestScreenState();
+  State<_BootGate> createState() => _BootGateState();
 }
 
-class _SmokeTestScreenState extends State<SmokeTestScreen> {
+class _BootGateState extends State<_BootGate> {
   NekkoboxCore? _core;
-  Timer? _poll;
-  HealthInfo? _health;
-  String? _initError;
+  AppState? _state;
+  String? _bootError;
 
   @override
   void initState() {
     super.initState();
-    _bootstrap();
+    _boot();
   }
 
-  void _bootstrap() {
+  void _boot() {
     try {
       final core = NekkoboxCoreFfi.open();
       core.init(_baseDir());
-      _core = core;
-      _poll = Timer.periodic(const Duration(seconds: 1), (_) => _refresh());
-      _refresh();
+      final state = AppState(core)..start();
+      setState(() {
+        _core = core;
+        _state = state;
+      });
     } catch (e) {
-      setState(() => _initError = '$e');
+      setState(() => _bootError = '$e');
     }
   }
 
   /// Base directory for the engine — folder containing the running
   /// executable. sing-box.exe, wintun.dll, config.json, profiles.json,
-  /// nekkobox.dll are all expected to live here side-by-side.
+  /// nekkobox.dll all live here.
   String _baseDir() => File(Platform.resolvedExecutable).parent.path;
-
-  void _refresh() {
-    final core = _core;
-    if (core == null) return;
-    try {
-      final h = core.health();
-      if (mounted) setState(() => _health = h);
-    } catch (e) {
-      if (mounted) setState(() => _initError = '$e');
-    }
-  }
-
-  Future<void> _toggle() async {
-    final core = _core;
-    if (core == null) return;
-    try {
-      if (core.isRunning()) {
-        core.stopVpn();
-      } else {
-        core.startVpn();
-      }
-      _refresh();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('$e')));
-      }
-    }
-  }
 
   @override
   void dispose() {
-    _poll?.cancel();
+    // AppState's own dispose cancels the health timer.
+    _state?.dispose();
     _core?.shutdown();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_initError != null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Nekkobox — FFI error')),
-        body: Padding(
-          padding: const EdgeInsets.all(24),
-          child: SelectableText(
-            _initError!,
-            style: const TextStyle(fontFamily: 'monospace'),
-          ),
-        ),
-      );
-    }
-
-    final h = _health;
-    final running = h?.running ?? false;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Nekkobox — smoke test')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            _StatusBadge(status: h?.status ?? '...'),
-            const SizedBox(height: 16),
-            Text(
-              h == null ? 'connecting...' : (h.ip.isEmpty ? '—' : h.ip),
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            if (h != null && h.message.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: Text(
-                  h.message,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey[400]),
-                ),
-              ),
-            const SizedBox(height: 32),
-            FilledButton.icon(
-              onPressed: _core == null ? null : _toggle,
-              icon: Icon(running ? Icons.stop : Icons.play_arrow),
-              label: Text(running ? 'Stop VPN' : 'Start VPN'),
-              style: FilledButton.styleFrom(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                textStyle: const TextStyle(fontSize: 18),
-              ),
-            ),
-            const SizedBox(height: 32),
-            Text(
-              'base: ${p.basename(_baseDir())}',
-              style: TextStyle(color: Colors.grey[600], fontSize: 12),
-            ),
-          ],
-        ),
-      ),
+    if (_bootError != null) return _BootError(message: _bootError!);
+    final s = _state;
+    if (s == null) return const _BootSplash();
+    return ChangeNotifierProvider<AppState>.value(
+      value: s,
+      child: const HomeScreen(),
     );
   }
 }
 
-class _StatusBadge extends StatelessWidget {
-  final String status;
-  const _StatusBadge({required this.status});
-
-  Color get _color {
-    switch (status) {
-      case 'ok':
-        return Colors.green;
-      case 'connecting':
-        return Colors.amber;
-      case 'broken':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
+class _BootSplash extends StatelessWidget {
+  const _BootSplash();
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: context.tokens.bg,
+      body: const Center(child: CircularProgressIndicator()),
+    );
   }
+}
+
+class _BootError extends StatelessWidget {
+  final String message;
+  const _BootError({required this.message});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-      decoration: BoxDecoration(
-        color: _color.withValues(alpha: 0.18),
-        border: Border.all(color: _color, width: 1.5),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        status.toUpperCase(),
-        style: TextStyle(color: _color, fontWeight: FontWeight.bold),
+    final t = context.tokens;
+    return Scaffold(
+      backgroundColor: t.bg,
+      body: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, color: t.bad, size: 48),
+            const SizedBox(height: 12),
+            Text('FFI init failed',
+                style: TextStyle(
+                    color: t.text, fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: t.surface,
+                border: Border.all(color: t.border),
+                borderRadius: BorderRadius.circular(t.radius),
+              ),
+              child: SelectableText(
+                message,
+                style: TextStyle(
+                  fontFamily: t.monoFamily,
+                  color: t.textMuted,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
