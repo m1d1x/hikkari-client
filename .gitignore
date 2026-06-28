@@ -1,0 +1,87 @@
+# === Archive (локальный мусор, не в git) ===
+archive/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# === Editors / IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# === Logs ===
+*.log
+*.log.old
+logs/
+
+# === Go ===
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+go.work
+go.work.sum
+
+# === Node / Frontend ===
+node_modules/
+dist/
+.svelte-kit/
+.vite/
+.cache/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# === Wails ===
+build/bin/
+build/windows/installer/
+build/darwin/
+frontend/wailsjs/
+frontend/package.json.md5
+
+# === Env / Secrets ===
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# === Runtime / Generated ===
+config.json
+profiles.json
+uptime-history.json
+direct-ip.txt
+*.conf
+!example.conf
+
+# === Native deps (распространяются отдельно) ===
+sing-box.exe
+wintun.dll
+
+# === Backups / Temp ===
+*.bak
+*.backup
+*.tmp
+*.old
+*.orig
+*.rej
+
+# === Claude / OMC локальное ===
+.claude/settings.local.json
+.omc/state/
+.omc/logs/
