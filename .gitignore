@@ -73,6 +73,12 @@ direct-ip.txt
 sing-box.exe
 wintun.dll
 
+# === cgo build artifacts ===
+NekkoVPN/nekkobox.dll
+NekkoVPN/nekkobox.h
+NekkoVPN/libnekkobox.so
+NekkoVPN/libnekkobox.dylib
+
 # === Backups / Temp ===
 *.bak
 *.backup
