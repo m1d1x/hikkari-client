@@ -38,6 +38,9 @@ class PowerToggle extends StatelessWidget {
               clipBehavior: Clip.antiAlias,
               child: InkWell(
                 onTap: busy ? null : () => s.toggleVpn(),
+                mouseCursor: busy
+                    ? SystemMouseCursors.basic
+                    : SystemMouseCursors.click,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
                   curve: Curves.easeOut,

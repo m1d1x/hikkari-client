@@ -3,17 +3,21 @@
 package uptime
 
 import (
+	"context"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 var rttRe = regexp.MustCompile(`(?i)time[=<]\s*(\d+)\s*ms`)
 
 func pingHost(host string) (bool, int) {
-	cmd := exec.Command("ping", "-n", "1", "-w", strconv.Itoa(PingTimeoutMs), host)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(PingTimeoutMs+300)*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ping", "-n", "1", "-w", strconv.Itoa(PingTimeoutMs), host)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	out, err := cmd.CombinedOutput()
 	s := string(out)

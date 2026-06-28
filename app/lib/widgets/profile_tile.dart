@@ -30,6 +30,7 @@ class ProfileTile extends StatefulWidget {
 
 class _ProfileTileState extends State<ProfileTile> {
   bool _editing = false;
+  bool _expandHover = false;
   late final TextEditingController _editCtrl;
 
   @override
@@ -57,6 +58,12 @@ class _ProfileTileState extends State<ProfileTile> {
     if (s.busy) return;
     if (widget.profile.active) return;
     await s.switchProfile(widget.profile.name);
+    if (!mounted) return;
+    final error = context.read<AppState>().lastError;
+    if (error == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error)),
+    );
   }
 
   Future<void> _saveLabel() async {
@@ -81,7 +88,10 @@ class _ProfileTileState extends State<ProfileTile> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: t.bad),
+            style: TextButton.styleFrom(
+              foregroundColor: t.bad,
+              overlayColor: Colors.transparent,
+            ),
             child: const Text('Удалить'),
           ),
         ],
@@ -130,9 +140,30 @@ class _ProfileTileState extends State<ProfileTile> {
     final rtt = UptimeStats.avgRtt(hist);
     final active = widget.profile.active;
     final lineColor = active ? t.ok : t.textMuted;
+    final expandButtonChild = _expandHover
+        ? Icon(
+            widget.expanded
+                ? Icons.keyboard_arrow_up
+                : Icons.keyboard_arrow_down,
+            key: ValueKey(widget.expanded),
+            color: t.text,
+            size: 18,
+          )
+        : Text(
+            '${widget.index + 1}',
+            key: ValueKey(widget.index),
+            style: TextStyle(
+              color: t.textMuted,
+              fontFamily: t.monoFamily,
+              fontWeight: FontWeight.w500,
+            ),
+          );
 
     return InkWell(
       onTap: s.busy ? null : _switchProfile,
+      mouseCursor: s.busy
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
         child: Row(
@@ -148,15 +179,16 @@ class _ProfileTileState extends State<ProfileTile> {
                 ),
                 child: InkWell(
                   onTap: widget.onToggleExpand,
+                  onHover: (hovering) {
+                    if (_expandHover == hovering) return;
+                    setState(() => _expandHover = hovering);
+                  },
+                  mouseCursor: SystemMouseCursors.click,
                   borderRadius: BorderRadius.circular(8),
                   child: Center(
-                    child: Text(
-                      '${widget.index + 1}',
-                      style: TextStyle(
-                        color: t.textMuted,
-                        fontFamily: t.monoFamily,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 120),
+                      child: expandButtonChild,
                     ),
                   ),
                 ),
@@ -173,13 +205,27 @@ class _ProfileTileState extends State<ProfileTile> {
             // RTT (avg).
             SizedBox(
               width: 56,
-              child: Text(
-                rtt < 0 ? '—' : '$rtt ms',
+              child: Text.rich(
+                TextSpan(
+                  text: rtt < 0 ? '—' : '$rtt',
+                  children: rtt < 0
+                      ? null
+                      : [
+                          TextSpan(
+                            text: ' ms',
+                            style: TextStyle(
+                              color: t.textMuted.withValues(alpha: 0.55),
+                            ),
+                          ),
+                        ],
+                ),
                 textAlign: TextAlign.right,
                 style: TextStyle(
-                  color: t.text,
+                  color: t.textMuted,
                   fontFamily: t.monoFamily,
-                  fontSize: 12,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  height: 1,
                 ),
               ),
             ),
@@ -239,6 +285,7 @@ class _ProfileTileState extends State<ProfileTile> {
                   label: const Text('удалить профиль'),
                   style: TextButton.styleFrom(
                     foregroundColor: t.bad,
+                    overlayColor: Colors.transparent,
                     padding:
                         const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     minimumSize: Size.zero,
@@ -308,11 +355,14 @@ class _ProfileTileState extends State<ProfileTile> {
                   )
                 : GestureDetector(
                     onDoubleTap: () => setState(() => _editing = true),
-                    child: Tooltip(
-                      message: 'двойной клик — переименовать',
-                      child: Text(
-                        widget.profile.label,
-                        style: TextStyle(color: t.text, fontSize: 12),
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: Tooltip(
+                        message: 'двойной клик — переименовать',
+                        child: Text(
+                          widget.profile.label,
+                          style: TextStyle(color: t.text, fontSize: 12),
+                        ),
                       ),
                     ),
                   ),

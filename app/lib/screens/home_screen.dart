@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import '../theme/tokens.dart';
 import '../widgets/apply_bar.dart';
 import '../widgets/brand_header.dart';
+import '../widgets/current_profile_card.dart';
 import '../widgets/power_toggle.dart';
-import '../widgets/profiles_list.dart';
 import '../widgets/route_section.dart';
 
 /// The single-page home of the app. Stacks the same vertical sections the
@@ -34,8 +34,8 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               BrandHeader(onTapIp: _toggleLog),
               if (_logOpen) _LogPlaceholder(onClose: _toggleLog),
-              const ProfilesList(),
               const PowerToggle(),
+              const CurrentProfileCard(),
               const RouteSection(),
               const ApplyBar(),
               // Profiles, route/whitelist, items, apply-bar all land here

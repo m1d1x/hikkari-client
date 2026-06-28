@@ -157,10 +157,10 @@ func (s *Store) Delete(name string) error {
 }
 
 // PrepareSwitch returns the endpoints array to write into config.json for
-// the named profile, marks the profile active in profiles.json, and reports
-// success. The caller is responsible for writing the endpoints and restarting
-// the core. Returns the endpoint map (with the shared tag set) so callers can
-// pass it straight into Store.SetEndpoints.
+// the named profile. The caller is responsible for writing the endpoints,
+// marking the profile active, and restarting the core. Returns the endpoint
+// map (with the shared tag set) so callers can pass it straight into
+// Store.SetEndpoints.
 func (s *Store) PrepareSwitch(name string) ([]interface{}, error) {
 	pf, err := s.Read()
 	if err != nil {
@@ -181,12 +181,22 @@ func (s *Store) PrepareSwitch(name string) ([]interface{}, error) {
 	}
 	ep := target.Endpoint
 	ep["tag"] = SharedEndpointTag
-
-	pf.Active = name
-	if err := s.Write(pf); err != nil {
-		return nil, err
-	}
 	return []interface{}{ep}, nil
+}
+
+// SetActive marks the named profile active after config.json was updated.
+func (s *Store) SetActive(name string) error {
+	pf, err := s.Read()
+	if err != nil {
+		return err
+	}
+	for _, p := range pf.Profiles {
+		if p.Name == name {
+			pf.Active = name
+			return s.Write(pf)
+		}
+	}
+	return fmt.Errorf("профиль не найден: %s", name)
 }
 
 // PeerHost extracts peer[0].address (the server IP/host) from an endpoint map.

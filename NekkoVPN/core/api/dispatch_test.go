@@ -123,6 +123,50 @@ func TestCall_AddRule_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestCall_SwitchProfile_UpdatesConfigAndActive(t *testing.T) {
+	c := initCore(t)
+	base := c.BaseDir()
+	seedConfig := []byte(`{"endpoints":[{"tag":"awg-ep","type":"wireguard","peers":[{"address":"old.example","port":1111}]}],"route":{"rules":[]}}`)
+	seedProfiles := []byte(`{"active":"main","profiles":[{"name":"main","label":"Main","endpoint":{"tag":"awg-ep","type":"wireguard","peers":[{"address":"old.example","port":1111}]}},{"name":"next","label":"Next","endpoint":{"tag":"custom-tag","type":"awg","peers":[{"address":"new.example","port":2222}]}}]}`)
+	if err := writeFile(filepath.Join(base, "config.json"), seedConfig); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	if err := writeFile(filepath.Join(base, "profiles.json"), seedProfiles); err != nil {
+		t.Fatalf("seed profiles: %v", err)
+	}
+
+	e := decode(t, c.Call("SwitchProfile", `{"name":"next"}`))
+	if !e.Ok {
+		t.Fatalf("SwitchProfile: %s", e.Error)
+	}
+
+	profiles, err := c.profiles.Read()
+	if err != nil {
+		t.Fatalf("read profiles: %v", err)
+	}
+	if profiles.Active != "next" {
+		t.Fatalf("expected active next, got %q", profiles.Active)
+	}
+
+	cfg, err := c.configs.Read()
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	endpoints, _ := cfg["endpoints"].([]interface{})
+	if len(endpoints) != 1 {
+		t.Fatalf("expected one endpoint, got %+v", cfg["endpoints"])
+	}
+	ep, _ := endpoints[0].(map[string]interface{})
+	if ep["tag"] != "awg-ep" {
+		t.Fatalf("expected shared tag awg-ep, got %+v", ep["tag"])
+	}
+	peers, _ := ep["peers"].([]interface{})
+	peer, _ := peers[0].(map[string]interface{})
+	if peer["address"] != "new.example" {
+		t.Fatalf("expected new endpoint, got %+v", peer["address"])
+	}
+}
+
 func TestInit_TwiceWithDifferentBaseDirFails(t *testing.T) {
 	c := New()
 	if err := c.Init(t.TempDir()); err != nil {

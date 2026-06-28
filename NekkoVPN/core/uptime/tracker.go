@@ -115,18 +115,37 @@ func (t *Tracker) Run(ctx context.Context, hosts HostProvider) {
 
 func (t *Tracker) tick(hosts HostProvider) {
 	now := time.Now().Unix()
-	for _, h := range hosts() {
+	entries := hosts()
+	type result struct {
+		profile string
+		ok      bool
+		rtt     int
+	}
+	results := make(chan result, len(entries))
+	var wg sync.WaitGroup
+	for _, h := range entries {
 		if h.Host == "" {
 			continue
 		}
-		ok, rtt := pingHost(h.Host)
+		h := h
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok, rtt := pingHost(h.Host)
+			results <- result{profile: h.Profile, ok: ok, rtt: rtt}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	for r := range results {
 		t.mu.Lock()
-		hist := t.history[h.Profile]
-		hist = append(hist, Sample{Ts: now, OK: ok, RttMs: rtt})
+		hist := t.history[r.profile]
+		hist = append(hist, Sample{Ts: now, OK: r.ok, RttMs: r.rtt})
 		if len(hist) > HistoryMax {
 			hist = hist[len(hist)-HistoryMax:]
 		}
-		t.history[h.Profile] = hist
+		t.history[r.profile] = hist
 		t.mu.Unlock()
 	}
 	t.Save()

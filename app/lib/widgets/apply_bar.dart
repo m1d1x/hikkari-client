@@ -38,6 +38,7 @@ class ApplyBar extends StatelessWidget {
             style: FilledButton.styleFrom(
               backgroundColor: t.warn,
               foregroundColor: Colors.black,
+              overlayColor: Colors.transparent,
               padding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               shape: RoundedRectangleBorder(

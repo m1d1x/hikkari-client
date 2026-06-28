@@ -105,6 +105,10 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	c.ensureProfiles()
 	c.uptime.Load()
 	go c.uptime.Run(c.ctx, c.uptimeHosts)
+	// Health probing is the slow path (HTTPS to api.ipify.org). Running it
+	// in the background keeps FFI calls instant — UI threads on the other
+	// side of the FFI boundary must never wait on network.
+	go c.health.Run(c.ctx)
 
 	c.logger.Logf("=== api.Core init, baseDir=%s ===", baseDir)
 	return nil

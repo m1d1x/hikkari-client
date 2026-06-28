@@ -3,13 +3,11 @@ import 'package:flutter/material.dart';
 import '../core/models.dart';
 
 /// Apple-Health-style smooth area chart. Ported from the SVG path generator
-/// in `App.svelte#sparkPath`. We draw at most the last [windowSize] samples;
-/// a missing sample (`!ok`) shows as a red dot pinned to the baseline so
-/// outages stay legible even on a thin row.
+/// in `App.svelte#sparkPath`. Failed probes keep the last successful RTT on
+/// the time axis, so the sparkline keeps moving without noisy outage markers.
 class Sparkline extends StatelessWidget {
   final List<PingSample> samples;
   final Color color;
-  final Color outageColor;
   final int windowSize;
   final double padding;
 
@@ -17,7 +15,6 @@ class Sparkline extends StatelessWidget {
     super.key,
     required this.samples,
     required this.color,
-    this.outageColor = const Color(0xFFFF453A),
     this.windowSize = 60,
     this.padding = 3,
   });
@@ -28,7 +25,6 @@ class Sparkline extends StatelessWidget {
       painter: _SparklinePainter(
         samples: samples,
         color: color,
-        outageColor: outageColor,
         windowSize: windowSize,
         padding: padding,
       ),
@@ -40,14 +36,12 @@ class Sparkline extends StatelessWidget {
 class _SparklinePainter extends CustomPainter {
   final List<PingSample> samples;
   final Color color;
-  final Color outageColor;
   final int windowSize;
   final double padding;
 
   _SparklinePainter({
     required this.samples,
     required this.color,
-    required this.outageColor,
     required this.windowSize,
     required this.padding,
   });
@@ -59,22 +53,40 @@ class _SparklinePainter extends CustomPainter {
     final slice = samples.length > windowSize
         ? samples.sublist(samples.length - windowSize)
         : samples;
+    var hasRtt = false;
+    var lastRtt = 0;
+    final before = samples.length - slice.length;
+    for (var i = before - 1; i >= 0; i--) {
+      final s = samples[i];
+      if (s.ok) {
+        hasRtt = true;
+        lastRtt = s.rttMs;
+        break;
+      }
+    }
     final rtts = slice.where((s) => s.ok).map((s) => s.rttMs).toList();
+    if (!hasRtt && rtts.isEmpty) return;
     // Floor of 80ms so a fresh chart with no traffic doesn't look spiky.
-    final maxRtt = rtts.fold<int>(80, (a, b) => b > a ? b : a);
+    var maxRtt = rtts.fold<int>(80, (a, rtt) => rtt > a ? rtt : a);
+    if (hasRtt && lastRtt > maxRtt) maxRtt = lastRtt;
 
-    final stepW = size.width / (windowSize - 1);
-    final off = (windowSize - slice.length) * stepW;
+    const strokeInset = 1.0;
+    final chartW = size.width - strokeInset * 2;
+    final stepW = chartW / (windowSize - 1);
+    final off = strokeInset + (windowSize - slice.length) * stepW;
     final usableH = size.height - padding * 2;
 
     final pts = <_Pt>[];
     for (var i = 0; i < slice.length; i++) {
       final s = slice[i];
+      if (s.ok) {
+        hasRtt = true;
+        lastRtt = s.rttMs;
+      }
+      if (!hasRtt) continue;
       final x = off + i * stepW;
-      final y = s.ok
-          ? (size.height - padding) - (s.rttMs / maxRtt) * usableH
-          : size.height - 2;
-      pts.add(_Pt(x, y, s.ok));
+      final y = (size.height - padding) - (lastRtt / maxRtt) * usableH;
+      pts.add(_Pt(x, y));
     }
     if (pts.isEmpty) return;
 
@@ -116,14 +128,6 @@ class _SparklinePainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
     canvas.drawPath(linePath, linePaint);
-
-    // Outage dots — red marker on the baseline for each failed probe.
-    final dotPaint = Paint()..color = outageColor;
-    for (final p in pts) {
-      if (!p.ok) {
-        canvas.drawCircle(Offset(p.x, size.height - 4), 1.6, dotPaint);
-      }
-    }
   }
 
   @override
@@ -136,6 +140,5 @@ class _SparklinePainter extends CustomPainter {
 class _Pt {
   final double x;
   final double y;
-  final bool ok;
-  _Pt(this.x, this.y, this.ok);
+  _Pt(this.x, this.y);
 }

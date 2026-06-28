@@ -6,11 +6,26 @@ import 'tokens.dart';
 /// decisions are sourced from [NekkoTokens] so widgets never hardcode hex.
 ThemeData buildAppTheme() {
   const t = NekkoTokens.dark;
+  const transparentOverlay = WidgetStatePropertyAll<Color?>(Colors.transparent);
+  final clickCursor = WidgetStateProperty.resolveWith<MouseCursor?>(
+    (states) => states.contains(WidgetState.disabled)
+        ? SystemMouseCursors.basic
+        : SystemMouseCursors.click,
+  );
+  final quietButtonStyle = ButtonStyle(
+    overlayColor: transparentOverlay,
+    mouseCursor: clickCursor,
+  );
   final base = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
     scaffoldBackgroundColor: t.bg,
     canvasColor: t.bg,
+    splashFactory: NoSplash.splashFactory,
+    splashColor: Colors.transparent,
+    highlightColor: Colors.transparent,
+    hoverColor: Colors.transparent,
+    focusColor: Colors.transparent,
     colorScheme: ColorScheme.fromSeed(
       seedColor: t.text,
       brightness: Brightness.dark,
@@ -28,6 +43,9 @@ ThemeData buildAppTheme() {
       bodyColor: t.text,
       displayColor: t.text,
     ),
+    textButtonTheme: TextButtonThemeData(style: quietButtonStyle),
+    filledButtonTheme: FilledButtonThemeData(style: quietButtonStyle),
+    iconButtonTheme: IconButtonThemeData(style: quietButtonStyle),
     dividerColor: t.border,
     iconTheme: IconThemeData(color: t.textMuted),
     appBarTheme: AppBarTheme(

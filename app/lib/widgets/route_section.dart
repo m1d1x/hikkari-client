@@ -21,22 +21,24 @@ class _RouteSectionState extends State<RouteSection> {
   final _input = TextEditingController();
 
   // Same labels / placeholders / hints the Svelte UI uses, kept in one
-  // place so a future translation is a single-file edit.
+  // place so a future translation is a single-file edit. All-lowercase on
+  // purpose: matches the Svelte global text-transform: lowercase rule that
+  // gives the original UI its compact look.
   static const _labels = {
     'domains': 'домены',
-    'ips': 'IP',
+    'ips': 'ip',
     'processes': 'приложения',
   };
   static const _placeholders = {
-    'domains': 'github.com',
+    'domains': 'example.com',
     'ips': '192.168.0.0/16',
     'processes': 'discord.exe',
   };
   static const _hints = {
     'domains':
         'example.com = все поддомены тоже. api.example.com = только этот',
-    'ips': 'один IP или подсеть в CIDR-нотации',
-    'processes': 'имя .exe — весь трафик процесса пойдёт мимо VPN',
+    'ips': 'один ip или подсеть в cidr-нотации',
+    'processes': 'имя .exe — весь трафик процесса пойдёт мимо vpn',
   };
 
   @override
@@ -112,11 +114,13 @@ class _RouteSectionState extends State<RouteSection> {
     );
   }
 
+  // .route-head: padding 14 16, title 13/500.
   Widget _head(NekkoTokens t) {
     return InkWell(
       onTap: () => setState(() => _open = !_open),
+      mouseCursor: SystemMouseCursors.click,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
             Expanded(
@@ -124,8 +128,7 @@ class _RouteSectionState extends State<RouteSection> {
                 'маршрутизация',
                 style: TextStyle(
                   color: t.text,
-                  fontSize: 14,
-                  letterSpacing: 0.3,
+                  fontSize: 13,
                   fontWeight: FontWeight.w500,
                 ),
               ),
@@ -140,24 +143,25 @@ class _RouteSectionState extends State<RouteSection> {
     );
   }
 
+  // .route-body: padding 0 12 12, gap 10.
   Widget _body(NekkoTokens t) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _tabs(t),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           _adder(t),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 2),
             child: Text(
               _hints[_tab] ?? '',
               style: TextStyle(
                 color: t.textFaint,
-                fontSize: 12,
-                fontFamily: t.monoFamily,
+                fontSize: 11,
+                letterSpacing: 0.02 * 11,
                 height: 1.4,
               ),
             ),
@@ -167,71 +171,52 @@ class _RouteSectionState extends State<RouteSection> {
     );
   }
 
-  // Pill tabs. Active = filled darker surface + strong border, label in
-  // primary text colour. Inactive = transparent, no border, muted label —
-  // matches the look in the reference screenshot.
+  // Tabs strip — visible track in page-bg colour (darker than the card),
+  // with the active tab filled in surface-2 (slightly lighter than the
+  // card). Exact port of `.tabs` from App.svelte#690-703.
   Widget _tabs(NekkoTokens t) {
     return Container(
+      height: 40,
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: t.surface2,
+        color: t.bg,
+        border: Border.all(color: t.border),
         borderRadius: BorderRadius.circular(t.radius),
       ),
       child: Row(
         children: [
-          for (final k in const ['domains', 'ips', 'processes'])
+          for (var i = 0; i < 3; i++) ...[
+            if (i > 0) const SizedBox(width: 4),
             Expanded(
               child: _TabPill(
-                label: _labels[k]!,
-                active: _tab == k,
+                tab: const ['domains', 'processes', 'ips'][i],
+                label: _labels[const ['domains', 'processes', 'ips'][i]]!,
+                active: _tab == const ['domains', 'processes', 'ips'][i],
                 onTap: () => setState(() {
-                  _tab = k;
+                  _tab = const ['domains', 'processes', 'ips'][i];
                   _input.clear();
                 }),
               ),
             ),
+          ],
         ],
       ),
     );
   }
 
+  // .adder ports App.svelte#705-733: input and + button both 40px tall,
+  // bg = page bg (darker than card), thin border. 6px gap between them.
   Widget _adder(NekkoTokens t) {
     return Row(
       children: [
         Expanded(
-          child: Container(
-            decoration: BoxDecoration(
-              color: t.surface2,
-              borderRadius: BorderRadius.circular(t.radius),
-            ),
-            child: TextField(
-              controller: _input,
-              style: TextStyle(
-                color: t.text,
-                fontFamily: t.monoFamily,
-                fontSize: 14,
-              ),
-              cursorColor: t.text,
-              decoration: InputDecoration(
-                hintText: _placeholders[_tab],
-                hintStyle: TextStyle(
-                  color: t.textFaint,
-                  fontFamily: t.monoFamily,
-                  fontSize: 14,
-                ),
-                filled: false,
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                isDense: true,
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              ),
-              onSubmitted: (_) => _add(),
-            ),
+          child: _RouteInput(
+            controller: _input,
+            placeholder: _placeholders[_tab] ?? '',
+            onSubmitted: (_) => _add(),
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 6),
         _AddButton(onTap: _add),
       ],
     );
@@ -256,47 +241,85 @@ class _RouteSectionState extends State<RouteSection> {
   }
 }
 
-/// iOS-style toggle. Bigger than the Material Switch, no Material chrome,
-/// matches the look of the Svelte `.switch` element.
-class _IosSwitch extends StatelessWidget {
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  const _IosSwitch({required this.value, required this.onChanged});
+class _RouteInput extends StatefulWidget {
+  final TextEditingController controller;
+  final String placeholder;
+  final ValueChanged<String> onSubmitted;
+
+  const _RouteInput({
+    required this.controller,
+    required this.placeholder,
+    required this.onSubmitted,
+  });
+
+  @override
+  State<_RouteInput> createState() => _RouteInputState();
+}
+
+class _RouteInputState extends State<_RouteInput> {
+  final _focusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _focusNode.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final textStyle = TextStyle(
+      color: t.text,
+      fontFamily: t.monoFamily,
+      fontSize: 12,
+      fontWeight: FontWeight.w500,
+      height: 1.0,
+      letterSpacing: 0.02 * 12,
+    );
+
     return GestureDetector(
-      onTap: () => onChanged(!value),
       behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-        width: 50,
-        height: 30,
-        padding: const EdgeInsets.all(3),
+      onTap: _focusNode.requestFocus,
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
-          color: value ? t.ok : t.surface2,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: value ? Colors.transparent : t.border,
-          ),
+          color: t.bg,
+          border: Border.all(color: t.border),
+          borderRadius: BorderRadius.circular(t.radius),
         ),
-        child: AnimatedAlign(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            width: 22,
-            height: 22,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 4,
-                  offset: Offset(0, 1),
+        child: Center(
+          child: SizedBox(
+            width: double.infinity,
+            height: 18,
+            child: Stack(
+              alignment: Alignment.centerLeft,
+              children: [
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: widget.controller,
+                  builder: (context, value, _) {
+                    if (value.text.isNotEmpty) return const SizedBox.shrink();
+                    return IgnorePointer(
+                      child: Text(
+                        widget.placeholder,
+                        maxLines: 1,
+                        overflow: TextOverflow.clip,
+                        style: textStyle.copyWith(color: t.textFaint),
+                      ),
+                    );
+                  },
+                ),
+                Positioned.fill(
+                  child: EditableText(
+                    controller: widget.controller,
+                    focusNode: _focusNode,
+                    style: textStyle,
+                    cursorColor: t.text,
+                    backgroundCursorColor: t.textFaint,
+                    maxLines: 1,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: widget.onSubmitted,
+                  ),
                 ),
               ],
             ),
@@ -307,11 +330,64 @@ class _IosSwitch extends StatelessWidget {
   }
 }
 
+/// iOS-style toggle ported from `.switch` in App.svelte#674-688:
+/// 46×28 track, 24×24 knob, surface-2 off / --ok on, #ddd off-knob / #fff on.
+class _IosSwitch extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  const _IosSwitch({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => onChanged(!value),
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          width: 46,
+          height: 28,
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            color: value ? t.ok : t.surface2,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: AnimatedAlign(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+            alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: value ? Colors.white : const Color(0xFFDDDDDD),
+                shape: BoxShape.circle,
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x4D000000),
+                    blurRadius: 2,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _TabPill extends StatelessWidget {
+  final String tab;
   final String label;
   final bool active;
   final VoidCallback onTap;
   const _TabPill({
+    required this.tab,
     required this.label,
     required this.active,
     required this.onTap,
@@ -320,26 +396,27 @@ class _TabPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: active ? t.surface : Colors.transparent,
-          borderRadius: BorderRadius.circular(t.radius - 2),
-          border: Border.all(
-            color: active ? t.borderStrong : Colors.transparent,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: BoxDecoration(
+            // Active = surface-2 fill, no border (matches CSS exactly).
+            color: active ? t.surface2 : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
           ),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: TextStyle(
-              color: active ? t.text : t.textMuted,
-              fontSize: 13,
-              fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: active ? t.text : t.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                height: 1,
+              ),
             ),
           ),
         ),
@@ -355,16 +432,21 @@ class _AddButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return SizedBox(
-      width: 46,
-      height: 46,
-      child: Material(
-        color: t.surface2,
-        borderRadius: BorderRadius.circular(t.radius),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Icon(Icons.add, color: t.text, size: 20),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 40,
+          height: 40,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: t.bg,
+            border: Border.all(color: t.border),
+            borderRadius: BorderRadius.circular(t.radius),
+          ),
+          child: Icon(Icons.add, color: t.textMuted, size: 22),
         ),
       ),
     );

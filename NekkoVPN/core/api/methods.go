@@ -52,8 +52,8 @@ func (c *Core) LogTail() string { return c.logger.Tail() }
 //  Whitelist (bypass-VPN route rules)
 // ============================================================
 
-func (c *Core) Whitelist() (Whitelist, error)         { return c.configs.GetWhitelist() }
-func (c *Core) AddRule(category, value string) error  { return c.configs.AddRule(category, value) }
+func (c *Core) Whitelist() (Whitelist, error)        { return c.configs.GetWhitelist() }
+func (c *Core) AddRule(category, value string) error { return c.configs.AddRule(category, value) }
 func (c *Core) RemoveRule(category, value string) error {
 	return c.configs.RemoveRule(category, value)
 }
@@ -62,9 +62,9 @@ func (c *Core) RemoveRule(category, value string) error {
 //  Profiles
 // ============================================================
 
-func (c *Core) Profiles() ([]ProfileInfo, error)        { return c.profiles.List() }
-func (c *Core) ActiveProfile() (string, error)          { return c.profiles.Active() }
-func (c *Core) RenameProfile(name, label string) error  { return c.profiles.Rename(name, label) }
+func (c *Core) Profiles() ([]ProfileInfo, error)       { return c.profiles.List() }
+func (c *Core) ActiveProfile() (string, error)         { return c.profiles.Active() }
+func (c *Core) RenameProfile(name, label string) error { return c.profiles.Rename(name, label) }
 
 // DeleteProfile removes a profile and also drops its uptime history so the
 // file stays tidy.
@@ -85,6 +85,9 @@ func (c *Core) SwitchProfile(name string) error {
 		return err
 	}
 	if err := c.configs.SetEndpoints(endpoints); err != nil {
+		return err
+	}
+	if err := c.profiles.SetActive(name); err != nil {
 		return err
 	}
 	if vpn.ClashAPIRunning() {

@@ -84,9 +84,12 @@ class AppState extends ChangeNotifier {
 
   Future<void> switchProfile(String name) async {
     await _withBusy(() {
-      _core.switchProfile(name);
-      _profiles = _core.profiles();
-      _health = _core.health();
+      try {
+        _core.switchProfile(name);
+      } finally {
+        _profiles = _core.profiles();
+        _health = _core.health();
+      }
     });
   }
 

@@ -90,6 +90,7 @@ class _IpCell extends StatelessWidget {
       message: msg,
       child: InkWell(
         onTap: onTap,
+        mouseCursor: SystemMouseCursors.click,
         borderRadius: BorderRadius.circular(t.radius),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

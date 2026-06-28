@@ -5,6 +5,7 @@
 package health
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +17,10 @@ import (
 
 	"NekkoVPN/core/vpn"
 )
+
+// RefreshInterval is how often the background loop reprobes. Health() —
+// the public read — is now instant; the actual I/O happens here.
+const RefreshInterval = 2 * time.Second
 
 // Info is the canonical state the UI consumes.
 type Info struct {
@@ -36,7 +41,11 @@ type Logger interface {
 // would permanently flip the UI to "broken".
 type VPNHostProvider func() []string
 
-// Checker is the stateful health probe.
+// Checker is the stateful health probe. The actual probing happens in a
+// background loop started by [Run]; [Probe] returns the most recent cached
+// Info instantly. This is critical for FFI consumers (Flutter) — synchronous
+// FFI calls block the caller's UI thread, so anything that does I/O on the
+// call path will jank the app.
 type Checker struct {
 	directIPPath string
 	log          Logger
@@ -47,6 +56,8 @@ type Checker struct {
 	lastIP      string
 	lastStatus  string
 	lastChecked time.Time
+
+	cached Info // last full Probe result; served by [Probe]
 }
 
 func New(directIPPath string, log Logger, vpnHosts VPNHostProvider) *Checker {
@@ -77,23 +88,60 @@ func (c *Checker) saveDirectIP(ip string) {
 	_ = os.WriteFile(c.directIPPath, []byte(ip), 0644)
 }
 
-// ExternalIP returns the current egress IP, or "—" on failure. Convenience
-// wrapper for the UI.
+// ExternalIP returns the cached egress IP from the last background probe,
+// or "—" if we don't have one yet. Lock-free fast path — no I/O.
 func (c *Checker) ExternalIP() string {
-	ip, _ := fetchExternalIP()
+	c.mu.Lock()
+	ip := c.cached.IP
+	c.mu.Unlock()
 	if ip == "" {
 		return "—"
 	}
 	return ip
 }
 
-// Probe performs one health check and returns the canonical Info.
+// Probe returns the most recent cached health snapshot. Lock-free fast
+// path — safe to call at arbitrary frequency from the FFI boundary. The
+// actual work is done in [Run] on a background goroutine.
+func (c *Checker) Probe() Info {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cached
+}
+
+// Run is the background refresh loop. Cancel ctx to stop. Call this from
+// Core.Init in its own goroutine — it blocks until ctx is done.
+func (c *Checker) Run(ctx context.Context) {
+	// Prime the cache with a synchronous first probe so the very first
+	// Probe() call after Init returns real data instead of an empty zero.
+	c.refresh()
+	ticker := time.NewTicker(RefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.refresh()
+		}
+	}
+}
+
+func (c *Checker) refresh() {
+	hi := c.probeOnce()
+	c.mu.Lock()
+	c.cached = hi
+	c.mu.Unlock()
+}
+
+// probeOnce does the actual probing — was the public Probe before we
+// added caching. Returns the canonical Info:
 //
 //	core down              → "off"
 //	core up, no egress yet → "connecting"
 //	core up, egress == ISP → "broken"
 //	core up, egress != ISP → "ok"
-func (c *Checker) Probe() Info {
+func (c *Checker) probeOnce() Info {
 	hi := Info{}
 	hi.Running = vpn.ClashAPIRunning()
 
