@@ -74,108 +74,124 @@ class _RouteSectionState extends State<RouteSection> {
     final s = context.watch<AppState>();
     final items = _itemsFor(_tab, s.whitelist);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _head(t),
-        AnimatedSize(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          alignment: Alignment.topCenter,
-          child: _open ? _body(t) : const SizedBox.shrink(),
-        ),
-        if (_open && items.isNotEmpty) _itemsBlock(t, items),
-      ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Single card holds header + (optionally) body. Matches the
+          // visual unity of the Svelte original — toggle and tabs feel
+          // like one component, not two stacked cards.
+          Container(
+            decoration: BoxDecoration(
+              color: t.surface,
+              border: Border.all(color: t.border),
+              borderRadius: BorderRadius.circular(t.radiusLg),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _head(t),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOut,
+                  alignment: Alignment.topCenter,
+                  child:
+                      _open ? _body(t) : const SizedBox.shrink(),
+                ),
+              ],
+            ),
+          ),
+          if (_open && items.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _itemsBlock(t, items),
+          ],
+        ],
+      ),
     );
   }
 
   Widget _head(NekkoTokens t) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() => _open = !_open),
-              behavior: HitTestBehavior.opaque,
+    return InkWell(
+      onTap: () => setState(() => _open = !_open),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+        child: Row(
+          children: [
+            Expanded(
               child: Text(
                 'маршрутизация',
                 style: TextStyle(
                   color: t.text,
-                  fontSize: 13,
-                  letterSpacing: 0.4,
+                  fontSize: 14,
+                  letterSpacing: 0.3,
                   fontWeight: FontWeight.w500,
                 ),
               ),
             ),
-          ),
-          _Pill(open: _open, onTap: () => setState(() => _open = !_open)),
-        ],
+            _IosSwitch(
+              value: _open,
+              onChanged: (v) => setState(() => _open = v),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _body(NekkoTokens t) {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: t.surface,
-        border: Border.all(color: t.border),
-        borderRadius: BorderRadius.circular(t.radius),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _tabs(t),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           _adder(t),
-          const SizedBox(height: 6),
-          Text(
-            _hints[_tab] ?? '',
-            style: TextStyle(color: t.textFaint, fontSize: 11),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              _hints[_tab] ?? '',
+              style: TextStyle(
+                color: t.textFaint,
+                fontSize: 12,
+                fontFamily: t.monoFamily,
+                height: 1.4,
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
+  // Pill tabs. Active = filled darker surface + strong border, label in
+  // primary text colour. Inactive = transparent, no border, muted label —
+  // matches the look in the reference screenshot.
   Widget _tabs(NekkoTokens t) {
-    return Row(
-      children: [
-        for (final k in const ['domains', 'ips', 'processes']) ...[
-          Expanded(
-            child: GestureDetector(
-              onTap: () => setState(() {
-                _tab = k;
-                _input.clear();
-              }),
-              behavior: HitTestBehavior.opaque,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: _tab == k ? t.surface2 : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: _tab == k ? t.borderStrong : Colors.transparent,
-                  ),
-                ),
-                child: Center(
-                  child: Text(
-                    _labels[k]!,
-                    style: TextStyle(
-                      color: _tab == k ? t.text : t.textMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: t.surface2,
+        borderRadius: BorderRadius.circular(t.radius),
+      ),
+      child: Row(
+        children: [
+          for (final k in const ['domains', 'ips', 'processes'])
+            Expanded(
+              child: _TabPill(
+                label: _labels[k]!,
+                active: _tab == k,
+                onTap: () => setState(() {
+                  _tab = k;
+                  _input.clear();
+                }),
               ),
             ),
-          ),
-          if (k != 'processes') const SizedBox(width: 6),
         ],
-      ],
+      ),
     );
   }
 
@@ -183,49 +199,50 @@ class _RouteSectionState extends State<RouteSection> {
     return Row(
       children: [
         Expanded(
-          child: TextField(
-            controller: _input,
-            style: TextStyle(
-              color: t.text,
-              fontFamily: t.monoFamily,
-              fontSize: 13,
+          child: Container(
+            decoration: BoxDecoration(
+              color: t.surface2,
+              borderRadius: BorderRadius.circular(t.radius),
             ),
-            decoration: InputDecoration(
-              hintText: _placeholders[_tab],
-              isDense: true,
+            child: TextField(
+              controller: _input,
+              style: TextStyle(
+                color: t.text,
+                fontFamily: t.monoFamily,
+                fontSize: 14,
+              ),
+              cursorColor: t.text,
+              decoration: InputDecoration(
+                hintText: _placeholders[_tab],
+                hintStyle: TextStyle(
+                  color: t.textFaint,
+                  fontFamily: t.monoFamily,
+                  fontSize: 14,
+                ),
+                filled: false,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+              onSubmitted: (_) => _add(),
             ),
-            onSubmitted: (_) => _add(),
           ),
         ),
         const SizedBox(width: 8),
-        SizedBox(
-          width: 40,
-          height: 40,
-          child: FilledButton(
-            onPressed: _add,
-            style: FilledButton.styleFrom(
-              padding: EdgeInsets.zero,
-              backgroundColor: t.surface2,
-              foregroundColor: t.text,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(t.radius),
-                side: BorderSide(color: t.border),
-              ),
-            ),
-            child: const Icon(Icons.add, size: 18),
-          ),
-        ),
+        _AddButton(onTap: _add),
       ],
     );
   }
 
   Widget _itemsBlock(NekkoTokens t, List<String> items) {
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       decoration: BoxDecoration(
         color: t.surface,
         border: Border.all(color: t.border),
-        borderRadius: BorderRadius.circular(t.radius),
+        borderRadius: BorderRadius.circular(t.radiusLg),
       ),
       child: Column(
         children: [
@@ -239,10 +256,66 @@ class _RouteSectionState extends State<RouteSection> {
   }
 }
 
-class _Pill extends StatelessWidget {
-  final bool open;
+/// iOS-style toggle. Bigger than the Material Switch, no Material chrome,
+/// matches the look of the Svelte `.switch` element.
+class _IosSwitch extends StatelessWidget {
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  const _IosSwitch({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return GestureDetector(
+      onTap: () => onChanged(!value),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        width: 50,
+        height: 30,
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: value ? t.ok : t.surface2,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: value ? Colors.transparent : t.border,
+          ),
+        ),
+        child: AnimatedAlign(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+          alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            width: 22,
+            height: 22,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 1),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TabPill extends StatelessWidget {
+  final String label;
+  final bool active;
   final VoidCallback onTap;
-  const _Pill({required this.open, required this.onTap});
+  const _TabPill({
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -251,27 +324,47 @@ class _Pill extends StatelessWidget {
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: 36,
-        height: 22,
-        padding: const EdgeInsets.all(2),
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          color: open ? t.ok.withValues(alpha: 0.25) : t.surface2,
-          border: Border.all(color: open ? t.ok : t.border),
-          borderRadius: BorderRadius.circular(20),
+          color: active ? t.surface : Colors.transparent,
+          borderRadius: BorderRadius.circular(t.radius - 2),
+          border: Border.all(
+            color: active ? t.borderStrong : Colors.transparent,
+          ),
         ),
-        child: AnimatedAlign(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-          alignment: open ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            width: 16,
-            height: 16,
-            decoration: BoxDecoration(
-              color: open ? t.ok : t.textMuted,
-              shape: BoxShape.circle,
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: active ? t.text : t.textMuted,
+              fontSize: 13,
+              fontWeight: active ? FontWeight.w600 : FontWeight.w500,
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _AddButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return SizedBox(
+      width: 46,
+      height: 46,
+      child: Material(
+        color: t.surface2,
+        borderRadius: BorderRadius.circular(t.radius),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Icon(Icons.add, color: t.text, size: 20),
         ),
       ),
     );
@@ -287,7 +380,7 @@ class _ItemRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
       child: Row(
         children: [
           Expanded(
@@ -299,7 +392,7 @@ class _ItemRow extends StatelessWidget {
                 style: TextStyle(
                   color: t.text,
                   fontFamily: t.monoFamily,
-                  fontSize: 12,
+                  fontSize: 13,
                 ),
               ),
             ),
