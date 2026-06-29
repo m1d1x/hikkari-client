@@ -28,6 +28,7 @@ class AppState extends ChangeNotifier {
   Map<String, List<PingSample>> _uptime = const {};
   bool _busy = false;
   bool _whitelistDirty = false;
+  bool _autoMode = false;
   String? _lastError;
 
   AppState(this._core);
@@ -39,6 +40,7 @@ class AppState extends ChangeNotifier {
   Map<String, List<PingSample>> get uptime => _uptime;
   bool get busy => _busy;
   bool get whitelistDirty => _whitelistDirty;
+  bool get autoMode => _autoMode;
   String? get lastError => _lastError;
   bool get isRunning => _health?.running ?? false;
   String? get activeProfileName {
@@ -57,6 +59,7 @@ class AppState extends ChangeNotifier {
       _whitelist = _core.whitelist();
       _health = _core.health();
       _uptime = _core.uptimeHistory();
+      _autoMode = _core.autoMode();
     });
     _healthTimer ??=
         Timer.periodic(const Duration(seconds: 1), (_) => _tick());
@@ -137,6 +140,16 @@ class AppState extends ChangeNotifier {
     await _withBusy(() {
       _core.deleteProfile(name);
       _profiles = _core.profiles();
+    });
+  }
+
+  /// Toggles auto-fastest mode. The engine reload (when running) means
+  /// there's a 1-2s pause; AppState's _withBusy lock hides the spinner.
+  Future<void> setAutoMode(bool on) async {
+    await _withBusy(() {
+      _core.setAutoMode(on);
+      _autoMode = _core.autoMode();
+      _health = _core.health();
     });
   }
 

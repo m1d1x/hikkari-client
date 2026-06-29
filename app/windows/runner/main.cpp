@@ -22,6 +22,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
 
+  // Enable Impeller — Flutter's modern renderer. The default Skia/OpenGL
+  // backend on Windows loses its EGL context on display sleep/wake and
+  // never recovers, spamming "EGL Context Lost" until the user restarts
+  // the app (Flutter issue #102451). Impeller uses Direct3D and survives
+  // GPU context loss.
+  command_line_arguments.push_back("--enable-impeller=true");
+
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);

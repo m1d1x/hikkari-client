@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"NekkoVPN/core/clashapi"
 	"NekkoVPN/core/configfile"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/logging"
@@ -103,8 +104,10 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 
 	c.health.LoadDirectIP()
 	c.ensureProfiles()
+	c.ensureSelectorConfig()
 	c.uptime.Load()
-	go c.uptime.Run(c.ctx, c.uptimeHosts)
+	probe := uptime.NewLiveProbe(clashapi.New(""))
+	go c.uptime.Run(c.ctx, c.uptimeHosts, probe)
 	// Health probing is the slow path (HTTPS to api.ipify.org). Running it
 	// in the background keeps FFI calls instant — UI threads on the other
 	// side of the FFI boundary must never wait on network.
@@ -159,6 +162,20 @@ func (c *Core) ensureProfiles() {
 	_ = c.profiles.SeedFromEndpoint(ep)
 }
 
+// ensureSelectorConfig migrates pre-selector config.json layouts to the
+// new shape on first start after the refactor. After this returns, the
+// outbounds list contains every known profile + a "proxy" selector, and
+// route.final / dns.detour point at it.
+func (c *Core) ensureSelectorConfig() {
+	if !c.configs.NeedsSelectorMigration() {
+		return
+	}
+	c.logger.Logf("config: migrating to selector layout")
+	if err := c.rebuildConfig(); err != nil {
+		c.logger.Logf("config: migration failed: %v", err)
+	}
+}
+
 // vpnHosts feeds the health checker the list of server IPs it must never
 // cache as the "ISP baseline".
 func (c *Core) vpnHosts() []string {
@@ -175,7 +192,9 @@ func (c *Core) vpnHosts() []string {
 	return out
 }
 
-// uptimeHosts feeds the uptime tracker the "profile -> host" pairs to probe.
+// uptimeHosts feeds the uptime tracker everything it needs per profile:
+// a stable name (history key), the sing-box tag (Clash-API path), and a
+// host:port pair for the TCP-connect fallback when the engine is off.
 func (c *Core) uptimeHosts() []uptime.HostEntry {
 	pf, err := c.profiles.Read()
 	if err != nil {
@@ -183,7 +202,13 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 	}
 	out := make([]uptime.HostEntry, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
-		out = append(out, uptime.HostEntry{Profile: p.Name, Host: profile.PeerHost(p)})
+		host, port := profile.PeerHostPort(p)
+		out = append(out, uptime.HostEntry{
+			Profile: p.Name,
+			Tag:     profile.ProfileTag(p.Name),
+			Host:    host,
+			Port:    port,
+		})
 	}
 	return out
 }

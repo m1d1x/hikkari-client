@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // initCore returns a Core wired to a fresh temp baseDir. Init starts the
@@ -69,14 +71,33 @@ func TestCall_IsRunning_ReturnsBool(t *testing.T) {
 	if !e.Ok {
 		t.Fatalf("IsRunning: %s", e.Error)
 	}
-	// In a clean test env nothing listens on 127.0.0.1:9090.
 	var b bool
 	if err := json.Unmarshal(e.Data, &b); err != nil {
 		t.Fatalf("decode bool: %v", err)
 	}
+	// If a real engine happens to be running on the dev box (port 9090),
+	// we just verify the call returned a bool and don't assert false —
+	// this test runs on the same machine that hosts the app.
+	if vpnClashAPIRunningProbe() {
+		t.Logf("clash API up locally; skipping false-assert")
+		return
+	}
 	if b {
 		t.Fatalf("IsRunning should be false in test env")
 	}
+}
+
+// vpnClashAPIRunningProbe re-implements vpn.ClashAPIRunning for the test
+// without taking the import (which would pull windows-only code into the
+// test binary). Same 600ms /version probe.
+func vpnClashAPIRunningProbe() bool {
+	cl := &http.Client{Timeout: 600 * time.Millisecond}
+	resp, err := cl.Get("http://127.0.0.1:9090/version")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
 }
 
 func TestCall_UptimeHistory_ReturnsObject(t *testing.T) {
@@ -124,9 +145,15 @@ func TestCall_AddRule_RoundTrip(t *testing.T) {
 }
 
 func TestCall_SwitchProfile_UpdatesConfigAndActive(t *testing.T) {
+	// SwitchProfile now tries to talk to a running Clash API if one is up.
+	// On a dev box where the real engine is running, the call will 404
+	// against our synthetic test profiles — skip the test there.
+	if vpnClashAPIRunningProbe() {
+		t.Skip("real engine running on 127.0.0.1:9090; SwitchProfile would 404")
+	}
 	c := initCore(t)
 	base := c.BaseDir()
-	seedConfig := []byte(`{"endpoints":[{"tag":"awg-ep","type":"wireguard","peers":[{"address":"old.example","port":1111}]}],"route":{"rules":[]}}`)
+	seedConfig := []byte(`{"endpoints":[{"tag":"awg-ep","type":"wireguard","peers":[{"address":"old.example","port":1111}]}],"route":{"rules":[]},"outbounds":[{"tag":"direct","type":"direct"}]}`)
 	seedProfiles := []byte(`{"active":"main","profiles":[{"name":"main","label":"Main","endpoint":{"tag":"awg-ep","type":"wireguard","peers":[{"address":"old.example","port":1111}]}},{"name":"next","label":"Next","endpoint":{"tag":"custom-tag","type":"awg","peers":[{"address":"new.example","port":2222}]}}]}`)
 	if err := writeFile(filepath.Join(base, "config.json"), seedConfig); err != nil {
 		t.Fatalf("seed config: %v", err)
@@ -152,18 +179,33 @@ func TestCall_SwitchProfile_UpdatesConfigAndActive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
+	// Both profiles should be loaded as endpoints (Kind defaults to
+	// endpoint for legacy seeds without "kind").
 	endpoints, _ := cfg["endpoints"].([]interface{})
-	if len(endpoints) != 1 {
-		t.Fatalf("expected one endpoint, got %+v", cfg["endpoints"])
+	if len(endpoints) != 2 {
+		t.Fatalf("expected two endpoints, got %d: %+v", len(endpoints), endpoints)
 	}
-	ep, _ := endpoints[0].(map[string]interface{})
-	if ep["tag"] != "awg-ep" {
-		t.Fatalf("expected shared tag awg-ep, got %+v", ep["tag"])
+
+	// Selector outbound should default to the "next" profile's tag.
+	obs, _ := cfg["outbounds"].([]interface{})
+	var selector map[string]interface{}
+	for _, ob := range obs {
+		m, _ := ob.(map[string]interface{})
+		if t, _ := m["tag"].(string); t == "proxy" {
+			selector = m
+			break
+		}
 	}
-	peers, _ := ep["peers"].([]interface{})
-	peer, _ := peers[0].(map[string]interface{})
-	if peer["address"] != "new.example" {
-		t.Fatalf("expected new endpoint, got %+v", peer["address"])
+	if selector == nil {
+		t.Fatalf("selector outbound missing: %+v", obs)
+	}
+	if d, _ := selector["default"].(string); d != "p-next" {
+		t.Errorf("selector.default = %q, want p-next", d)
+	}
+
+	// route.final must point at the selector.
+	if v, _ := cfg["route"].(map[string]interface{})["final"].(string); v != "proxy" {
+		t.Errorf("route.final = %q, want proxy", v)
 	}
 }
 

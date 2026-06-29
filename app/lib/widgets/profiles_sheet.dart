@@ -122,40 +122,83 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
         ),
       );
 
-  Widget _header(NekkoTokens t, int count) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 6, 12, 10),
-        child: Row(
-          children: [
-            Text(
-              'профили',
-              style: TextStyle(
-                color: t.text,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
+  Widget _header(NekkoTokens t, int count) {
+    final s = context.watch<AppState>();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 6, 12, 10),
+      child: Row(
+        children: [
+          Text(
+            'профили',
+            style: TextStyle(
+              color: t.text,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(width: 8),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$count',
+            style: TextStyle(
+              color: t.textFaint,
+              fontSize: 12,
+              fontFamily: t.monoFamily,
+            ),
+          ),
+          const Spacer(),
+          _autoChip(t, s),
+          const SizedBox(width: 6),
+          IconButton(
+            tooltip: 'импорт по ссылке',
+            iconSize: 16,
+            padding: EdgeInsets.zero,
+            constraints:
+                const BoxConstraints(minWidth: 32, minHeight: 32),
+            onPressed: () => ImportProfileDialog.show(context),
+            icon: Icon(Icons.add, color: t.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Tiny "auto" chip: when on, sing-box runs a urltest group and routes
+  // through the lowest-latency live profile, auto-flipping when something
+  // breaks. Engine reloads on toggle so changes take effect immediately.
+  Widget _autoChip(NekkoTokens t, AppState s) {
+    final on = s.autoMode;
+    return InkWell(
+      onTap: s.busy ? null : () => s.setAutoMode(!on),
+      borderRadius: BorderRadius.circular(t.radius),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: on ? t.surface2 : Colors.transparent,
+          border: Border.all(color: on ? t.borderStrong : t.border),
+          borderRadius: BorderRadius.circular(t.radius),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              on ? Icons.bolt : Icons.bolt_outlined,
+              size: 12,
+              color: on ? t.ok : t.textMuted,
+            ),
+            const SizedBox(width: 4),
             Text(
-              '$count',
+              'auto',
               style: TextStyle(
-                color: t.textFaint,
-                fontSize: 12,
+                color: on ? t.text : t.textMuted,
+                fontSize: 11,
                 fontFamily: t.monoFamily,
               ),
             ),
-            const Spacer(),
-            IconButton(
-              tooltip: 'импорт по ссылке',
-              iconSize: 16,
-              padding: EdgeInsets.zero,
-              constraints:
-                  const BoxConstraints(minWidth: 32, minHeight: 32),
-              onPressed: () => ImportProfileDialog.show(context),
-              icon: Icon(Icons.add, color: t.textMuted),
-            ),
           ],
         ),
-      );
+      ),
+    );
+  }
 
   Widget _search(NekkoTokens t) => Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),

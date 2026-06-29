@@ -93,7 +93,11 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 
 // File is the on-disk shape of profiles.json.
 type File struct {
-	Active   string    `json:"active"`
+	Active string `json:"active"`
+	// Auto, when true, makes the config emit a `urltest` outbound that
+	// wraps every profile and continuously picks the fastest live one.
+	// route.final then targets the urltest instead of the manual selector.
+	Auto     bool      `json:"auto,omitempty"`
 	Profiles []Profile `json:"profiles"`
 }
 
@@ -183,6 +187,26 @@ func (s *Store) Active() (string, error) {
 	return pf.Active, nil
 }
 
+// AutoMode returns whether auto-fastest selection is enabled.
+func (s *Store) AutoMode() (bool, error) {
+	pf, err := s.Read()
+	if err != nil {
+		return false, err
+	}
+	return pf.Auto, nil
+}
+
+// SetAutoMode flips the auto-fastest flag on profiles.json. The caller is
+// responsible for triggering a config rebuild + engine reload afterwards.
+func (s *Store) SetAutoMode(on bool) error {
+	pf, err := s.Read()
+	if err != nil {
+		return err
+	}
+	pf.Auto = on
+	return s.Write(pf)
+}
+
 // Rename sets a new human label on an existing profile.
 func (s *Store) Rename(name, newLabel string) error {
 	newLabel = strings.TrimSpace(newLabel)
@@ -257,13 +281,14 @@ func (s *Store) Add(label, kind string, cfg map[string]interface{}) (string, err
 	return name, nil
 }
 
-// Snapshot returns the per-profile specs the config rebuild needs and the
-// active profile's tag. Tags are forced onto each Config map, and Configs
-// are cloned so callers can mutate freely.
-func (s *Store) Snapshot() ([]Spec, string, error) {
+// Snapshot returns the per-profile specs the config rebuild needs, the
+// active profile's tag, and whether auto-fastest mode is on. Tags are
+// forced onto each Config map, and Configs are cloned so callers can
+// mutate freely.
+func (s *Store) Snapshot() ([]Spec, string, bool, error) {
 	pf, err := s.Read()
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	specs := make([]Spec, 0, len(pf.Profiles))
 	activeTag := ""
@@ -283,12 +308,10 @@ func (s *Store) Snapshot() ([]Spec, string, error) {
 			activeTag = tag
 		}
 	}
-	// Fall back to first profile if the stored "active" doesn't match any
-	// existing one (can happen after a manual edit / migration).
 	if activeTag == "" && len(specs) > 0 {
 		activeTag = specs[0].Tag
 	}
-	return specs, activeTag, nil
+	return specs, activeTag, pf.Auto, nil
 }
 
 // SetActive marks the named profile active after config.json was updated.
@@ -304,6 +327,41 @@ func (s *Store) SetActive(name string) error {
 		}
 	}
 	return fmt.Errorf("профиль не найден: %s", name)
+}
+
+// PeerHostPort returns (host, port) for a profile — used by the TCP-fallback
+// probe when the engine isn't up. Returns (host, 0) when the port can't be
+// determined from the profile config.
+func PeerHostPort(p Profile) (string, int) {
+	if p.Config == nil {
+		return "", 0
+	}
+	if p.Kind == KindOutbound {
+		host, _ := p.Config["server"].(string)
+		switch v := p.Config["server_port"].(type) {
+		case float64:
+			return host, int(v)
+		case int:
+			return host, v
+		}
+		return host, 0
+	}
+	peers, ok := p.Config["peers"].([]interface{})
+	if !ok || len(peers) == 0 {
+		return "", 0
+	}
+	p0, ok := peers[0].(map[string]interface{})
+	if !ok {
+		return "", 0
+	}
+	host, _ := p0["address"].(string)
+	switch v := p0["port"].(type) {
+	case float64:
+		return host, int(v)
+	case int:
+		return host, v
+	}
+	return host, 0
 }
 
 // PeerHost returns the server host/IP for a profile. Works for both endpoint

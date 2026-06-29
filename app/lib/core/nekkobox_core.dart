@@ -83,6 +83,12 @@ abstract class NekkoboxCore {
   String addProfileFromUri(String uri) =>
       _call('AddProfileFromURI', {'uri': uri}) as String;
 
+  /// Whether auto-fastest mode (urltest group) is on.
+  bool autoMode() => _call('AutoMode') as bool;
+
+  /// Toggles auto-fastest mode. Reloads the engine if it was running.
+  void setAutoMode(bool on) => _call('SetAutoMode', {'on': on});
+
   // ----- uptime -----
 
   Map<String, List<PingSample>> uptimeHistory() {

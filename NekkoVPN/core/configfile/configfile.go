@@ -138,6 +138,11 @@ const (
 	// profiles is `PUT /proxies/proxy {name: <tag>}` to the Clash API.
 	SelectorTag = "proxy"
 
+	// AutoTag is the optional `urltest` outbound that wraps the selector.
+	// When auto-fastest mode is on we make route.final point here and
+	// sing-box auto-picks the lowest-latency live profile every interval.
+	AutoTag = "auto"
+
 	kindEndpoint = "endpoint"
 	kindOutbound = "outbound"
 )
@@ -145,10 +150,18 @@ const (
 // systemOutboundTags are the outbounds we leave alone when rebuilding —
 // anything else is treated as profile-owned and gets replaced.
 var systemOutboundTags = map[string]bool{
-	"direct": true,
-	"block":  true,
-	"dns":    true,
+	"direct":  true,
+	"block":   true,
+	"dns":     true,
 	"dns-out": true,
+}
+
+// managedGroupTags are the outbound tags we own and unconditionally
+// rebuild every time — selector + urltest. Anything tagged with these in
+// the existing outbounds list gets dropped on the way through.
+var managedGroupTags = map[string]bool{
+	SelectorTag: true,
+	AutoTag:     true,
 }
 
 // RebuildActive loads every known profile into config.json under a single
@@ -161,7 +174,7 @@ var systemOutboundTags = map[string]bool{
 // migrateLegacyTags is true on first run after the selector model lands —
 // any route.final / dns.detour still pointing at "awg-ep" or "proxy-out"
 // gets rewritten to SelectorTag. After migration, this should be false.
-func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, legacyTags map[string]bool) error {
+func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, autoMode bool, legacyTags map[string]bool) error {
 	cfg, err := s.Read()
 	if err != nil {
 		return err
@@ -184,7 +197,8 @@ func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, legacyTags 
 	cfg["endpoints"] = endpoints
 
 	// Preserve system outbounds (direct/block/...) from the existing slice;
-	// drop everything else (old profile outbounds and stale selectors).
+	// drop everything else — old profile outbounds and our own managed
+	// groups (selector + urltest) get rebuilt from scratch below.
 	preserved := make([]interface{}, 0)
 	if existing, ok := cfg["outbounds"].([]interface{}); ok {
 		for _, ob := range existing {
@@ -193,7 +207,7 @@ func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, legacyTags 
 				continue
 			}
 			tag, _ := m["tag"].(string)
-			if systemOutboundTags[tag] {
+			if systemOutboundTags[tag] && !managedGroupTags[tag] {
 				preserved = append(preserved, m)
 			}
 		}
@@ -217,13 +231,19 @@ func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, legacyTags 
 			selector["default"] = activeTag
 		}
 		preserved = append(preserved, selector)
+		if autoMode {
+			preserved = append(preserved, autoOutbound(profileTags))
+		}
 	}
 	cfg["outbounds"] = preserved
 
-	// Re-point route.final and dns.servers[].detour at the selector.
-	// Anything still referencing legacy active tags ("awg-ep", "proxy-out")
-	// gets the same rewrite — first-boot migration after the refactor.
-	rewriteToSelector(cfg, legacyTags)
+	// Re-point route.final / dns.detour at whichever group is the head —
+	// urltest when auto mode is on, the manual selector otherwise.
+	head := SelectorTag
+	if autoMode && len(profileTags) > 0 {
+		head = AutoTag
+	}
+	rewriteRouteRefs(cfg, head, legacyTags)
 
 	// Keep ICMP routed direct whenever ANY profile is outbound-kind —
 	// the active selection might flip to one via Clash API at any time.
@@ -245,16 +265,16 @@ func containsTag(arr []interface{}, tag string) bool {
 	return false
 }
 
-// rewriteToSelector forces route.final, dns.final and any dns.servers[].detour
-// onto SelectorTag. We rewrite anything currently set (selector tag is
-// idempotent), plus anything in legacyTags (for migration).
-func rewriteToSelector(cfg map[string]interface{}, legacyTags map[string]bool) {
+// rewriteRouteRefs forces route.final / dns.detour onto `head` (selector
+// or urltest tag). Rewrites anything currently pointed at one of our
+// managed groups OR a legacy tag, leaving unrelated values alone.
+func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[string]bool) {
 	shouldRewrite := func(v string) bool {
-		return v == SelectorTag || legacyTags[v]
+		return managedGroupTags[v] || legacyTags[v]
 	}
 	if route, ok := cfg["route"].(map[string]interface{}); ok {
 		if v, _ := route["final"].(string); shouldRewrite(v) || v == "" {
-			route["final"] = SelectorTag
+			route["final"] = head
 		}
 	}
 	dns, ok := cfg["dns"].(map[string]interface{})
@@ -262,7 +282,7 @@ func rewriteToSelector(cfg map[string]interface{}, legacyTags map[string]bool) {
 		return
 	}
 	if v, _ := dns["final"].(string); shouldRewrite(v) {
-		dns["final"] = SelectorTag
+		dns["final"] = head
 	}
 	servers, _ := dns["servers"].([]interface{})
 	for _, srv := range servers {
@@ -271,8 +291,23 @@ func rewriteToSelector(cfg map[string]interface{}, legacyTags map[string]bool) {
 			continue
 		}
 		if v, _ := m["detour"].(string); shouldRewrite(v) {
-			m["detour"] = SelectorTag
+			m["detour"] = head
 		}
+	}
+}
+
+// autoOutbound builds the `urltest` block that wraps every profile and
+// continuously picks the fastest live one. Settings mirror what Karing /
+// Stash ship by default; tolerance=50 means "don't flap unless the new
+// candidate is at least 50ms faster than the current pick".
+func autoOutbound(profileTags []interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"tag":       AutoTag,
+		"type":      "urltest",
+		"outbounds": profileTags,
+		"url":       "http://cp.cloudflare.com/generate_204",
+		"interval":  "30s",
+		"tolerance": 50,
 	}
 }
 

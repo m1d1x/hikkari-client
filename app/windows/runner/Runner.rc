@@ -57,6 +57,20 @@ IDI_APP_ICON            ICON                    "resources\\app_icon.ico"
 
 /////////////////////////////////////////////////////////////////////////////
 //
+// Manifest — embedded as a Win32 resource (resource type 24 == RT_MANIFEST,
+// ID 1 == CREATEPROCESS_MANIFEST_RESOURCE_ID). This is what carries our
+// requireAdministrator UAC level into the final binary. We embed it here
+// rather than feeding the manifest file to MSBuild's ManifestTool step
+// (mt.exe), because mt.exe randomly fails with LNK1327 when antivirus
+// briefly holds the newly-linked exe open to scan. rc.exe baking it into
+// the resource section means the linker writes one final binary in one
+// pass and there's no post-link tool to race against.
+//
+1 24 "runner.exe.manifest"
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
 // Version
 //
 

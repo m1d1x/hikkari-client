@@ -141,6 +141,16 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 			return nil, err
 		}
 		return c.AddProfileFromURI(a.URI)
+	case "AutoMode":
+		return c.AutoMode()
+	case "SetAutoMode":
+		var a struct {
+			On bool `json:"on"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetAutoMode(a.On)
 
 	// ----- uptime -----
 	case "UptimeHistory":

@@ -1,6 +1,7 @@
-// Package uptime maintains a rolling per-profile history of ping samples.
-// The ping primitive itself is platform-split (ping_windows.go vs ping_other.go)
-// so the package compiles cleanly under gomobile for Android/iOS later.
+// Package uptime maintains a rolling per-profile history of probe samples.
+// The actual probe (Clash API delay through the proxy when the engine is up,
+// TCP-connect fallback when it isn't) is injected via the Probe interface
+// so the tracker stays decoupled from sing-box specifics.
 package uptime
 
 import (
@@ -11,7 +12,8 @@ import (
 	"time"
 )
 
-// Sample is one probe of one server. Stored as a compact JSON array per profile.
+// Sample is one probe of one profile. Stored as a compact JSON array per
+// profile in uptime-history.json.
 type Sample struct {
 	Ts    int64 `json:"ts"`
 	OK    bool  `json:"ok"`
@@ -19,26 +21,42 @@ type Sample struct {
 }
 
 const (
-	// PingInterval is how often each known profile is probed.
-	PingInterval = 1 * time.Second
-	// PingTimeoutMs is the per-probe deadline.
-	PingTimeoutMs = 900
-	// HistoryMax is the rolling window length (≈5 min at 1Hz).
+	// PingInterval is the *per-profile* window — every profile is probed
+	// once inside it. During development we keep this short (5s) so the
+	// graphs are visibly responsive; for shipped builds it should be bumped
+	// to 30-60s to be polite to the network.
+	PingInterval = 5 * time.Second
+	// PingTimeoutMs is the per-probe deadline. Clash API uses this for the
+	// HTTP delay request; the TCP fallback uses the same value.
+	PingTimeoutMs = 2000
+	// HistoryMax is the rolling window length (≈25 min at 5s intervals).
 	HistoryMax = 300
 )
 
-// HostProvider yields the list of "profile name -> host" pairs to probe.
-// The tracker calls it every tick — passing it in lets us avoid coupling
-// uptime to the profile package.
+// HostProvider yields the current "profile -> probe target" set. Called
+// every tick so additions / removals are picked up without restarting the
+// loop.
 type HostProvider func() []HostEntry
 
-// HostEntry pairs a profile name with the host to ping for it.
+// HostEntry pairs a profile name with everything the Probe needs to reach
+// it. Tag drives the Clash-API path (when the engine is up); Host + Port
+// drive the TCP fallback (when it isn't).
 type HostEntry struct {
-	Profile string
-	Host    string
+	Profile string // human name (key in history map)
+	Tag     string // sing-box outbound/endpoint tag, e.g. "p-main"
+	Host    string // server IP / hostname
+	Port    int    // server port (TCP fallback target)
 }
 
-// Tracker is a goroutine-safe in-memory history persisted to JSON on disk.
+// Probe is the abstraction over the live/fallback probe pair. Implementations
+// must be safe to call concurrently.
+type Probe interface {
+	// Run measures one sample. Returns (true, rttMs) on success, (false, 0)
+	// on any failure (timeout, DPI block, engine off + UDP-only port).
+	Run(ctx context.Context, h HostEntry) (ok bool, rttMs int)
+}
+
+// Tracker is the goroutine-safe in-memory history persisted to JSON on disk.
 type Tracker struct {
 	path string
 
@@ -90,63 +108,88 @@ func (t *Tracker) Snapshot() map[string][]Sample {
 	return out
 }
 
-// Forget drops the history for a single profile (used when a profile is deleted).
+// Forget drops the history for a single profile (used when a profile is
+// deleted).
 func (t *Tracker) Forget(profile string) {
 	t.mu.Lock()
 	delete(t.history, profile)
 	t.mu.Unlock()
 }
 
-// Run is a blocking ping loop. It exits when ctx is canceled. Pass it the
-// HostProvider that returns the current set of "name -> host" pairs.
-func (t *Tracker) Run(ctx context.Context, hosts HostProvider) {
-	ticker := time.NewTicker(PingInterval)
-	defer ticker.Stop()
-	t.tick(hosts)
+// Run is a blocking probe loop. It exits when ctx is canceled. Probes are
+// staggered *within* a PingInterval window so the network sees one
+// outgoing request every interval/N seconds rather than N simultaneous
+// bursts — important when several profiles share a server or the user
+// is on a tight connection.
+func (t *Tracker) Run(ctx context.Context, hosts HostProvider, probe Probe) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			t.tick(hosts)
+		default:
 		}
+		t.runWindow(ctx, hosts, probe)
 	}
 }
 
-func (t *Tracker) tick(hosts HostProvider) {
-	now := time.Now().Unix()
+// runWindow probes each profile exactly once over PingInterval, evenly
+// spaced. If a window slot finds no profiles (none configured yet) we
+// sleep through the whole window and try again next round.
+func (t *Tracker) runWindow(ctx context.Context, hosts HostProvider, probe Probe) {
 	entries := hosts()
-	type result struct {
-		profile string
-		ok      bool
-		rtt     int
+	if len(entries) == 0 {
+		select {
+		case <-ctx.Done():
+		case <-time.After(PingInterval):
+		}
+		return
 	}
-	results := make(chan result, len(entries))
+
+	windowStart := time.Now()
+	step := PingInterval / time.Duration(len(entries))
+
 	var wg sync.WaitGroup
-	for _, h := range entries {
-		if h.Host == "" {
+	for i, h := range entries {
+		if h.Profile == "" {
 			continue
 		}
-		h := h
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ok, rtt := pingHost(h.Host)
-			results <- result{profile: h.Profile, ok: ok, rtt: rtt}
-		}()
-	}
-	wg.Wait()
-	close(results)
-
-	for r := range results {
-		t.mu.Lock()
-		hist := t.history[r.profile]
-		hist = append(hist, Sample{Ts: now, OK: r.ok, RttMs: r.rtt})
-		if len(hist) > HistoryMax {
-			hist = hist[len(hist)-HistoryMax:]
+		// Sleep until this probe's slot inside the current window.
+		target := windowStart.Add(step * time.Duration(i))
+		if d := time.Until(target); d > 0 {
+			select {
+			case <-ctx.Done():
+				wg.Wait()
+				return
+			case <-time.After(d):
+			}
 		}
-		t.history[r.profile] = hist
-		t.mu.Unlock()
+		wg.Add(1)
+		go func(h HostEntry) {
+			defer wg.Done()
+			ok, rtt := probe.Run(ctx, h)
+			t.record(h.Profile, ok, rtt)
+		}(h)
+	}
+	// Make sure we don't shorten the window if the last slot's probe is
+	// still in flight — keeps the rhythm steady.
+	wg.Wait()
+	if rem := time.Until(windowStart.Add(PingInterval)); rem > 0 {
+		select {
+		case <-ctx.Done():
+		case <-time.After(rem):
+		}
 	}
 	t.Save()
+}
+
+func (t *Tracker) record(profile string, ok bool, rtt int) {
+	now := time.Now().Unix()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	hist := t.history[profile]
+	hist = append(hist, Sample{Ts: now, OK: ok, RttMs: rtt})
+	if len(hist) > HistoryMax {
+		hist = hist[len(hist)-HistoryMax:]
+	}
+	t.history[profile] = hist
 }

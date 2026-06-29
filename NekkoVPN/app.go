@@ -84,5 +84,7 @@ func (a *App) SwitchProfile(name string) error           { return a.core.SwitchP
 func (a *App) AddProfileFromURI(uri string) (string, error) {
 	return a.core.AddProfileFromURI(uri)
 }
+func (a *App) AutoMode() (bool, error) { return a.core.AutoMode() }
+func (a *App) SetAutoMode(on bool) error { return a.core.SetAutoMode(on) }
 
 func (a *App) GetUptimeHistory() map[string][]PingSample { return a.core.UptimeHistory() }
