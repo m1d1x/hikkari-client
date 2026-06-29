@@ -21,9 +21,18 @@ class PowerToggle extends StatelessWidget {
     final s = context.watch<AppState>();
     final running = s.isRunning;
     final busy = s.busy;
+    final err = s.lastError;
 
-    final label = busy ? 'подождите' : (running ? 'вкл' : 'выкл');
-    final labelColor = busy ? t.textMuted : (running ? t.ok : t.textMuted);
+    final label = busy
+        ? 'подождите'
+        : err != null
+            ? 'ошибка'
+            : (running ? 'вкл' : 'выкл');
+    final labelColor = busy
+        ? t.textMuted
+        : err != null
+            ? t.bad
+            : (running ? t.ok : t.textMuted);
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
@@ -84,6 +93,22 @@ class PowerToggle extends StatelessWidget {
               letterSpacing: 1.2,
             ),
           ),
+          if (err != null) ...[
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: SelectableText(
+                err,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: t.bad,
+                  fontFamily: t.monoFamily,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

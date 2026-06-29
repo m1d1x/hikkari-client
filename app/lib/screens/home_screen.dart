@@ -4,6 +4,7 @@ import '../theme/tokens.dart';
 import '../widgets/apply_bar.dart';
 import '../widgets/brand_header.dart';
 import '../widgets/current_profile_card.dart';
+import '../widgets/log_overlay.dart';
 import '../widgets/power_toggle.dart';
 import '../widgets/route_section.dart';
 
@@ -33,7 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               BrandHeader(onTapIp: _toggleLog),
-              if (_logOpen) _LogPlaceholder(onClose: _toggleLog),
+              if (_logOpen) LogOverlay(onClose: _toggleLog),
               const PowerToggle(),
               const CurrentProfileCard(),
               const RouteSection(),
@@ -50,35 +51,3 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// Stand-in until the real log overlay widget lands. Keeps the toggle
-/// behaviour visible so we don't lose the "tap IP → open log" UX from the
-/// Svelte version while we're mid-port.
-class _LogPlaceholder extends StatelessWidget {
-  final VoidCallback onClose;
-  const _LogPlaceholder({required this.onClose});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: t.surface,
-        border: Border.all(color: t.border),
-        borderRadius: BorderRadius.circular(t.radius),
-      ),
-      child: Row(
-        children: [
-          Text('журнал (placeholder)', style: TextStyle(color: t.textMuted)),
-          const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.close, size: 18),
-            onPressed: onClose,
-            color: t.textMuted,
-          ),
-        ],
-      ),
-    );
-  }
-}

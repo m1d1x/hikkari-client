@@ -72,14 +72,47 @@ class AppState extends ChangeNotifier {
   // ----- mutations -----
 
   Future<void> toggleVpn() async {
-    await _withBusy(() {
+    await _withBusy(() async {
       if (isRunning) {
         _core.stopVpn();
-      } else {
-        _core.startVpn();
+        _health = _core.health();
+        return;
       }
+      _core.startVpn();
+      // sing-box can exit asynchronously a few hundred ms after Start (e.g.
+      // TUN access denied). Give it a moment, then sample health — if the
+      // core died, pull the last FATAL/[singbox.err] line from the log so
+      // the UI shows something more actionable than just "выкл".
+      await Future<void>.delayed(const Duration(milliseconds: 700));
       _health = _core.health();
+      if (!isRunning) {
+        final msg = _extractLogError(_core.logTail());
+        if (msg != null) {
+          throw NekkoboxError(msg);
+        }
+      }
     });
+  }
+
+  /// Extracts the most recent fatal-ish line from the engine log. We look
+  /// for sing-box's own FATAL marker first, then any [singbox.err] pipe
+  /// line; falls back to the last "failed" line. Returns null if nothing
+  /// useful is in the tail (so the caller doesn't overwrite a null error
+  /// with garbage).
+  String? _extractLogError(String tail) {
+    final lines = tail.split('\n');
+    String? lastErr;
+    for (final raw in lines) {
+      // Strip ANSI color codes that sing-box embeds (e.g. \x1b[31mFATAL\x1b[0m).
+      final line = raw.replaceAll(RegExp(r'\x1B\[[0-9;]*[A-Za-z]'), '');
+      if (line.contains('FATAL') ||
+          line.contains('[singbox.err]') ||
+          line.contains('failed to start') ||
+          line.contains('Access is denied')) {
+        lastErr = line.trim();
+      }
+    }
+    return lastErr;
   }
 
   Future<void> switchProfile(String name) async {
@@ -105,6 +138,18 @@ class AppState extends ChangeNotifier {
       _core.deleteProfile(name);
       _profiles = _core.profiles();
     });
+  }
+
+  /// Imports a profile from a server URI. Returns the generated profile
+  /// name on success, or null if the import failed (error is stored in
+  /// [lastError]).
+  Future<String?> addProfileFromUri(String uri) async {
+    String? name;
+    await _withBusy(() {
+      name = _core.addProfileFromUri(uri);
+      _profiles = _core.profiles();
+    });
+    return name;
   }
 
   Future<void> addRule(String category, String value) async {

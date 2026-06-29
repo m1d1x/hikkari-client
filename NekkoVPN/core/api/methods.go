@@ -6,6 +6,7 @@
 package api
 
 import (
+	"NekkoVPN/core/clashapi"
 	"NekkoVPN/core/configfile"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/profile"
@@ -77,14 +78,17 @@ func (c *Core) DeleteProfile(name string) error {
 	return nil
 }
 
-// SwitchProfile swaps only the endpoint block in config.json to the chosen
-// server, marks it active, and (if the core is up) restarts to apply.
+// SwitchProfile rewrites config.json to point at the chosen server (either
+// cfg["endpoints"] for WireGuard-shaped profiles or cfg["outbounds"] for
+// outbound-shaped ones), updates route.final / dns.detour, marks it active,
+// and (if the core is up) restarts to apply.
 func (c *Core) SwitchProfile(name string) error {
-	endpoints, err := c.profiles.PrepareSwitch(name)
+	kind, block, err := c.profiles.PrepareSwitch(name)
 	if err != nil {
 		return err
 	}
-	if err := c.configs.SetEndpoints(endpoints); err != nil {
+	newTag := profile.TagForKind(kind)
+	if err := c.configs.ApplyActive(kind, block, newTag, profile.ActiveTags, profile.SharedOutboundTag); err != nil {
 		return err
 	}
 	if err := c.profiles.SetActive(name); err != nil {
@@ -94,6 +98,16 @@ func (c *Core) SwitchProfile(name string) error {
 		return c.vpn.Restart()
 	}
 	return nil
+}
+
+// AddProfileFromURI parses a server URI (currently hysteria2://) and appends
+// it as a new profile. Returns the generated profile name on success.
+func (c *Core) AddProfileFromURI(uri string) (string, error) {
+	d, err := profile.ParseURI(uri)
+	if err != nil {
+		return "", err
+	}
+	return c.profiles.Add(d.Label, d.Kind, d.Config)
 }
 
 // ============================================================

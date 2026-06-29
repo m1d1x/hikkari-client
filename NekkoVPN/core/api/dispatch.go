@@ -133,6 +133,14 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 			return nil, err
 		}
 		return nil, c.SwitchProfile(a.Name)
+	case "AddProfileFromURI":
+		var a struct {
+			URI string `json:"uri"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return c.AddProfileFromURI(a.URI)
 
 	// ----- uptime -----
 	case "UptimeHistory":

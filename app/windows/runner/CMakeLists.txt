@@ -38,3 +38,16 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+# Drop the freshly-built Go shared library (nekkobox.dll) next to the runner
+# exe after every build, so dart:ffi finds it on the loader path. The DLL is
+# produced by `go build -buildmode=c-shared` from NekkoVPN/cmd/nekkobox-ffi
+# and committed at the repo root.
+set(NEKKOBOX_DLL_SRC "${CMAKE_SOURCE_DIR}/../../nekkobox.dll")
+add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          "${NEKKOBOX_DLL_SRC}"
+          "$<TARGET_FILE_DIR:${BINARY_NAME}>/nekkobox.dll"
+  COMMENT "Copy nekkobox.dll → $<TARGET_FILE_DIR:${BINARY_NAME}>"
+  VERBATIM
+)

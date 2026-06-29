@@ -1,6 +1,8 @@
 // Package profile manages profiles.json — the list of VPN servers the user
-// can switch between. Switching a profile only swaps cfg["endpoints"] in the
-// shared config.json; route/dns/whitelist rules stay shared across servers.
+// can switch between. Switching a profile swaps either cfg["endpoints"] (for
+// WireGuard-shaped protocols) or one entry in cfg["outbounds"] (for
+// outbound-shaped protocols like Hysteria2/VLESS); route/dns/whitelist rules
+// stay shared across servers.
 package profile
 
 import (
@@ -10,15 +12,83 @@ import (
 	"strings"
 )
 
-// SharedEndpointTag is forced onto every active endpoint so route.final and
-// dns.detour references in config.json keep matching after a profile switch.
-const SharedEndpointTag = "awg-ep"
+// Kind tells SwitchProfile which sing-box section to write the active profile
+// into. "endpoint" → cfg["endpoints"][0]; "outbound" → append/replace in
+// cfg["outbounds"] keeping the system outbounds (direct/block) in place.
+const (
+	KindEndpoint = "endpoint"
+	KindOutbound = "outbound"
+)
 
-// Profile is one server entry stored in profiles.json.
+// SelectorTag is the single sing-box outbound that route.final and
+// dns.detour point at. It's a `selector` group that lists every profile;
+// switching profiles is a Clash-API call against this tag, not a config
+// rewrite — so it never changes once written.
+const SelectorTag = "proxy"
+
+// Historical pre-selector tag values. RebuildActive only references them
+// when scrubbing legacy configs during migration.
+const (
+	SharedEndpointTag = "awg-ep"
+	SharedOutboundTag = "proxy-out"
+)
+
+// LegacyActiveTags is the set of tag values that pre-selector config files
+// may have in route.final / dns.detour. Migration rewrites any of these to
+// SelectorTag.
+var LegacyActiveTags = map[string]bool{
+	SharedEndpointTag: true,
+	SharedOutboundTag: true,
+}
+
+// ProfileTag returns the canonical sing-box tag for a profile with the given
+// `name`. Uses a "p-" prefix so we never collide with system outbounds like
+// "direct" or "block".
+func ProfileTag(name string) string { return "p-" + name }
+
+// Spec is the minimum info configfile.RebuildActive needs per profile.
+type Spec struct {
+	Tag    string                 // ProfileTag(name)
+	Kind   string                 // KindEndpoint | KindOutbound
+	Config map[string]interface{} // sing-box block (Spec.Tag is forced onto it)
+	Name   string                 // raw profile name (for debugging / logs)
+}
+
+// Profile is one server entry stored in profiles.json. Config is the
+// sing-box-shaped block (endpoint object for KindEndpoint, outbound object
+// for KindOutbound).
 type Profile struct {
-	Name     string                 `json:"name"`
-	Label    string                 `json:"label"`
-	Endpoint map[string]interface{} `json:"endpoint"`
+	Name   string                 `json:"name"`
+	Label  string                 `json:"label"`
+	Kind   string                 `json:"kind"`
+	Config map[string]interface{} `json:"config"`
+}
+
+// UnmarshalJSON tolerates the legacy on-disk shape that used "endpoint"
+// instead of "config" and had no "kind" field at all. Anything legacy is
+// treated as KindEndpoint.
+func (p *Profile) UnmarshalJSON(data []byte) error {
+	var r struct {
+		Name     string                 `json:"name"`
+		Label    string                 `json:"label"`
+		Kind     string                 `json:"kind"`
+		Config   map[string]interface{} `json:"config"`
+		Endpoint map[string]interface{} `json:"endpoint"`
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		return err
+	}
+	p.Name = r.Name
+	p.Label = r.Label
+	p.Kind = r.Kind
+	p.Config = r.Config
+	if p.Config == nil && r.Endpoint != nil {
+		p.Config = r.Endpoint
+	}
+	if p.Kind == "" {
+		p.Kind = KindEndpoint
+	}
+	return nil
 }
 
 // File is the on-disk shape of profiles.json.
@@ -76,8 +146,13 @@ func (s *Store) Exists() bool {
 // something to render.
 func (s *Store) SeedFromEndpoint(ep map[string]interface{}) error {
 	return s.Write(&File{
-		Active:   "main",
-		Profiles: []Profile{{Name: "main", Label: "Основной", Endpoint: ep}},
+		Active: "main",
+		Profiles: []Profile{{
+			Name:   "main",
+			Label:  "Основной",
+			Kind:   KindEndpoint,
+			Config: ep,
+		}},
 	})
 }
 
@@ -93,8 +168,8 @@ func (s *Store) List() ([]Info, error) {
 			Name:     p.Name,
 			Label:    p.Label,
 			Active:   p.Name == pf.Active,
-			Endpoint: PeerEndpoint(p.Endpoint),
-			Protocol: prettyProtocol(p.Endpoint),
+			Endpoint: peerEndpointForProfile(p),
+			Protocol: prettyProtocol(p),
 		})
 	}
 	return out, nil
@@ -156,32 +231,64 @@ func (s *Store) Delete(name string) error {
 	return s.Write(pf)
 }
 
-// PrepareSwitch returns the endpoints array to write into config.json for
-// the named profile. The caller is responsible for writing the endpoints,
-// marking the profile active, and restarting the core. Returns the endpoint
-// map (with the shared tag set) so callers can pass it straight into
-// Store.SetEndpoints.
-func (s *Store) PrepareSwitch(name string) ([]interface{}, error) {
+// Add appends a new profile with a unique name derived from label.
+func (s *Store) Add(label, kind string, cfg map[string]interface{}) (string, error) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return "", fmt.Errorf("название не может быть пустым")
+	}
+	if cfg == nil {
+		return "", fmt.Errorf("конфигурация пустая")
+	}
 	pf, err := s.Read()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	var target *Profile
-	for i := range pf.Profiles {
-		if pf.Profiles[i].Name == name {
-			target = &pf.Profiles[i]
-			break
+	name := uniqueName(pf, label)
+	pf.Profiles = append(pf.Profiles, Profile{
+		Name:   name,
+		Label:  label,
+		Kind:   kind,
+		Config: cfg,
+	})
+	if err := s.Write(pf); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// Snapshot returns the per-profile specs the config rebuild needs and the
+// active profile's tag. Tags are forced onto each Config map, and Configs
+// are cloned so callers can mutate freely.
+func (s *Store) Snapshot() ([]Spec, string, error) {
+	pf, err := s.Read()
+	if err != nil {
+		return nil, "", err
+	}
+	specs := make([]Spec, 0, len(pf.Profiles))
+	activeTag := ""
+	for _, p := range pf.Profiles {
+		if p.Config == nil {
+			continue
+		}
+		kind := p.Kind
+		if kind == "" {
+			kind = KindEndpoint
+		}
+		tag := ProfileTag(p.Name)
+		cfg := cloneMap(p.Config)
+		cfg["tag"] = tag
+		specs = append(specs, Spec{Tag: tag, Kind: kind, Config: cfg, Name: p.Name})
+		if p.Name == pf.Active {
+			activeTag = tag
 		}
 	}
-	if target == nil {
-		return nil, fmt.Errorf("профиль не найден: %s", name)
+	// Fall back to first profile if the stored "active" doesn't match any
+	// existing one (can happen after a manual edit / migration).
+	if activeTag == "" && len(specs) > 0 {
+		activeTag = specs[0].Tag
 	}
-	if target.Endpoint == nil {
-		return nil, fmt.Errorf("у профиля %q нет данных сервера", name)
-	}
-	ep := target.Endpoint
-	ep["tag"] = SharedEndpointTag
-	return []interface{}{ep}, nil
+	return specs, activeTag, nil
 }
 
 // SetActive marks the named profile active after config.json was updated.
@@ -199,8 +306,22 @@ func (s *Store) SetActive(name string) error {
 	return fmt.Errorf("профиль не найден: %s", name)
 }
 
-// PeerHost extracts peer[0].address (the server IP/host) from an endpoint map.
-func PeerHost(ep map[string]interface{}) string {
+// PeerHost returns the server host/IP for a profile. Works for both endpoint
+// (peers[0].address) and outbound (server) shapes.
+func PeerHost(p Profile) string {
+	if p.Config == nil {
+		return ""
+	}
+	if p.Kind == KindOutbound {
+		if s, _ := p.Config["server"].(string); s != "" {
+			return s
+		}
+		return ""
+	}
+	return endpointPeerHost(p.Config)
+}
+
+func endpointPeerHost(ep map[string]interface{}) string {
 	peers, ok := ep["peers"].([]interface{})
 	if !ok || len(peers) == 0 {
 		return ""
@@ -215,8 +336,28 @@ func PeerHost(ep map[string]interface{}) string {
 	return ""
 }
 
-// PeerEndpoint formats "host:port" out of an AWG endpoint map.
-func PeerEndpoint(ep map[string]interface{}) string {
+func peerEndpointForProfile(p Profile) string {
+	if p.Config == nil {
+		return ""
+	}
+	if p.Kind == KindOutbound {
+		host, _ := p.Config["server"].(string)
+		if host == "" {
+			return ""
+		}
+		switch v := p.Config["server_port"].(type) {
+		case float64:
+			return fmt.Sprintf("%s:%d", host, int(v))
+		case int:
+			return fmt.Sprintf("%s:%d", host, v)
+		default:
+			return host
+		}
+	}
+	return endpointPeerString(p.Config)
+}
+
+func endpointPeerString(ep map[string]interface{}) string {
 	peers, ok := ep["peers"].([]interface{})
 	if !ok || len(peers) == 0 {
 		return ""
@@ -239,16 +380,74 @@ func PeerEndpoint(ep map[string]interface{}) string {
 	}
 }
 
-func prettyProtocol(ep map[string]interface{}) string {
-	t, _ := ep["type"].(string)
+func prettyProtocol(p Profile) string {
+	if p.Config == nil {
+		return "—"
+	}
+	t, _ := p.Config["type"].(string)
 	switch strings.ToLower(t) {
 	case "awg":
 		return "AmneziaWG"
 	case "wireguard":
 		return "WireGuard"
+	case "hysteria2":
+		return "Hysteria2"
+	case "vless":
+		return "VLESS"
+	case "shadowsocks":
+		return "Shadowsocks"
+	case "trojan":
+		return "Trojan"
 	case "":
 		return "—"
 	default:
 		return strings.ToUpper(t)
 	}
+}
+
+func cloneMap(m map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func uniqueName(pf *File, label string) string {
+	base := slugify(label)
+	if base == "" {
+		base = "profile"
+	}
+	taken := make(map[string]bool, len(pf.Profiles))
+	for _, p := range pf.Profiles {
+		taken[p.Name] = true
+	}
+	if !taken[base] {
+		return base
+	}
+	for i := 2; ; i++ {
+		n := fmt.Sprintf("%s-%d", base, i)
+		if !taken[n] {
+			return n
+		}
+	}
+}
+
+func slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevDash = false
+		case r == ' ' || r == '-' || r == '_':
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

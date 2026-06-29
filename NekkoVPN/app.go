@@ -81,5 +81,8 @@ func (a *App) ActiveProfile() (string, error)            { return a.core.ActiveP
 func (a *App) RenameProfile(name, newLabel string) error { return a.core.RenameProfile(name, newLabel) }
 func (a *App) DeleteProfile(name string) error           { return a.core.DeleteProfile(name) }
 func (a *App) SwitchProfile(name string) error           { return a.core.SwitchProfile(name) }
+func (a *App) AddProfileFromURI(uri string) (string, error) {
+	return a.core.AddProfileFromURI(uri)
+}
 
 func (a *App) GetUptimeHistory() map[string][]PingSample { return a.core.UptimeHistory() }

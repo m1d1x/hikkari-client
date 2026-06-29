@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import 'import_profile_dialog.dart';
 import 'profile_tile.dart';
 
 /// Bottom sheet with the full profile list. Opened from
@@ -122,7 +123,7 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
       );
 
   Widget _header(NekkoTokens t, int count) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 6, 20, 10),
+        padding: const EdgeInsets.fromLTRB(20, 6, 12, 10),
         child: Row(
           children: [
             Text(
@@ -141,6 +142,16 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
                 fontSize: 12,
                 fontFamily: t.monoFamily,
               ),
+            ),
+            const Spacer(),
+            IconButton(
+              tooltip: 'импорт по ссылке',
+              iconSize: 16,
+              padding: EdgeInsets.zero,
+              constraints:
+                  const BoxConstraints(minWidth: 32, minHeight: 32),
+              onPressed: () => ImportProfileDialog.show(context),
+              icon: Icon(Icons.add, color: t.textMuted),
             ),
           ],
         ),

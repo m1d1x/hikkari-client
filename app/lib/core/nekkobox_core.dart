@@ -77,6 +77,12 @@ abstract class NekkoboxCore {
   void switchProfile(String name) =>
       _call('SwitchProfile', {'name': name});
 
+  /// Imports a profile from a server URI (e.g. `hysteria2://...`). Returns
+  /// the generated profile name on success; throws [NekkoboxError] if the
+  /// URI scheme is unsupported or malformed.
+  String addProfileFromUri(String uri) =>
+      _call('AddProfileFromURI', {'uri': uri}) as String;
+
   // ----- uptime -----
 
   Map<String, List<PingSample>> uptimeHistory() {

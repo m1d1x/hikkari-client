@@ -168,7 +168,7 @@ func (c *Core) vpnHosts() []string {
 	}
 	out := make([]string, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
-		if h := profile.PeerHost(p.Endpoint); h != "" {
+		if h := profile.PeerHost(p); h != "" {
 			out = append(out, h)
 		}
 	}
@@ -183,7 +183,7 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 	}
 	out := make([]uptime.HostEntry, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
-		out = append(out, uptime.HostEntry{Profile: p.Name, Host: profile.PeerHost(p.Endpoint)})
+		out = append(out, uptime.HostEntry{Profile: p.Name, Host: profile.PeerHost(p)})
 	}
 	return out
 }
