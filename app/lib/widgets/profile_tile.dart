@@ -116,6 +116,9 @@ class _ProfileTileState extends State<ProfileTile> {
         expanded: widget.expanded,
         onTap: widget.onToggleExpand,
       ),
+      // _ExpandButton — 34×34, иначе адаптивная раскладка карточки даёт
+      // на trailing 18px и trailing вылезает за правый бордер.
+      trailingWidth: 34,
       footer: _detail(context, t, hist),
       footerVisible: widget.expanded,
     );

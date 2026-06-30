@@ -6,6 +6,7 @@ import 'dart:io' show File, Platform;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'core/nekkobox_core.dart';
 import 'core/nekkobox_ffi.dart';
@@ -14,7 +15,20 @@ import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    await windowManager.ensureInitialized();
+    const opts = WindowOptions(
+      titleBarStyle: TitleBarStyle.hidden,
+      windowButtonVisibility: false,
+      backgroundColor: Color(0xFF0E0E10),
+    );
+    await windowManager.waitUntilReadyToShow(opts, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
   runApp(const NekkoboxApp());
 }
 

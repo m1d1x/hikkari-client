@@ -118,29 +118,29 @@ func TestCall_UptimeHistory_ReturnsObject(t *testing.T) {
 
 func TestCall_AddRule_RoundTrip(t *testing.T) {
 	c := initCore(t)
-	// Whitelist on an empty config — no config.json, so this should error.
-	// We need to seed a minimal config first.
+	// AddRule + Routing round-trip — seed a minimal config so applyRouting
+	// has something to write back into.
 	seed := []byte(`{"route":{"rules":[]}}`)
 	if err := writeFile(filepath.Join(c.BaseDir(), "config.json"), seed); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	args := `{"category":"domains","value":"example.com"}`
+	args := `{"mode":"bypass","category":"domains","value":"example.com"}`
 	e := decode(t, c.Call("AddRule", args))
 	if !e.Ok {
 		t.Fatalf("AddRule: %s", e.Error)
 	}
 
-	e = decode(t, c.Call("Whitelist", ""))
+	e = decode(t, c.Call("Routing", ""))
 	if !e.Ok {
-		t.Fatalf("Whitelist: %s", e.Error)
+		t.Fatalf("Routing: %s", e.Error)
 	}
-	var wl Whitelist
-	if err := json.Unmarshal(e.Data, &wl); err != nil {
-		t.Fatalf("decode whitelist: %v", err)
+	var rs RoutingState
+	if err := json.Unmarshal(e.Data, &rs); err != nil {
+		t.Fatalf("decode routing: %v", err)
 	}
-	if len(wl.Domains) != 1 || wl.Domains[0] != "example.com" {
-		t.Fatalf("expected [example.com], got %+v", wl.Domains)
+	if len(rs.Bypass.Domains) != 1 || rs.Bypass.Domains[0] != "example.com" {
+		t.Fatalf("expected bypass.domains=[example.com], got %+v", rs.Bypass.Domains)
 	}
 }
 

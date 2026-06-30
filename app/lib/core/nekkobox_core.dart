@@ -48,16 +48,26 @@ abstract class NekkoboxCore {
 
   String logTail() => _call('LogTail') as String;
 
-  // ----- whitelist -----
+  // ----- routing -----
 
-  Whitelist whitelist() =>
-      Whitelist.fromJson(_call('Whitelist') as Map<String, dynamic>);
+  RoutingState routing() =>
+      RoutingState.fromJson(_call('Routing') as Map<String, dynamic>);
 
-  void addRule(String category, String value) =>
-      _call('AddRule', {'category': category, 'value': value});
+  void setRoutingEnabled(bool on) =>
+      _call('SetRoutingEnabled', {'on': on});
 
-  void removeRule(String category, String value) =>
-      _call('RemoveRule', {'category': category, 'value': value});
+  void setRoutingMode(RoutingMode mode) =>
+      _call('SetRoutingMode', {'mode': mode.wire});
+
+  void addRule(RoutingMode mode, String category, String value) => _call(
+        'AddRule',
+        {'mode': mode.wire, 'category': category, 'value': value},
+      );
+
+  void removeRule(RoutingMode mode, String category, String value) => _call(
+        'RemoveRule',
+        {'mode': mode.wire, 'category': category, 'value': value},
+      );
 
   // ----- profiles -----
 

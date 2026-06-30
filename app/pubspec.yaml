@@ -37,6 +37,7 @@ dependencies:
   ffi: ^2.2.0
   path: ^1.9.1
   provider: ^6.1.5+1
+  window_manager: ^0.4.3
 
 dev_dependencies:
   flutter_test:

@@ -33,7 +33,7 @@ class CurrentProfileCard extends StatelessWidget {
         : (s.uptime[active.name] ?? const <PingSample>[]);
 
     return ProfileSummaryCard(
-      title: active?.label ?? 'выбрать профиль',
+      title: (active?.label ?? 'выбрать профиль').toLowerCase(),
       samples: hist,
       selected: active != null,
       onTap: s.busy ? null : () => ProfilesSheet.show(context),

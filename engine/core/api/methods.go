@@ -17,10 +17,11 @@ import (
 // Re-exported types — same Go type, shorter name inside api/. JSON shape is
 // unchanged, so every UI (Wails, Flutter, gomobile) sees the same fields.
 type (
-	HealthInfo  = health.Info
-	Whitelist   = configfile.Whitelist
-	ProfileInfo = profile.Info
-	PingSample  = uptime.Sample
+	HealthInfo   = health.Info
+	RoutingState = configfile.RoutingState
+	RoutingMode  = configfile.RoutingMode
+	ProfileInfo  = profile.Info
+	PingSample   = uptime.Sample
 )
 
 // ============================================================
@@ -50,13 +51,25 @@ func (c *Core) ExternalIP() string { return c.health.ExternalIP() }
 func (c *Core) LogTail() string { return c.logger.Tail() }
 
 // ============================================================
-//  Whitelist (bypass-VPN route rules)
+//  Routing (split-tunnel: master toggle + mode + per-mode lists)
 // ============================================================
 
-func (c *Core) Whitelist() (Whitelist, error)        { return c.configs.GetWhitelist() }
-func (c *Core) AddRule(category, value string) error { return c.configs.AddRule(category, value) }
-func (c *Core) RemoveRule(category, value string) error {
-	return c.configs.RemoveRule(category, value)
+func (c *Core) Routing() (RoutingState, error) { return c.configs.ReadRouting() }
+
+func (c *Core) SetRoutingEnabled(on bool) error {
+	return c.configs.SetRoutingEnabled(on)
+}
+
+func (c *Core) SetRoutingMode(mode string) error {
+	return c.configs.SetRoutingMode(RoutingMode(mode))
+}
+
+func (c *Core) AddRule(mode, category, value string) error {
+	return c.configs.AddRouteRule(RoutingMode(mode), category, value)
+}
+
+func (c *Core) RemoveRule(mode, category, value string) error {
+	return c.configs.RemoveRouteRule(RoutingMode(mode), category, value)
 }
 
 // ============================================================

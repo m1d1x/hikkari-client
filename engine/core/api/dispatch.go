@@ -81,27 +81,45 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 	case "LogTail":
 		return c.LogTail(), nil
 
-	// ----- whitelist -----
-	case "Whitelist":
-		return c.Whitelist()
+	// ----- routing -----
+	case "Routing":
+		return c.Routing()
+	case "SetRoutingEnabled":
+		var a struct {
+			On bool `json:"on"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetRoutingEnabled(a.On)
+	case "SetRoutingMode":
+		var a struct {
+			Mode string `json:"mode"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetRoutingMode(a.Mode)
 	case "AddRule":
 		var a struct {
+			Mode     string `json:"mode"`
 			Category string `json:"category"`
 			Value    string `json:"value"`
 		}
 		if err := decodeArgs(argsJSON, &a); err != nil {
 			return nil, err
 		}
-		return nil, c.AddRule(a.Category, a.Value)
+		return nil, c.AddRule(a.Mode, a.Category, a.Value)
 	case "RemoveRule":
 		var a struct {
+			Mode     string `json:"mode"`
 			Category string `json:"category"`
 			Value    string `json:"value"`
 		}
 		if err := decodeArgs(argsJSON, &a); err != nil {
 			return nil, err
 		}
-		return nil, c.RemoveRule(a.Category, a.Value)
+		return nil, c.RemoveRule(a.Mode, a.Category, a.Value)
 
 	// ----- profiles -----
 	case "Profiles":

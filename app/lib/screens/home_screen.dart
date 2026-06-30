@@ -7,6 +7,7 @@ import '../widgets/current_profile_card.dart';
 import '../widgets/log_overlay.dart';
 import '../widgets/power_toggle.dart';
 import '../widgets/route_section.dart';
+import '../widgets/window_titlebar.dart';
 
 /// The single-page home of the app. Stacks the same vertical sections the
 /// Svelte UI uses; each section is its own widget so refactors are cheap.
@@ -29,24 +30,29 @@ class _HomeScreenState extends State<HomeScreen> {
     final t = context.tokens;
     return Scaffold(
       backgroundColor: t.bg,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              BrandHeader(onOpenLogs: _openLog),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const WindowTitlebar(),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    BrandHeader(onOpenLogs: _openLog),
               if (_logOpen) LogOverlay(onClose: _closeLog),
               const PowerToggle(),
               const CurrentProfileCard(),
               const RouteSection(),
-              const ApplyBar(),
-              // Profiles, route/whitelist, items, apply-bar all land here
-              // in follow-up tasks. Layout is intentionally bare for now —
-              // it has to look right with just header + power before we
-              // start sandwiching more sections in.
-            ],
+                    const ApplyBar(),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

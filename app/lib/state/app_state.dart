@@ -6,6 +6,16 @@ import '../core/envelope.dart';
 import '../core/models.dart';
 import '../core/nekkobox_core.dart';
 
+/// Dev-only kill switch for the routing pipeline. When true, every routing
+/// mutation (master toggle, mode flip, list edit) updates Dart state only
+/// and logs to the debug console — the engine is NOT touched, so an external
+/// sing-box session keeps running. Flip back to false to wire to backend.
+const bool kRoutingDryRun = true;
+
+void _rlog(String msg) {
+  debugPrint('[routing${kRoutingDryRun ? '/dry' : ''}] $msg');
+}
+
 /// Single source of truth for the UI. Owns the [NekkoboxCore] handle, polls
 /// Health() once a second, and exposes everything the screens need through
 /// plain getters. Widgets watch the notifier via [provider] and rebuild on
@@ -23,11 +33,14 @@ class AppState extends ChangeNotifier {
 
   HealthInfo? _health;
   List<ProfileInfo> _profiles = const [];
-  Whitelist _whitelist =
-      const Whitelist(domains: [], ips: [], processes: []);
+  RoutingState _routing = const RoutingState.initial();
   Map<String, List<PingSample>> _uptime = const {};
   bool _busy = false;
-  bool _whitelistDirty = false;
+  // True between a routing list edit and the engine restart that picks it up.
+  // The UI uses this for the "применяется… / применено" badge near the mode row.
+  RoutingApplyStatus _routingApply = RoutingApplyStatus.idle;
+  Timer? _routingDebounce;
+  Timer? _routingAppliedFade;
   bool _autoMode = false;
   String? _lastError;
 
@@ -36,10 +49,10 @@ class AppState extends ChangeNotifier {
   // ----- getters -----
   HealthInfo? get health => _health;
   List<ProfileInfo> get profiles => _profiles;
-  Whitelist get whitelist => _whitelist;
+  RoutingState get routing => _routing;
   Map<String, List<PingSample>> get uptime => _uptime;
   bool get busy => _busy;
-  bool get whitelistDirty => _whitelistDirty;
+  RoutingApplyStatus get routingApply => _routingApply;
   bool get autoMode => _autoMode;
   String? get lastError => _lastError;
   bool get isRunning => _health?.running ?? false;
@@ -56,7 +69,14 @@ class AppState extends ChangeNotifier {
   void start() {
     _safeReload(() {
       _profiles = _core.profiles();
-      _whitelist = _core.whitelist();
+      // In dry-run we deliberately skip reading routing from the engine —
+      // any leftover live config shouldn't taint the UI we're tweaking.
+      if (!kRoutingDryRun) {
+        _routing = _core.routing();
+      } else {
+        _rlog('start: dry-run, routing kept at ${_routing.mode.wire} '
+            'enabled=${_routing.enabled}');
+      }
       _health = _core.health();
       _uptime = _core.uptimeHistory();
       _autoMode = _core.autoMode();
@@ -67,6 +87,10 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _routingDebounce?.cancel();
+    _routingDebounce = null;
+    _routingAppliedFade?.cancel();
+    _routingAppliedFade = null;
     _healthTimer?.cancel();
     _healthTimer = null;
     super.dispose();
@@ -165,29 +189,118 @@ class AppState extends ChangeNotifier {
     return name;
   }
 
+  // Debounce window for batching list edits — paste of 50 domains from
+  // Telegram triggers one engine restart, not 50.
+  static const Duration _routingApplyDelay = Duration(milliseconds: 1500);
+
   Future<void> addRule(String category, String value) async {
-    await _withBusy(() {
-      _core.addRule(category, value);
-      _whitelist = _core.whitelist();
-      _whitelistDirty = true;
-    });
+    _rlog('addRule mode=${_routing.mode.wire} cat=$category value="$value"');
+    final list = _routing.active.withAdded(category, value);
+    _routing = _routing.mode == RoutingMode.bypass
+        ? _routing.copyWith(bypass: list)
+        : _routing.copyWith(proxy: list);
+    notifyListeners();
+    if (!kRoutingDryRun) {
+      await _withBusy(() {
+        _core.addRule(_routing.mode, category, value);
+        _routing = _core.routing();
+      });
+    }
+    _markRoutingDirty();
   }
 
   Future<void> removeRule(String category, String value) async {
-    await _withBusy(() {
-      _core.removeRule(category, value);
-      _whitelist = _core.whitelist();
-      _whitelistDirty = true;
+    _rlog('removeRule mode=${_routing.mode.wire} cat=$category value="$value"');
+    final list = _routing.active.withRemoved(category, value);
+    _routing = _routing.mode == RoutingMode.bypass
+        ? _routing.copyWith(bypass: list)
+        : _routing.copyWith(proxy: list);
+    notifyListeners();
+    if (!kRoutingDryRun) {
+      await _withBusy(() {
+        _core.removeRule(_routing.mode, category, value);
+        _routing = _core.routing();
+      });
+    }
+    _markRoutingDirty();
+  }
+
+  Future<void> setRoutingEnabled(bool on) async {
+    if (_routing.enabled == on) return;
+    _rlog('setRoutingEnabled $on');
+    _routing = _routing.copyWith(enabled: on);
+    notifyListeners();
+    if (!kRoutingDryRun) {
+      await _withBusy(() {
+        _core.setRoutingEnabled(on);
+        _routing = _core.routing();
+      });
+    }
+    await _applyRoutingNow();
+  }
+
+  Future<void> setRoutingMode(RoutingMode mode) async {
+    if (_routing.mode == mode) return;
+    _rlog('setRoutingMode ${mode.wire}');
+    _routing = _routing.copyWith(mode: mode);
+    notifyListeners();
+    if (!kRoutingDryRun) {
+      await _withBusy(() {
+        _core.setRoutingMode(mode);
+        _routing = _core.routing();
+      });
+    }
+    await _applyRoutingNow();
+  }
+
+  /// Forces the pending routing changes through right now (cancels the
+  /// debounce window).
+  Future<void> flushRouting() async {
+    _routingDebounce?.cancel();
+    _routingDebounce = null;
+    if (_routingApply != RoutingApplyStatus.pending) return;
+    _rlog('flushRouting (manual)');
+    await _applyRoutingNow();
+  }
+
+  void _markRoutingDirty() {
+    _routingApply = RoutingApplyStatus.pending;
+    notifyListeners();
+    _routingDebounce?.cancel();
+    _routingDebounce = Timer(_routingApplyDelay, () {
+      _routingDebounce = null;
+      unawaited(_applyRoutingNow());
     });
   }
 
-  /// Apply pending whitelist changes by restarting the core. The dirty flag
-  /// clears regardless of whether the core was running — if it wasn't, the
-  /// new rules take effect on the next StartVPN anyway.
-  Future<void> applyRules() async {
-    await _withBusy(() async {
-      if (isRunning) _core.restartVpn();
-      _whitelistDirty = false;
+  // How long the "обновлено" badge stays visible before fading back to idle.
+  static const Duration _routingAppliedFadeAfter = Duration(seconds: 6);
+
+  Future<void> _applyRoutingNow() async {
+    _routingAppliedFade?.cancel();
+    _routingAppliedFade = null;
+
+    _routingApply = RoutingApplyStatus.applying;
+    notifyListeners();
+    _rlog('apply: restartVpn (isRunning=$isRunning)');
+    if (!kRoutingDryRun) {
+      await _withBusy(() async {
+        if (isRunning) _core.restartVpn();
+      });
+    } else {
+      // Simulate the restart latency so the UI status flow feels real.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+    _routingApply = RoutingApplyStatus.applied;
+    notifyListeners();
+    _rlog('apply: done');
+
+    // Auto-fade "обновлено" back to idle so it doesn't sit there forever.
+    _routingAppliedFade = Timer(_routingAppliedFadeAfter, () {
+      _routingAppliedFade = null;
+      if (_routingApply != RoutingApplyStatus.applied) return;
+      _routingApply = RoutingApplyStatus.idle;
+      notifyListeners();
     });
   }
 
@@ -243,3 +356,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 }
+
+/// What the routing-apply badge in the UI should show.
+///
+/// - [idle] — nothing pending.
+/// - [pending] — list was just edited; debounce timer is running.
+/// - [applying] — engine restart in flight.
+/// - [applied] — last change has been picked up by the engine.
+enum RoutingApplyStatus { idle, pending, applying, applied }

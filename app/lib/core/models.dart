@@ -54,25 +54,132 @@ class ProfileInfo {
       );
 }
 
-class Whitelist {
+/// Split-routing mode. Mirrors Go's `configfile.RoutingMode`.
+///
+/// - [bypass] — items in [RoutingState.bypass] go DIRECT, rest via VPN.
+/// - [proxy]  — items in [RoutingState.proxy] go via VPN, rest DIRECT.
+enum RoutingMode {
+  bypass,
+  proxy;
+
+  String get wire => name; // "bypass" / "proxy"
+  static RoutingMode fromWire(String? s) =>
+      s == 'proxy' ? RoutingMode.proxy : RoutingMode.bypass;
+}
+
+class RouteList {
   final List<String> domains;
   final List<String> ips;
   final List<String> processes;
 
-  const Whitelist({
+  const RouteList({
     required this.domains,
     required this.ips,
     required this.processes,
   });
 
-  factory Whitelist.fromJson(Map<String, dynamic> j) => Whitelist(
-        domains: _strList(j['domains']),
-        ips: _strList(j['ips']),
-        processes: _strList(j['processes']),
+  const RouteList.empty()
+      : domains = const [],
+        ips = const [],
+        processes = const [];
+
+  factory RouteList.fromJson(Map<String, dynamic>? j) {
+    if (j == null) return const RouteList.empty();
+    return RouteList(
+      domains: _strList(j['domains']),
+      ips: _strList(j['ips']),
+      processes: _strList(j['processes']),
+    );
+  }
+
+  RouteList copyWith({
+    List<String>? domains,
+    List<String>? ips,
+    List<String>? processes,
+  }) =>
+      RouteList(
+        domains: domains ?? this.domains,
+        ips: ips ?? this.ips,
+        processes: processes ?? this.processes,
       );
+
+  /// Returns a new list with [value] appended to the given [category],
+  /// deduped case-insensitively. Same semantics as the Go side.
+  RouteList withAdded(String category, String value) {
+    bool seen(List<String> xs) => xs.any((v) => v.toLowerCase() == value.toLowerCase());
+    switch (category) {
+      case 'domains':
+        return seen(domains) ? this : copyWith(domains: [...domains, value]);
+      case 'ips':
+        return seen(ips) ? this : copyWith(ips: [...ips, value]);
+      case 'processes':
+        return seen(processes)
+            ? this
+            : copyWith(processes: [...processes, value]);
+    }
+    return this;
+  }
+
+  RouteList withRemoved(String category, String value) {
+    List<String> drop(List<String> xs) =>
+        xs.where((v) => v.toLowerCase() != value.toLowerCase()).toList();
+    switch (category) {
+      case 'domains':
+        return copyWith(domains: drop(domains));
+      case 'ips':
+        return copyWith(ips: drop(ips));
+      case 'processes':
+        return copyWith(processes: drop(processes));
+    }
+    return this;
+  }
 
   static List<String> _strList(Object? v) =>
       (v as List?)?.cast<String>() ?? const [];
+}
+
+class RoutingState {
+  final bool enabled;
+  final RoutingMode mode;
+  final RouteList bypass;
+  final RouteList proxy;
+
+  const RoutingState({
+    required this.enabled,
+    required this.mode,
+    required this.bypass,
+    required this.proxy,
+  });
+
+  const RoutingState.initial()
+      : enabled = true,
+        mode = RoutingMode.bypass,
+        bypass = const RouteList.empty(),
+        proxy = const RouteList.empty();
+
+  factory RoutingState.fromJson(Map<String, dynamic> j) => RoutingState(
+        enabled: j['enabled'] as bool? ?? true,
+        mode: RoutingMode.fromWire(j['mode'] as String?),
+        bypass:
+            RouteList.fromJson(j['bypass'] as Map<String, dynamic>?),
+        proxy: RouteList.fromJson(j['proxy'] as Map<String, dynamic>?),
+      );
+
+  /// Returns the active list for the current mode.
+  RouteList get active => mode == RoutingMode.bypass ? bypass : proxy;
+
+  RoutingState copyWith({
+    bool? enabled,
+    RoutingMode? mode,
+    RouteList? bypass,
+    RouteList? proxy,
+  }) =>
+      RoutingState(
+        enabled: enabled ?? this.enabled,
+        mode: mode ?? this.mode,
+        bypass: bypass ?? this.bypass,
+        proxy: proxy ?? this.proxy,
+      );
 }
 
 class PingSample {

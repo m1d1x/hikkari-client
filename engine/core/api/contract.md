@@ -39,9 +39,9 @@ Arguments are passed as a single JSON object whose field names match the
 method's typed parameters. No-arg methods accept `""`, `"null"`, or `"{}"`.
 
 ```jsonc
-// AddRule typed signature:  AddRule(category, value string) error
+// AddRule typed signature:  AddRule(mode, category, value string) error
 // argsJSON:
-{ "category": "domains", "value": "example.com" }
+{ "mode": "bypass", "category": "domains", "value": "example.com" }
 ```
 
 Unknown fields in `argsJSON` are silently ignored (forward-compatibility).
@@ -107,23 +107,36 @@ Status machine:
 
 Returns the last ~16 KB of the log file.
 
-### Whitelist (bypass-VPN route rules)
+### Routing (split-tunnel)
 
-| method       | args                                    | data        |
-|--------------|-----------------------------------------|-------------|
-| `Whitelist`  | —                                       | `Whitelist` |
-| `AddRule`    | `{"category":"...","value":"..."}`      | `null`      |
-| `RemoveRule` | `{"category":"...","value":"..."}`      | `null`      |
+Master toggle + mode + two independent lists. Routing state lives in
+`routing.json` next to `config.json`; mutations recompile `route.rules`
+and `route.final` in `config.json` so a restart picks them up.
+
+Semantics:
+
+- `enabled = false` — no split routing, everything via VPN.
+- `mode = "bypass"` — items in `bypass` list go DIRECT, rest via VPN.
+- `mode = "proxy"`  — items in `proxy` list go via VPN, rest DIRECT.
+
+| method              | args                                                      | data           |
+|---------------------|-----------------------------------------------------------|----------------|
+| `Routing`           | —                                                         | `RoutingState` |
+| `SetRoutingEnabled` | `{"on":true}`                                             | `null`         |
+| `SetRoutingMode`    | `{"mode":"bypass"\|"proxy"}`                              | `null`         |
+| `AddRule`           | `{"mode":"...","category":"...","value":"..."}`           | `null`         |
+| `RemoveRule`        | `{"mode":"...","category":"...","value":"..."}`           | `null`         |
 
 Valid `category` values: `"domains"`, `"ips"`, `"processes"`.
 
-`Whitelist`:
+`RoutingState`:
 
 ```jsonc
 {
-  "domains":   ["example.com", ...],
-  "ips":       ["10.0.0.0/8",  ...],
-  "processes": ["chrome.exe",  ...]
+  "enabled": true,
+  "mode":    "bypass",
+  "bypass":  { "domains": [...], "ips": [...], "processes": [...] },
+  "proxy":   { "domains": [...], "ips": [...], "processes": [...] }
 }
 ```
 
@@ -150,7 +163,7 @@ Valid `category` values: `"domains"`, `"ips"`, `"processes"`.
 ```
 
 `SwitchProfile` swaps only the endpoint block in `config.json`; route, DNS,
-and whitelist rules are shared across all profiles. If the core is running
+and routing rules are shared across all profiles. If the core is running
 it restarts it to apply the change.
 
 `DeleteProfile` refuses to delete the last profile or the currently active
