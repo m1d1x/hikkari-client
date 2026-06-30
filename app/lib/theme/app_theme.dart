@@ -27,19 +27,26 @@ ThemeData buildAppTheme() {
     hoverColor: Colors.transparent,
     focusColor: Colors.transparent,
     colorScheme: ColorScheme.fromSeed(
-      seedColor: t.text,
+      seedColor: t.primary,
       brightness: Brightness.dark,
       surface: t.surface,
       onSurface: t.text,
-      primary: t.text,
+      primary: t.primary,
       onPrimary: t.bg,
       error: t.bad,
     ),
+    fontFamily: t.monoFamily,
     extensions: const [t],
   );
 
   return base.copyWith(
     textTheme: base.textTheme.apply(
+      fontFamily: t.monoFamily,
+      bodyColor: t.text,
+      displayColor: t.text,
+    ),
+    primaryTextTheme: base.primaryTextTheme.apply(
+      fontFamily: t.monoFamily,
       bodyColor: t.text,
       displayColor: t.text,
     ),
@@ -57,6 +64,23 @@ ThemeData buildAppTheme() {
     snackBarTheme: SnackBarThemeData(
       backgroundColor: t.surface2,
       contentTextStyle: TextStyle(color: t.text),
+    ),
+    tooltipTheme: TooltipThemeData(
+      decoration: BoxDecoration(
+        color: t.surface2,
+        border: Border.all(color: t.borderStrong),
+        borderRadius: BorderRadius.circular(t.radius),
+      ),
+      textStyle: TextStyle(
+        color: t.text,
+        fontFamily: t.monoFamily,
+        fontSize: 11,
+        height: 1.35,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      waitDuration: const Duration(milliseconds: 450),
+      showDuration: const Duration(seconds: 4),
+      preferBelow: false,
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,

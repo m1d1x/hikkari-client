@@ -106,7 +106,7 @@ class _RouteSectionState extends State<RouteSection> {
             ),
           ),
           if (_open && items.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             _itemsBlock(t, items),
           ],
         ],
@@ -153,19 +153,6 @@ class _RouteSectionState extends State<RouteSection> {
           _tabs(t),
           const SizedBox(height: 10),
           _adder(t),
-          const SizedBox(height: 10),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: Text(
-              _hints[_tab] ?? '',
-              style: TextStyle(
-                color: t.textFaint,
-                fontSize: 11,
-                letterSpacing: 0.02 * 11,
-                height: 1.4,
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -213,6 +200,7 @@ class _RouteSectionState extends State<RouteSection> {
           child: _RouteInput(
             controller: _input,
             placeholder: _placeholders[_tab] ?? '',
+            hint: _hints[_tab] ?? '',
             onSubmitted: (_) => _add(),
           ),
         ),
@@ -244,11 +232,13 @@ class _RouteSectionState extends State<RouteSection> {
 class _RouteInput extends StatefulWidget {
   final TextEditingController controller;
   final String placeholder;
+  final String hint;
   final ValueChanged<String> onSubmitted;
 
   const _RouteInput({
     required this.controller,
     required this.placeholder,
+    required this.hint,
     required this.onSubmitted,
   });
 
@@ -273,57 +263,46 @@ class _RouteInputState extends State<_RouteInput> {
       fontFamily: t.monoFamily,
       fontSize: 12,
       fontWeight: FontWeight.w500,
-      height: 1.0,
       letterSpacing: 0.02 * 12,
     );
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: _focusNode.requestFocus,
+    return Tooltip(
+      message: widget.hint,
       child: Container(
         height: 40,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
           color: t.bg,
           border: Border.all(color: t.border),
           borderRadius: BorderRadius.circular(t.radius),
         ),
-        child: Center(
-          child: SizedBox(
-            width: double.infinity,
-            height: 18,
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: widget.controller,
-                  builder: (context, value, _) {
-                    if (value.text.isNotEmpty) return const SizedBox.shrink();
-                    return IgnorePointer(
-                      child: Text(
-                        widget.placeholder,
-                        maxLines: 1,
-                        overflow: TextOverflow.clip,
-                        style: textStyle.copyWith(color: t.textFaint),
-                      ),
-                    );
-                  },
-                ),
-                Positioned.fill(
-                  child: EditableText(
-                    controller: widget.controller,
-                    focusNode: _focusNode,
-                    style: textStyle,
-                    cursorColor: t.text,
-                    backgroundCursorColor: t.textFaint,
-                    maxLines: 1,
-                    textInputAction: TextInputAction.done,
-                    onSubmitted: widget.onSubmitted,
-                  ),
-                ),
-              ],
-            ),
+        clipBehavior: Clip.antiAlias,
+        child: Material(
+          type: MaterialType.transparency,
+          child: TextField(
+          controller: widget.controller,
+          focusNode: _focusNode,
+          style: textStyle,
+          cursorColor: t.text,
+          cursorWidth: 1.5,
+          cursorRadius: const Radius.circular(1),
+          maxLines: 1,
+          textInputAction: TextInputAction.done,
+          onSubmitted: widget.onSubmitted,
+          decoration: InputDecoration(
+            isDense: true,
+            filled: true,
+            fillColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            focusColor: Colors.transparent,
+            contentPadding:
+                const EdgeInsets.fromLTRB(14, 13, 14, 9),
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            hintText: widget.placeholder,
+            hintStyle: textStyle.copyWith(color: t.textFaint),
           ),
+        ),
         ),
       ),
     );
@@ -352,7 +331,7 @@ class _IosSwitch extends StatelessWidget {
           height: 28,
           padding: const EdgeInsets.all(2),
           decoration: BoxDecoration(
-            color: value ? t.ok : t.surface2,
+            color: value ? t.primary : t.surface2,
             borderRadius: BorderRadius.circular(999),
           ),
           child: AnimatedAlign(
@@ -453,6 +432,30 @@ class _AddButton extends StatelessWidget {
   }
 }
 
+class _HintButton extends StatelessWidget {
+  final String message;
+  const _HintButton({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Tooltip(
+      message: message,
+      child: Container(
+        width: 40,
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: t.bg,
+          border: Border.all(color: t.border),
+          borderRadius: BorderRadius.circular(t.radius),
+        ),
+        child: Icon(Icons.info_outline, color: t.textMuted, size: 18),
+      ),
+    );
+  }
+}
+
 class _ItemRow extends StatelessWidget {
   final String value;
   final VoidCallback onRemove;
@@ -462,7 +465,7 @@ class _ItemRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+      padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
       child: Row(
         children: [
           Expanded(

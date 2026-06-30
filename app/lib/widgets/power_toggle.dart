@@ -23,17 +23,6 @@ class PowerToggle extends StatelessWidget {
     final busy = s.busy;
     final err = s.lastError;
 
-    final label = busy
-        ? 'подождите'
-        : err != null
-            ? 'ошибка'
-            : (running ? 'вкл' : 'выкл');
-    final labelColor = busy
-        ? t.textMuted
-        : err != null
-            ? t.bad
-            : (running ? t.ok : t.textMuted);
-
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Column(
@@ -55,46 +44,27 @@ class PowerToggle extends StatelessWidget {
                   curve: Curves.easeOut,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: running
-                        ? const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Color(0xFFFFB86B), // orange
-                              Color(0xFFFF7EB9), // pink
-                              Color(0xFF7AFCFF), // cyan
-                            ],
-                          )
-                        : null,
-                    color: running ? null : t.surface,
+                    color: Colors.transparent,
                     border: Border.all(
-                      color: running ? Colors.transparent : t.border,
-                      width: 1.5,
+                      color: running
+                          ? t.primary.withValues(alpha: 0.55)
+                          : t.border,
+                      width: running ? 3 : 1.5,
                     ),
                   ),
                   child: Center(
                     child: Icon(
                       Icons.power_settings_new,
                       size: 64,
-                      color: running ? Colors.white : t.textMuted,
+                      color: running ? t.primary : t.textMuted,
                     ),
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          Text(
-            label,
-            style: TextStyle(
-              color: labelColor,
-              fontFamily: t.monoFamily,
-              fontSize: 13,
-              letterSpacing: 1.2,
-            ),
-          ),
           if (err != null) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: SelectableText(

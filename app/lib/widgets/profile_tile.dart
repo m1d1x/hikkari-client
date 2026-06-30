@@ -5,21 +5,18 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
-import 'sparkline.dart';
+import 'profile_summary_card.dart';
 
-/// One profile row. Collapsed: number, sparkline, RTT, active dot.
-/// Expanded: stats (uptime %, server, protocol) + inline-editable label +
-/// delete (only when not active). Mirrors the Svelte `.prow` block.
+/// One profile row. Collapsed and home-selected cards share the same visual
+/// component; expanded rows add stats, rename, and delete controls.
 class ProfileTile extends StatefulWidget {
   final ProfileInfo profile;
-  final int index;
   final bool expanded;
   final VoidCallback onToggleExpand;
 
   const ProfileTile({
     super.key,
     required this.profile,
-    required this.index,
     required this.expanded,
     required this.onToggleExpand,
   });
@@ -30,7 +27,6 @@ class ProfileTile extends StatefulWidget {
 
 class _ProfileTileState extends State<ProfileTile> {
   bool _editing = false;
-  bool _expandHover = false;
   late final TextEditingController _editCtrl;
 
   @override
@@ -107,145 +103,21 @@ class _ProfileTileState extends State<ProfileTile> {
     final t = context.tokens;
     final s = context.watch<AppState>();
     final hist = s.uptime[widget.profile.name] ?? const <PingSample>[];
-    final active = widget.profile.active;
-    final borderColor = active ? t.textMuted : t.border;
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      decoration: BoxDecoration(
-        color: t.surface,
-        border: Border.all(color: borderColor),
-        borderRadius: BorderRadius.circular(t.radiusLg),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          _rowMain(context, t, hist),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            alignment: Alignment.topCenter,
-            child: widget.expanded
-                ? _detail(context, t, hist)
-                : const SizedBox.shrink(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _rowMain(BuildContext context, NekkoTokens t, List<PingSample> hist) {
-    final s = context.read<AppState>();
-    final rtt = UptimeStats.avgRtt(hist);
-    final active = widget.profile.active;
-    final lineColor = active ? t.ok : t.textMuted;
-    final expandButtonChild = _expandHover
-        ? Icon(
-            widget.expanded
-                ? Icons.keyboard_arrow_up
-                : Icons.keyboard_arrow_down,
-            key: ValueKey(widget.expanded),
-            color: t.text,
-            size: 18,
-          )
-        : Text(
-            '${widget.index + 1}',
-            key: ValueKey(widget.index),
-            style: TextStyle(
-              color: t.textMuted,
-              fontFamily: t.monoFamily,
-              fontWeight: FontWeight.w500,
-            ),
-          );
-
-    return InkWell(
+    return ProfileSummaryCard(
+      title: widget.profile.label,
+      samples: hist,
+      selected: widget.profile.active,
       onTap: s.busy ? null : _switchProfile,
-      mouseCursor: s.busy
-          ? SystemMouseCursors.basic
-          : SystemMouseCursors.click,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 10, 14, 10),
-        child: Row(
-          children: [
-            // Number button — expand toggle, doesn't propagate to row tap.
-            SizedBox(
-              width: 36,
-              height: 32,
-              child: Material(
-                color: Colors.transparent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: InkWell(
-                  onTap: widget.onToggleExpand,
-                  onHover: (hovering) {
-                    if (_expandHover == hovering) return;
-                    setState(() => _expandHover = hovering);
-                  },
-                  mouseCursor: SystemMouseCursors.click,
-                  borderRadius: BorderRadius.circular(8),
-                  child: Center(
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 120),
-                      child: expandButtonChild,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: SizedBox(
-                height: 32,
-                child: Sparkline(samples: hist, color: lineColor),
-              ),
-            ),
-            const SizedBox(width: 12),
-            // RTT (avg).
-            SizedBox(
-              width: 56,
-              child: Text.rich(
-                TextSpan(
-                  text: rtt < 0 ? '—' : '$rtt',
-                  children: rtt < 0
-                      ? null
-                      : [
-                          TextSpan(
-                            text: ' ms',
-                            style: TextStyle(
-                              color: t.textMuted.withValues(alpha: 0.55),
-                            ),
-                          ),
-                        ],
-                ),
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  color: t.textMuted,
-                  fontFamily: t.monoFamily,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  height: 1,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Active dot — same green as `--ok`, faded when not active.
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: active ? t.ok : Colors.transparent,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: active ? Colors.transparent : t.border,
-                ),
-              ),
-            ),
-          ],
-        ),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
+      chartHeight: 32,
+      trailing: _ExpandButton(
+        expanded: widget.expanded,
+        onTap: widget.onToggleExpand,
       ),
+      footer: _detail(context, t, hist),
+      footerVisible: widget.expanded,
     );
   }
 
@@ -254,9 +126,6 @@ class _ProfileTileState extends State<ProfileTile> {
     final rtt = UptimeStats.avgRtt(hist);
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: t.border)),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -368,6 +237,40 @@ class _ProfileTileState extends State<ProfileTile> {
                   ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ExpandButton extends StatelessWidget {
+  final bool expanded;
+  final VoidCallback onTap;
+
+  const _ExpandButton({required this.expanded, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return SizedBox(
+      width: 34,
+      height: 34,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onTap,
+          mouseCursor: SystemMouseCursors.click,
+          borderRadius: BorderRadius.circular(10),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 120),
+            child: Icon(
+              expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+              key: ValueKey(expanded),
+              color: t.textMuted,
+              size: 19,
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -4,110 +4,180 @@ import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 
-/// Top of the screen — brand on the left, current egress IP / status text
-/// on the right. Mirrors the Svelte `<header>` block exactly.
-///
-/// The IP cell is tappable: opens the log overlay (callback-injected by
-/// the parent screen so this widget stays presentational).
+/// Compact top-right action. The old brand/IP header was intentionally removed
+/// so the home screen starts with the product itself, not chrome.
 class BrandHeader extends StatelessWidget {
-  final VoidCallback onTapIp;
-  const BrandHeader({super.key, required this.onTapIp});
+  final VoidCallback onOpenLogs;
+  const BrandHeader({super.key, required this.onOpenLogs});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final h = context.watch<AppState>().health;
+    final state = context.read<AppState>();
+    final status = h?.status ?? 'off';
+    final ip = (h?.ip as String?) ?? '';
+    final msg = (h?.message as String?) ?? '';
+    final details = [
+      'настройки',
+      if (ip.isNotEmpty) ip,
+      if (msg.isNotEmpty) msg,
+    ].join('\n');
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: IconButton(
+          tooltip: details,
+          onPressed: () => _showSettings(context, state),
+          iconSize: 20,
+          visualDensity: VisualDensity.compact,
+          style: IconButton.styleFrom(
+            backgroundColor: t.surface,
+            foregroundColor: _statusColor(t, status),
+            side: BorderSide(color: t.border),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(t.radius),
+            ),
+          ),
+          icon: const Icon(Icons.settings_outlined),
+        ),
+      ),
+    );
+  }
+
+  Color _statusColor(NekkoTokens t, String status) => switch (status) {
+        'connecting' => t.warn,
+        'broken' => t.bad,
+        _ => t.textMuted,
+      };
+
+  Future<void> _showSettings(BuildContext context, AppState state) {
+    final t = context.tokens;
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: t.surface,
+      barrierColor: Colors.black54,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(t.radiusLg)),
+      ),
+      builder: (_) => ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: _SettingsSheet(onOpenLogs: onOpenLogs),
+      ),
+    );
+  }
+}
+
+class _SettingsSheet extends StatelessWidget {
+  final VoidCallback onOpenLogs;
+  const _SettingsSheet({required this.onOpenLogs});
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final h = context.watch<AppState>().health;
     final status = h?.status ?? 'off';
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-      child: Row(
-        children: [
-          _Dot(status: status),
-          const SizedBox(width: 10),
-          Text(
-            'Nekko VPN',
-            style: TextStyle(
-              color: t.text,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.2,
-            ),
-          ),
-          const Spacer(),
-          _IpCell(health: h, onTap: onTapIp),
-        ],
-      ),
-    );
-  }
-}
-
-class _Dot extends StatelessWidget {
-  final String status;
-  const _Dot({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final color = switch (status) {
-      'ok' => t.ok,
-      'connecting' => t.warn,
-      'broken' => t.bad,
-      _ => t.textFaint,
-    };
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      width: 8,
-      height: 8,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-      ),
-    );
-  }
-}
-
-class _IpCell extends StatelessWidget {
-  final dynamic health; // HealthInfo? — kept dynamic to avoid import here
-  final VoidCallback onTap;
-  const _IpCell({required this.health, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final status = health?.status ?? 'off';
-    final ip = (health?.ip as String?) ?? '';
-    final msg = (health?.message as String?) ?? '';
-
-    final (label, color) = switch (status) {
-      'off' => ('отключён', t.textMuted),
-      'connecting' => ('подключаюсь…', t.warn),
-      'broken' => ('⚠ туннель не работает${ip.isEmpty ? "" : " ($ip)"}', t.bad),
-      _ => (ip.isEmpty ? '—' : ip, t.text),
+    final ip = (h?.ip as String?) ?? '';
+    final msg = (h?.message as String?) ?? '';
+    final statusLabel = switch (status) {
+      'ok' => 'подключено',
+      'connecting' => 'подключаюсь',
+      'broken' => 'ошибка туннеля',
+      _ => 'отключено',
     };
 
-    return Tooltip(
-      message: msg,
-      child: InkWell(
-        onTap: onTap,
-        mouseCursor: SystemMouseCursors.click,
-        borderRadius: BorderRadius.circular(t.radius),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: t.surface,
-            border: Border.all(color: t.border),
-            borderRadius: BorderRadius.circular(t.radius),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontFamily: t.monoFamily,
-              fontSize: 13,
-            ),
+    return SafeArea(
+      top: false,
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: t.borderStrong,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'настройки',
+                style: TextStyle(
+                  color: t.text,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _InfoRow(label: 'статус', value: statusLabel),
+              _InfoRow(label: 'ip', value: ip.isEmpty ? '-' : ip),
+              if (msg.isNotEmpty) _InfoRow(label: 'сообщение', value: msg),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).maybePop();
+                  onOpenLogs();
+                },
+                icon: const Icon(Icons.terminal, size: 16),
+                label: const Text('логи'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: t.text,
+                  side: BorderSide(color: t.borderStrong),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(t.radius),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _InfoRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 88,
+            child: Text(
+              label,
+              style: TextStyle(color: t.textMuted, fontSize: 12),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: TextStyle(
+                color: t.text,
+                fontSize: 12,
+                fontFamily: t.monoFamily,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

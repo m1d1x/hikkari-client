@@ -18,6 +18,9 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
   final Color textMuted;
   final Color textFaint;
 
+  // ----- accent -----
+  final Color primary;
+
   // ----- status -----
   final Color ok;
   final Color warn;
@@ -39,6 +42,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
     required this.text,
     required this.textMuted,
     required this.textFaint,
+    required this.primary,
     required this.ok,
     required this.warn,
     required this.bad,
@@ -57,14 +61,13 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
     text: Color(0xFFEDEDEE),
     textMuted: Color(0xFF8A8A8E),
     textFaint: Color(0xFF5B5B60),
+    primary: Color(0xFFFF7EB9),
     ok: Color(0xFF34C759),
     warn: Color(0xFFFF9F0A),
     bad: Color(0xFFFF453A),
     radius: 14,
     radiusLg: 18,
-    // The Svelte UI uses 'IBM Plex Mono' as primary mono font, with system
-    // fallbacks. Flutter falls back to the platform default if the family
-    // isn't bundled — we'll ship the font as an asset later if needed.
+    // The app bundles IBM Plex Mono and also uses it as the global font family.
     monoFamily: 'IBM Plex Mono',
   );
 
@@ -78,6 +81,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
     Color? text,
     Color? textMuted,
     Color? textFaint,
+    Color? primary,
     Color? ok,
     Color? warn,
     Color? bad,
@@ -94,6 +98,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
         text: text ?? this.text,
         textMuted: textMuted ?? this.textMuted,
         textFaint: textFaint ?? this.textFaint,
+        primary: primary ?? this.primary,
         ok: ok ?? this.ok,
         warn: warn ?? this.warn,
         bad: bad ?? this.bad,
@@ -114,6 +119,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
       text: Color.lerp(text, other.text, t)!,
       textMuted: Color.lerp(textMuted, other.textMuted, t)!,
       textFaint: Color.lerp(textFaint, other.textFaint, t)!,
+      primary: Color.lerp(primary, other.primary, t)!,
       ok: Color.lerp(ok, other.ok, t)!,
       warn: Color.lerp(warn, other.warn, t)!,
       bad: Color.lerp(bad, other.bad, t)!,

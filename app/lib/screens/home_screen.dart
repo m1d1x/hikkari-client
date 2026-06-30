@@ -21,7 +21,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _logOpen = false;
 
-  void _toggleLog() => setState(() => _logOpen = !_logOpen);
+  void _openLog() => setState(() => _logOpen = true);
+  void _closeLog() => setState(() => _logOpen = false);
 
   @override
   Widget build(BuildContext context) {
@@ -33,8 +34,8 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              BrandHeader(onTapIp: _toggleLog),
-              if (_logOpen) LogOverlay(onClose: _toggleLog),
+              BrandHeader(onOpenLogs: _openLog),
+              if (_logOpen) LogOverlay(onClose: _closeLog),
               const PowerToggle(),
               const CurrentProfileCard(),
               const RouteSection(),
@@ -50,4 +51,3 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-

@@ -38,6 +38,7 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
   String? _expanded;
   String _query = '';
   String? _lastActive;
+  bool _lastActiveInitialized = false;
 
   @override
   Widget build(BuildContext context) {
@@ -46,8 +47,9 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
 
     // Auto-dismiss on successful switch — when active profile changes mid-sheet.
     final active = s.activeProfileName;
-    if (_lastActive == null) {
+    if (!_lastActiveInitialized) {
       _lastActive = active;
+      _lastActiveInitialized = true;
     } else if (active != null && active != _lastActive) {
       _lastActive = active;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -91,11 +93,9 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
                       itemCount: filtered.length,
                       itemBuilder: (_, i) {
                         final p = filtered[i];
-                        final realIndex = all.indexOf(p);
                         return ProfileTile(
                           key: ValueKey(p.name),
                           profile: p,
-                          index: realIndex,
                           expanded: _expanded == p.name,
                           onToggleExpand: () => setState(() {
                             _expanded = _expanded == p.name ? null : p.name;

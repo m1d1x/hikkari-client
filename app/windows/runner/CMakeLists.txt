@@ -63,7 +63,7 @@ add_dependencies(${BINARY_NAME} flutter_assemble)
 # in the destination — otherwise we'd clobber the user's live state on
 # every rebuild.
 set(NEKKOBOX_REPO_ROOT "${CMAKE_SOURCE_DIR}/../..")
-set(NEKKOBOX_BIN_SRC "${NEKKOBOX_REPO_ROOT}/NekkoVPN/build/bin")
+set(NEKKOBOX_BIN_SRC "${NEKKOBOX_REPO_ROOT}/archive")
 
 add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
   # Always-overwrite: native binaries the user shouldn't be editing.

@@ -29,7 +29,6 @@ class _ProfilesListState extends State<ProfilesList> {
             ProfileTile(
               key: ValueKey(profiles[i].name),
               profile: profiles[i],
-              index: i,
               expanded: _expanded == profiles[i].name,
               onToggleExpand: () => setState(() {
                 _expanded =
