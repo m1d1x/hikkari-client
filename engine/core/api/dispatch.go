@@ -188,6 +188,27 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return c.PingServices(a.ActiveTag, a.Services), nil
 	case "ServiceUptimeHistory":
 		return c.ServiceUptimeHistory(), nil
+
+	// ----- custom services -----
+	case "ListCustomServices":
+		return c.ListCustomServices(), nil
+	case "AddCustomService":
+		var a struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.AddCustomService(a.Name, a.URL)
+	case "RemoveCustomService":
+		var a struct {
+			Name string `json:"name"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.RemoveCustomService(a.Name)
 	}
 	return nil, fmt.Errorf("api.Core: unknown method %q", method)
 }

@@ -227,3 +227,15 @@ class ServicePingResultDto {
         rttMs: j['rtt_ms'] as int? ?? 0,
       );
 }
+
+class CustomService {
+  final String name;
+  final String url;
+
+  const CustomService({required this.name, required this.url});
+
+  factory CustomService.fromJson(Map<String, dynamic> j) => CustomService(
+        name: j['Name'] as String? ?? '',
+        url: j['URL'] as String? ?? '',
+      );
+}

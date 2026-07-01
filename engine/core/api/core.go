@@ -12,7 +12,9 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -61,6 +63,10 @@ type Core struct {
 	// (YouTube, Discord, …) measured through the active profile — kept
 	// separate from the per-profile uptime tracker above.
 	serviceUptime *uptime.Tracker
+
+	customServicesMu   sync.RWMutex
+	customServicesPath string
+	customServices     []uptime.ServiceTarget
 }
 
 // New returns an uninitialised Core. Call Init before use.
@@ -113,9 +119,13 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	c.ensureSelectorConfig()
 	c.uptime.Load()
 	c.serviceUptime.Load()
+	c.customServicesPath = filepath.Join(baseDir, "custom-services.json")
+	c.loadCustomServices()
 	geoip.Load(filepath.Join(baseDir, "geoip-cache.json"))
-	probe := uptime.NewLiveProbe(clashapi.New(""))
+	cl := clashapi.New("")
+	probe := uptime.NewLiveProbe(cl)
 	go c.uptime.Run(c.ctx, c.uptimeHosts, probe)
+	go c.serviceUptime.RunServices(c.ctx, c.activeTagProvider, c.allServiceTargets, cl)
 	// Health probing is the slow path (HTTPS to api.ipify.org). Running it
 	// in the background keeps FFI calls instant — UI threads on the other
 	// side of the FFI boundary must never wait on network.
@@ -219,4 +229,53 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 		})
 	}
 	return out
+}
+
+func (c *Core) activeTagProvider() string {
+	active, err := c.profiles.Active()
+	if err != nil || active == "" {
+		return ""
+	}
+	return profile.ProfileTag(active)
+}
+
+func (c *Core) allServiceTargets() []uptime.ServiceTarget {
+	defaults := defaultServiceTargets()
+	c.customServicesMu.RLock()
+	custom := make([]uptime.ServiceTarget, len(c.customServices))
+	copy(custom, c.customServices)
+	c.customServicesMu.RUnlock()
+	return append(defaults, custom...)
+}
+
+func (c *Core) loadCustomServices() {
+	data, err := os.ReadFile(c.customServicesPath)
+	if err != nil {
+		return
+	}
+	var svcs []uptime.ServiceTarget
+	if json.Unmarshal(data, &svcs) == nil {
+		c.customServices = svcs
+	}
+}
+
+func (c *Core) saveCustomServices() error {
+	data, err := json.MarshalIndent(c.customServices, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.customServicesPath, data, 0644)
+}
+
+func defaultServiceTargets() []uptime.ServiceTarget {
+	return []uptime.ServiceTarget{
+		{Name: "YouTube", URL: "https://youtube.com/generate_204"},
+		{Name: "Google", URL: "https://google.com/generate_204"},
+		{Name: "Telegram", URL: "https://telegram.org/generate_204"},
+		{Name: "Discord", URL: "https://discord.com/generate_204"},
+		{Name: "ChatGPT", URL: "https://chatgpt.com/generate_204"},
+		{Name: "Instagram", URL: "https://instagram.com/generate_204"},
+		{Name: "Steam", URL: "https://store.steampowered.com/generate_204"},
+		{Name: "X", URL: "https://x.com/generate_204"},
+	}
 }

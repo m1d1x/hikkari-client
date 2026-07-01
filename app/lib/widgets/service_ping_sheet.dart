@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:simple_icons/simple_icons.dart';
@@ -74,6 +72,16 @@ String _shortNameFromHost(String host) {
   return pick[0].toUpperCase() + pick.substring(1);
 }
 
+/// Извлекает host из полного URL (обратная к `probeUrl`).
+String _hostFromUrl(String url) {
+  var s = url;
+  final scheme = s.indexOf('://');
+  if (scheme != -1) s = s.substring(scheme + 3);
+  final slash = s.indexOf('/');
+  if (slash != -1) s = s.substring(0, slash);
+  return s;
+}
+
 /// URL фавикона домена через публичный резолвер Google. Без доп. зависимостей —
 /// грузится обычным `Image.network`.
 String _faviconUrlForHost(String host) =>
@@ -111,69 +119,29 @@ class ServicePingSheet extends StatefulWidget {
 }
 
 class _ServicePingSheetState extends State<ServicePingSheet> {
-  // Дёргаем движок не чаще раза в 7с: движковый per-profile probe.go крутит
-  // раз в 5с, ручные пинги сверх этого только зря нагружают туннель.
-  static const Duration _pollInterval = Duration(seconds: 7);
-
   late final List<_ServicePing> _services;
-  Timer? _timer;
-  // Тег активного профиля на момент открытия шита. null → VPN не запущен /
-  // нет активного профиля → показываем пустое состояние, не пингуем.
-  String? _activeTag;
 
   @override
   void initState() {
     super.initState();
     _services = _defaultServices();
+    _loadCustomServices();
   }
 
-  bool _initialized = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_initialized) return;
-    _initialized = true;
-    _activeTag = context.read<AppState>().activeTag;
-    if (_activeTag == null) return;
-    // Первый снимок истории (чтобы график не был пустым, если пробы уже
-    // копились), затем сразу проба и запуск таймера.
-    _syncHistory();
-    _pingNow();
-    _timer = Timer.periodic(_pollInterval, (_) => _pingNow());
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _timer = null;
-    super.dispose();
-  }
-
-  /// Одна проба всех сервисов через активный профиль + перечитывание истории.
-  void _pingNow() {
-    final tag = _activeTag;
-    if (tag == null || !mounted) return;
+  void _loadCustomServices() {
     final state = context.read<AppState>();
-    final targets = _services
-        .map((s) => ServicePingTargetDto(name: s.name, url: s.probeUrl))
-        .toList();
-    state.pingServices(tag, targets);
-    _syncHistory();
-  }
-
-  /// Наполняет `samples` каждого сервиса из движковой истории по ключу
-  /// `"<activeTag>|<name>"`. Надёжнее in-memory накопления — переживает
-  /// переоткрытие шита.
-  void _syncHistory() {
-    final tag = _activeTag;
-    if (tag == null || !mounted) return;
-    final hist = context.read<AppState>().serviceUptimeHistory();
-    setState(() {
-      for (final svc in _services) {
-        svc.samples = hist['$tag|${svc.name}'] ?? const [];
-      }
-    });
+    final custom = state.core.listCustomServices();
+    for (final svc in custom) {
+      final host = _hostFromUrl(svc.url);
+      _services.add(_ServicePing(
+        name: svc.name,
+        host: host,
+        icon: Icons.public,
+        color: Colors.grey,
+        custom: true,
+        faviconUrl: _faviconUrlForHost(host),
+      ));
+    }
   }
 
   // Brand glyphs from `simple_icons` + their official colors, so the row
@@ -227,13 +195,6 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
         color: const Color(0xFF7FD9B0),
       ),
     ];
-  }
-
-  void _onReorderItem(int oldIndex, int newIndex) {
-    setState(() {
-      final item = _services.removeAt(oldIndex);
-      _services.insert(newIndex, item);
-    });
   }
 
   Future<bool> _confirmDismiss(_ServicePing svc) async {
@@ -293,34 +254,32 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
       ),
     ).then((raw) {
       if (raw == null || raw.isEmpty || raw == initial) return;
-      // Юзер мог вставить полный URL — приводим к чистому хосту.
+      if (!mounted) return;
       final host = _hostFromInput(raw);
       if (host.isEmpty) return;
+      final name = _shortNameFromHost(host);
+      final state = context.read<AppState>();
       setState(() {
         if (initial.isEmpty) {
-          // Имя вычисляем из хоста (юзер вводит только URL/host), иконка —
-          // favicon домена с откатом на globe. Новый эндпоинт стартует без
-          // истории — таймер подтянет пробы при следующем тике; для мгновенного
-          // результата дёргаем _pingNow() ниже.
           _services.add(_ServicePing(
-            name: _shortNameFromHost(host),
+            name: name,
             host: host,
-            icon: Icons.public, // globe-фоллбэк, если favicon не загрузится
+            icon: Icons.public,
             color: Colors.grey,
             custom: true,
             faviconUrl: _faviconUrlForHost(host),
           ));
+          state.core.addCustomService(name, 'https://$host');
         } else {
           final i = _services.indexWhere((s) => s.host == initial);
           if (i == -1) return;
           final old = _services[i];
-          // custom не трогаем — редактирование встроенного сервиса не
-          // делает его "добавленным юзером" (влияет на поведение удаления:
-          // у builtin остаётся подтверждение свайпа, у custom — нет).
-          // Для custom пересчитываем имя/favicon под новый хост; у builtin
-          // имя/иконку не трогаем (заданы вручную), меняется только host.
+          if (old.custom) {
+            state.core.removeCustomService(old.name);
+          }
+          final newName = old.custom ? _shortNameFromHost(host) : old.name;
           _services[i] = _ServicePing(
-            name: old.custom ? _shortNameFromHost(host) : old.name,
+            name: newName,
             host: host,
             icon: old.icon,
             color: old.color,
@@ -328,10 +287,11 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
             custom: old.custom,
             faviconUrl: old.custom ? _faviconUrlForHost(host) : old.faviconUrl,
           );
+          if (old.custom) {
+            state.core.addCustomService(newName, 'https://$host');
+          }
         }
       });
-      // Сразу пробуем свежий/переименованный хост, не дожидаясь таймера.
-      _pingNow();
     });
   }
 
@@ -346,7 +306,17 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final hasActive = _activeTag != null;
+    final s = context.watch<AppState>();
+    final tag = s.activeTag;
+    final hasActive = tag != null;
+
+    // Sync samples from backend history (read-only, no FFI calls).
+    if (hasActive) {
+      final hist = s.serviceUptime;
+      for (final svc in _services) {
+        svc.samples = hist['$tag|${svc.name}'] ?? const [];
+      }
+    }
 
     return DraggableScrollableSheet(
       expand: false,
@@ -398,33 +368,14 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
   }
 
   Widget _list(NekkoTokens t, ScrollController scrollCtrl) {
-    return ReorderableListView.builder(
-                scrollController: scrollCtrl,
-                padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
-                buildDefaultDragHandles: false,
-                onReorderItem: _onReorderItem,
-                // Дефолтный proxyDecorator оборачивает элемент в Material с
-                // растущей elevation — на тёмной теме это грязный белёсый
-                // ореол. Заменяем на лёгкий scale без тени.
-                proxyDecorator: (child, index, animation) => AnimatedBuilder(
-                  animation: animation,
-                  builder: (_, c) {
-                    final v = Curves.easeOut.transform(animation.value);
-                    return Transform.scale(
-                      scale: 1 + 0.03 * v,
-                      child: Material(
-                        color: Colors.transparent,
-                        child: c,
-                      ),
-                    );
-                  },
-                  child: child,
-                ),
-                itemCount: _services.length,
-                itemBuilder: (_, i) {
-                  final svc = _services[i];
-                  return _serviceRow(t, svc, i, key: ValueKey(svc));
-                },
+    return ListView.builder(
+      controller: scrollCtrl,
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+      itemCount: _services.length,
+      itemBuilder: (_, i) {
+        final svc = _services[i];
+        return _serviceRow(t, svc, i, key: ValueKey(svc));
+      },
     );
   }
 
@@ -534,16 +485,19 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
           key: ValueKey('${key.hashCode}-dismiss'),
           direction: DismissDirection.endToStart,
           confirmDismiss: (_) => _confirmDismiss(svc),
-          onDismissed: (_) => setState(() => _services.remove(svc)),
+          onDismissed: (_) {
+            if (svc.custom) {
+              context.read<AppState>().core.removeCustomService(svc.name);
+            }
+            setState(() => _services.remove(svc));
+          },
           background: Container(
             color: t.bad.withValues(alpha: 0.16),
             padding: const EdgeInsets.symmetric(horizontal: 18),
             alignment: Alignment.centerRight,
             child: Icon(Icons.delete_outline, color: t.bad, size: 20),
           ),
-          child: ReorderableDelayedDragStartListener(
-            index: index,
-            child: ColoredBox(
+          child: ColoredBox(
               color: t.surface2,
               child: Material(
                 color: Colors.transparent,
@@ -632,7 +586,6 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
                 ),
               ),
             ),
-          ),
         ),
       ),
     );

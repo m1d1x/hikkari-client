@@ -1,17 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
-import '../widgets/apply_bar.dart';
 import '../widgets/brand_header.dart';
-import '../widgets/current_profile_card.dart';
 import '../widgets/log_overlay.dart';
 import '../widgets/power_toggle.dart';
 import '../widgets/route_section.dart';
 import '../widgets/window_titlebar.dart';
 
-/// The single-page home of the app. Stacks the same vertical sections the
-/// Svelte UI uses; each section is its own widget so refactors are cheap.
-/// Profiles, whitelist, and log overlay land in follow-up commits.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -34,22 +29,16 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const WindowTitlebar(),
-          Expanded(
-            child: SafeArea(
-              top: false,
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    BrandHeader(onOpenLogs: _openLog),
-              if (_logOpen) LogOverlay(onClose: _closeLog),
-              const PowerToggle(),
-              const CurrentProfileCard(),
-              const RouteSection(),
-                    const ApplyBar(),
-                  ],
-                ),
-              ),
+          BrandHeader(onOpenLogs: _openLog),
+          if (_logOpen) LogOverlay(onClose: _closeLog),
+          const Expanded(
+            child: Center(child: PowerToggle()),
+          ),
+          const SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: 16),
+              child: RouteSection(),
             ),
           ),
         ],

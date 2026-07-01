@@ -200,3 +200,60 @@ func (t *Tracker) record(profile string, ok bool, rtt int) {
 	}
 	t.history[profile] = hist
 }
+
+// ServiceTarget describes one service probed in the background via Clash API.
+type ServiceTarget struct {
+	Name string // e.g. "YouTube"
+	URL  string // e.g. "https://youtube.com/generate_204"
+}
+
+// ActiveTagProvider returns the current active profile's sing-box tag (e.g.
+// "p-main"). If no profile is active or VPN is off, returns "".
+type ActiveTagProvider func() string
+
+// ServiceProbe measures one service target through a given proxy tag.
+type ServiceProbe interface {
+	Delay(tag, url string, timeoutMs int) (ms int, err error)
+}
+
+// RunServices is a blocking background loop that probes each service
+// through the active profile's Clash API delay endpoint. The UI never
+// triggers pings — it only reads the history this loop writes.
+const ServicePingInterval = 10 * time.Second
+
+// ServiceTargetProvider returns the current list of service targets to ping.
+// Called every tick so additions/removals are picked up without restart.
+type ServiceTargetProvider func() []ServiceTarget
+
+func (t *Tracker) RunServices(ctx context.Context, activeTag ActiveTagProvider, targets ServiceTargetProvider, probe ServiceProbe) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(ServicePingInterval):
+		}
+		tag := activeTag()
+		if tag == "" {
+			continue
+		}
+		cur := targets()
+		if len(cur) == 0 {
+			continue
+		}
+		var wg sync.WaitGroup
+		for _, svc := range cur {
+			wg.Add(1)
+			go func(svc ServiceTarget) {
+				defer wg.Done()
+				ms, err := probe.Delay(tag, svc.URL, PingTimeoutMs)
+				if err != nil {
+					t.record(tag+"|"+svc.Name, false, 0)
+				} else {
+					t.record(tag+"|"+svc.Name, true, ms)
+				}
+			}(svc)
+		}
+		wg.Wait()
+		t.Save()
+	}
+}

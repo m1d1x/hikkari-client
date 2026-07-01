@@ -59,6 +59,9 @@ func main() {
 			continue
 		}
 		code := strings.ToLower(strings.TrimSuffix(name, ".zone"))
+		if len(code) != 2 || code == "zz" {
+			continue
+		}
 		f, err := os.Open(filepath.Join(*src, name))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "open %s: %v\n", name, err)

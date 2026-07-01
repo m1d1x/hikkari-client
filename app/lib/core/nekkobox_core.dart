@@ -12,10 +12,24 @@ abstract class NekkoboxCore {
   /// string emitted by Go; the typed helpers below parse it.
   String rawCall(String method, [String argsJson = '']);
 
+  /// Async variant — runs the FFI call in a background Isolate so the
+  /// UI thread stays responsive. Subclasses override this; the default
+  /// falls back to the sync version on the current isolate.
+  Future<String> rawCallAsync(String method, [String argsJson = '']) async {
+    return rawCall(method, argsJson);
+  }
+
   // ----- typed helpers -----
 
   Object? _call(String method, [Map<String, Object?>? args]) {
     final raw = rawCall(method, args == null ? '' : jsonEncode(args));
+    final env = Envelope.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+    return env.unwrap();
+  }
+
+  Future<Object?> _callAsync(String method, [Map<String, Object?>? args]) async {
+    final raw = await rawCallAsync(
+        method, args == null ? '' : jsonEncode(args));
     final env = Envelope.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     return env.unwrap();
   }
@@ -35,6 +49,10 @@ abstract class NekkoboxCore {
   void startVpn() => _call('StartVPN');
   void stopVpn() => _call('StopVPN');
   void restartVpn() => _call('RestartVPN');
+
+  Future<void> restartVpnAsync() => _callAsync('RestartVPN');
+  Future<void> startVpnAsync() => _callAsync('StartVPN');
+  Future<void> stopVpnAsync() => _callAsync('StopVPN');
   bool isRunning() => _call('IsRunning') as bool;
 
   // ----- health -----
@@ -151,4 +169,21 @@ abstract class NekkoboxCore {
               .toList(),
         ));
   }
+
+  // ----- custom services -----
+
+  List<CustomService> listCustomServices() {
+    final data = _call('ListCustomServices');
+    if (data == null) return [];
+    return (data as List)
+        .cast<Map<String, dynamic>>()
+        .map(CustomService.fromJson)
+        .toList();
+  }
+
+  void addCustomService(String name, String url) =>
+      _call('AddCustomService', {'name': name, 'url': url});
+
+  void removeCustomService(String name) =>
+      _call('RemoveCustomService', {'name': name});
 }

@@ -1,5 +1,6 @@
 import 'dart:ffi' as ffi;
 import 'dart:io' show Platform;
+import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 
@@ -57,6 +58,31 @@ class NekkoboxCoreFfi extends NekkoboxCore {
         return resultPtr.toDartString();
       } finally {
         _free(resultPtr);
+      }
+    } finally {
+      calloc.free(cMethod);
+      calloc.free(cArgs);
+    }
+  }
+
+  @override
+  Future<String> rawCallAsync(String method, [String argsJson = '']) {
+    final libName = _libName();
+    return Isolate.run(() => _isolateCall(libName, method, argsJson));
+  }
+
+  static String _isolateCall(String libName, String method, String argsJson) {
+    final lib = ffi.DynamicLibrary.open(libName);
+    final call = lib.lookupFunction<_CallC, _CallDart>('NekkoboxCall');
+    final free = lib.lookupFunction<_FreeC, _FreeDart>('NekkoboxFree');
+    final cMethod = method.toNativeUtf8();
+    final cArgs = argsJson.toNativeUtf8();
+    try {
+      final resultPtr = call(cMethod, cArgs);
+      try {
+        return resultPtr.toDartString();
+      } finally {
+        free(resultPtr);
       }
     } finally {
       calloc.free(cMethod);

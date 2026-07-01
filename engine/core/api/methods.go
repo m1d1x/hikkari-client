@@ -6,6 +6,7 @@
 package api
 
 import (
+	"fmt"
 	"sync"
 
 	"NekkoVPN/core/clashapi"
@@ -270,3 +271,39 @@ func (c *Core) PingServices(activeTag string, services []ServicePingTarget) []Se
 // ServiceUptimeHistory returns the rolling history of on-demand service pings,
 // keyed by "<activeTag>|<service name>".
 func (c *Core) ServiceUptimeHistory() map[string][]PingSample { return c.serviceUptime.Snapshot() }
+
+// ============================================================
+//  Custom services (user-added ping targets)
+// ============================================================
+
+func (c *Core) ListCustomServices() []uptime.ServiceTarget {
+	c.customServicesMu.RLock()
+	defer c.customServicesMu.RUnlock()
+	out := make([]uptime.ServiceTarget, len(c.customServices))
+	copy(out, c.customServices)
+	return out
+}
+
+func (c *Core) AddCustomService(name, url string) error {
+	c.customServicesMu.Lock()
+	defer c.customServicesMu.Unlock()
+	for _, s := range c.customServices {
+		if s.Name == name {
+			return fmt.Errorf("service %q already exists", name)
+		}
+	}
+	c.customServices = append(c.customServices, uptime.ServiceTarget{Name: name, URL: url})
+	return c.saveCustomServices()
+}
+
+func (c *Core) RemoveCustomService(name string) error {
+	c.customServicesMu.Lock()
+	defer c.customServicesMu.Unlock()
+	for i, s := range c.customServices {
+		if s.Name == name {
+			c.customServices = append(c.customServices[:i], c.customServices[i+1:]...)
+			return c.saveCustomServices()
+		}
+	}
+	return fmt.Errorf("service %q not found", name)
+}

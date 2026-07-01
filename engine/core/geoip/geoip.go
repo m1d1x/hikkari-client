@@ -218,10 +218,13 @@ func resolveUncached(host string) string {
 	if ip == nil {
 		return ""
 	}
+	if code := resolveOnline(ip); code != "" {
+		return code
+	}
 	if code, ok := LookupIP(ip); ok {
 		return code
 	}
-	return resolveOnline(ip)
+	return ""
 }
 
 func resolveDNS(host string) net.IP {
@@ -240,12 +243,9 @@ func resolveDNS(host string) net.IP {
 	return addrs[0].IP
 }
 
-// resolveOnline is a best-effort fallback for IPs the local database missed
-// (freshly announced ranges, IPv6, etc). No API key, single free endpoint,
-// short timeout — a slow/unreachable network never blocks Resolve for long.
 func resolveOnline(ip net.IP) string {
 	client := &http.Client{Timeout: onlineTimeout}
-	resp, err := client.Get("https://ipapi.co/" + ip.String() + "/country/")
+	resp, err := client.Get("https://ipwhois.app/json/" + ip.String() + "?fields=country_code")
 	if err != nil {
 		return ""
 	}
@@ -253,11 +253,13 @@ func resolveOnline(ip net.IP) string {
 	if resp.StatusCode != http.StatusOK {
 		return ""
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16))
-	if err != nil {
+	var result struct {
+		CountryCode string `json:"country_code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&result); err != nil {
 		return ""
 	}
-	code := strings.ToLower(strings.TrimSpace(string(body)))
+	code := strings.ToLower(strings.TrimSpace(result.CountryCode))
 	if len(code) != 2 {
 		return ""
 	}

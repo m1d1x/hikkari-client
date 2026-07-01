@@ -25,24 +25,19 @@ class BrandHeader extends StatelessWidget {
       if (msg.isNotEmpty) msg,
     ].join('\n');
 
+    final baseColor = _statusColor(t, status);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 14, 14, 0),
       child: Align(
         alignment: Alignment.centerRight,
-        child: IconButton(
+        child: _HoverIcon(
           tooltip: details,
           onPressed: () => _showSettings(context, state),
-          iconSize: 20,
-          visualDensity: VisualDensity.compact,
-          style: IconButton.styleFrom(
-            backgroundColor: t.surface,
-            foregroundColor: _statusColor(t, status),
-            side: BorderSide(color: t.border),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(t.radius),
-            ),
-          ),
-          icon: const Icon(Icons.settings_outlined),
+          icon: Icons.settings_outlined,
+          size: 24,
+          color: baseColor,
+          hoverColor: t.text,
+          padding: const EdgeInsets.all(14),
         ),
       ),
     );
@@ -183,6 +178,62 @@ class _InfoRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _HoverIcon extends StatefulWidget {
+  final String tooltip;
+  final VoidCallback onPressed;
+  final IconData icon;
+  final double size;
+  final Color color;
+  final Color hoverColor;
+  final EdgeInsets padding;
+
+  const _HoverIcon({
+    required this.tooltip,
+    required this.onPressed,
+    required this.icon,
+    required this.size,
+    required this.color,
+    required this.hoverColor,
+    required this.padding,
+  });
+
+  @override
+  State<_HoverIcon> createState() => _HoverIconState();
+}
+
+class _HoverIconState extends State<_HoverIcon> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onTap: widget.onPressed,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: widget.padding,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 150),
+              child: Icon(
+                widget.icon,
+                key: ValueKey(_hover),
+                size: widget.size,
+                color: _hover ? widget.hoverColor : widget.color,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

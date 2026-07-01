@@ -42,6 +42,7 @@ void _elog(String msg) {
 ///     by the widget itself via [refreshUptime]).
 class AppState extends ChangeNotifier {
   final NekkoboxCore _core;
+  NekkoboxCore get core => _core;
   Timer? _healthTimer;
 
   HealthInfo? _health;
@@ -53,6 +54,7 @@ class AppState extends ChangeNotifier {
   Map<String, String> _profileCountries = const {};
   RoutingState _routing = const RoutingState.initial();
   Map<String, List<PingSample>> _uptime = const {};
+  Map<String, List<PingSample>> _serviceUptime = const {};
   bool _busy = false;
   // True between a routing list edit and the engine restart that picks it up.
   // The UI uses this for the "применяется… / применено" badge near the mode row.
@@ -76,6 +78,7 @@ class AppState extends ChangeNotifier {
   Map<String, String> get profileCountries => _profileCountries;
   RoutingState get routing => _routing;
   Map<String, List<PingSample>> get uptime => _uptime;
+  Map<String, List<PingSample>> get serviceUptime => _serviceUptime;
   bool get busy => _busy;
   RoutingApplyStatus get routingApply => _routingApply;
   bool get autoMode => _autoMode;
@@ -300,11 +303,11 @@ class AppState extends ChangeNotifier {
     }
     await _withBusy(() async {
       if (isRunning) {
-        _core.stopVpn();
+        await _core.stopVpnAsync();
         _health = _core.health();
         return;
       }
-      _core.startVpn();
+      await _core.startVpnAsync();
       _connectedSince = DateTime.now();
       // sing-box can exit asynchronously a few hundred ms after Start (e.g.
       // TUN access denied). Give it a moment, then sample health — if the
@@ -569,7 +572,7 @@ class AppState extends ChangeNotifier {
     _rlog('apply: restartVpn (isRunning=$isRunning)');
     if (!kRoutingDryRun) {
       await _withBusy(() async {
-        if (isRunning) _core.restartVpn();
+        if (isRunning) await _core.restartVpnAsync();
       });
     } else {
       // Simulate the restart latency so the UI status flow feels real.
@@ -614,6 +617,7 @@ class AppState extends ChangeNotifier {
     _safeReload(() {
       _health = _core.health();
       _uptime = _core.uptimeHistory();
+      _serviceUptime = _core.serviceUptimeHistory();
     });
   }
 

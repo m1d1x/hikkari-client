@@ -85,10 +85,13 @@ class _RouteSectionState extends State<RouteSection> {
     final s = context.watch<AppState>();
     final items = _itemsFor(_tab, s.routing.active);
 
+    final reversedItems = items.reversed.toList();
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
             decoration: BoxDecoration(
@@ -110,10 +113,20 @@ class _RouteSectionState extends State<RouteSection> {
               ],
             ),
           ),
-          if (_open && items.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _itemsBlock(t, items),
-          ],
+          AnimatedSize(
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: _open
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: SizedBox(
+                      height: 293,
+                      child: _itemsBlock(t, reversedItems),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
         ],
       ),
     );
@@ -237,14 +250,24 @@ class _RouteSectionState extends State<RouteSection> {
         border: Border.all(color: t.border),
         borderRadius: BorderRadius.circular(t.radiusLg),
       ),
-      child: Column(
-        children: [
-          for (var i = 0; i < items.length; i++) ...[
-            if (i > 0) Divider(height: 1, color: t.border),
-            _ItemRow(value: items[i], onRemove: () => _remove(items[i])),
-          ],
-        ],
-      ),
+      clipBehavior: Clip.antiAlias,
+      child: items.isEmpty
+          ? Center(
+              child: Text(
+                'пусто',
+                style: TextStyle(color: t.textFaint, fontSize: 12),
+              ),
+            )
+          : ListView.separated(
+              padding: EdgeInsets.zero,
+              itemCount: items.length,
+              separatorBuilder: (_, __) =>
+                  Divider(height: 1, color: t.border),
+              itemBuilder: (_, i) => _ItemRow(
+                value: items[i],
+                onRemove: () => _remove(items[i]),
+              ),
+            ),
     );
   }
 }
