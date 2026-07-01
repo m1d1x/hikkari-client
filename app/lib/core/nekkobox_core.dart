@@ -93,6 +93,14 @@ abstract class NekkoboxCore {
   String addProfileFromUri(String uri) =>
       _call('AddProfileFromURI', {'uri': uri}) as String;
 
+  /// Lowercase ISO 3166-1 alpha-2 country code per profile name, resolved
+  /// from each profile's server host. Missing/unresolved entries map to "".
+  /// Cached engine-side, but the first call per host can take up to ~3.5s
+  /// (DNS + online fallback) — callers should not await this on a hot path.
+  Map<String, String> profileCountries() =>
+      (_call('ProfileCountries') as Map<String, dynamic>)
+          .cast<String, String>();
+
   /// Whether auto-fastest mode (urltest group) is on.
   bool autoMode() => _call('AutoMode') as bool;
 
@@ -103,6 +111,38 @@ abstract class NekkoboxCore {
 
   Map<String, List<PingSample>> uptimeHistory() {
     final raw = _call('UptimeHistory') as Map<String, dynamic>;
+    return raw.map((k, v) => MapEntry(
+          k,
+          (v as List)
+              .cast<Map<String, dynamic>>()
+              .map(PingSample.fromJson)
+              .toList(),
+        ));
+  }
+
+  // ----- service uptime -----
+
+  /// Probes each service in parallel through the active profile and returns
+  /// one result per service (order preserved). Also records each outcome in
+  /// the service uptime history (see [serviceUptimeHistory]).
+  List<ServicePingResultDto> pingServices(
+    String activeTag,
+    List<ServicePingTargetDto> services,
+  ) {
+    final data = _call('PingServices', {
+      'activeTag': activeTag,
+      'services': services.map((s) => s.toJson()).toList(),
+    });
+    return (data as List)
+        .cast<Map<String, dynamic>>()
+        .map(ServicePingResultDto.fromJson)
+        .toList();
+  }
+
+  /// Rolling history of on-demand service pings, keyed by
+  /// `"<activeTag>|<service name>"`.
+  Map<String, List<PingSample>> serviceUptimeHistory() {
+    final raw = _call('ServiceUptimeHistory') as Map<String, dynamic>;
     return raw.map((k, v) => MapEntry(
           k,
           (v as List)

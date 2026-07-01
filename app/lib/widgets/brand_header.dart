@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import 'route_section.dart';
 
 /// Compact top-right action. The old brand/IP header was intentionally removed
 /// so the home screen starts with the product itself, not chrome.
@@ -121,6 +122,10 @@ class _SettingsSheet extends StatelessWidget {
               _InfoRow(label: 'статус', value: statusLabel),
               _InfoRow(label: 'ip', value: ip.isEmpty ? '-' : ip),
               if (msg.isNotEmpty) _InfoRow(label: 'сообщение', value: msg),
+              const SizedBox(height: 16),
+              Divider(height: 1, color: t.border),
+              const SizedBox(height: 16),
+              const RouteSettingsSection(),
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 onPressed: () {

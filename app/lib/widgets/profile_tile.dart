@@ -5,7 +5,9 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import 'profile_flag_badge.dart';
 import 'profile_summary_card.dart';
+import 'service_ping_sheet.dart';
 
 /// One profile row. Collapsed and home-selected cards share the same visual
 /// component; expanded rows add stats, rename, and delete controls.
@@ -103,24 +105,37 @@ class _ProfileTileState extends State<ProfileTile> {
     final t = context.tokens;
     final s = context.watch<AppState>();
     final hist = s.uptime[widget.profile.name] ?? const <PingSample>[];
+    final countryCode = s.profileCountries[widget.profile.name];
 
-    return ProfileSummaryCard(
-      title: widget.profile.label,
-      samples: hist,
-      selected: widget.profile.active,
-      onTap: s.busy ? null : _switchProfile,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
-      chartHeight: 32,
-      trailing: _ExpandButton(
-        expanded: widget.expanded,
-        onTap: widget.onToggleExpand,
+    // ПКМ по карточке — вместо технических подробностей открывает пинги
+    // до популярных сервисов (YouTube, Telegram и т.д.), см. подробности
+    // клика ЛКМ/стрелочки — ниже, в footer.
+    return GestureDetector(
+      onSecondaryTap: () =>
+          ServicePingSheet.show(context, widget.profile.label),
+      child: ProfileSummaryCard(
+        title: widget.profile.label,
+        leading: countryCode == null || countryCode.isEmpty
+            ? null
+            : ProfileFlagBadge(countryCode: countryCode),
+        samples: hist,
+        selected: widget.profile.active,
+        forceChecking: widget.profile.active && s.isWarmingUp,
+        onTap: s.busy ? null : _switchProfile,
+        // ms и стрелочка — единая зона нажатия на разворачивание подробнос-
+        // тей (а не только сама стрелочка, чтобы было проще попасть пальцем).
+        onTrailingTap: widget.onToggleExpand,
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
+        titleFontSize: 14,
+        chartHeight: 32,
+        trailing: _ExpandButton(expanded: widget.expanded),
+        // _ExpandButton — 34×34, иначе адаптивная раскладка карточки даёт
+        // на trailing 18px и trailing вылезает за правый бордер.
+        trailingWidth: 34,
+        footer: _detail(context, t, hist),
+        footerVisible: widget.expanded,
       ),
-      // _ExpandButton — 34×34, иначе адаптивная раскладка карточки даёт
-      // на trailing 18px и trailing вылезает за правый бордер.
-      trailingWidth: 34,
-      footer: _detail(context, t, hist),
-      footerVisible: widget.expanded,
     );
   }
 
@@ -245,11 +260,12 @@ class _ProfileTileState extends State<ProfileTile> {
   }
 }
 
+// Чисто визуальная стрелочка — нажатие обрабатывает вся правая зона
+// карточки (ProfileSummaryCard.onTrailingTap), а не сама иконка.
 class _ExpandButton extends StatelessWidget {
   final bool expanded;
-  final VoidCallback onTap;
 
-  const _ExpandButton({required this.expanded, required this.onTap});
+  const _ExpandButton({required this.expanded});
 
   @override
   Widget build(BuildContext context) {
@@ -257,21 +273,14 @@ class _ExpandButton extends StatelessWidget {
     return SizedBox(
       width: 34,
       height: 34,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          onTap: onTap,
-          mouseCursor: SystemMouseCursors.click,
-          borderRadius: BorderRadius.circular(10),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 120),
-            child: Icon(
-              expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-              key: ValueKey(expanded),
-              color: t.textMuted,
-              size: 19,
-            ),
+      child: Center(
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 120),
+          child: Icon(
+            expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+            key: ValueKey(expanded),
+            color: t.textMuted,
+            size: 19,
           ),
         ),
       ),

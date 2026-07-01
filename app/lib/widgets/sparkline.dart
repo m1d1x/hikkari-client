@@ -104,23 +104,6 @@ class _SparklinePainter extends CustomPainter {
       linePath.quadraticBezierTo(p1.x, p1.y, p1.x, p1.y);
     }
 
-    // Area = stroke path, then drop to baseline and close.
-    final areaPath = Path.from(linePath)
-      ..lineTo(pts.last.x, size.height)
-      ..lineTo(pts.first.x, size.height)
-      ..close();
-
-    final areaPaint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          color.withValues(alpha: 0.45),
-          color.withValues(alpha: 0.0),
-        ],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height));
-    canvas.drawPath(areaPath, areaPaint);
-
     final linePaint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke

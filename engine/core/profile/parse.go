@@ -7,6 +7,7 @@ package profile
 import (
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -27,6 +28,9 @@ func ParseURI(uri string) (Draft, error) {
 	uri = strings.TrimSpace(uri)
 	if uri == "" {
 		return Draft{}, fmt.Errorf("пустая ссылка")
+	}
+	if looksLikeWireGuardIni(uri) {
+		return parseAmneziaWGIni(uri)
 	}
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -385,4 +389,186 @@ func splitSSCreds(creds string) (method, password string) {
 		return "", ""
 	}
 	return creds[:colon], creds[colon+1:]
+}
+
+// looksLikeWireGuardIni reports whether the pasted text is a native
+// WireGuard/AmneziaWG .conf file rather than a scheme:// URI.
+func looksLikeWireGuardIni(s string) bool {
+	return strings.Contains(s, "[Interface]") && strings.Contains(s, "[Peer]")
+}
+
+// parseAmneziaWGIni parses a native AmneziaWG / WireGuard .conf file (the
+// "[Interface]"/"[Peer]" ini format exported by the Amnezia desktop/mobile
+// app) into a sing-box "awg" endpoint. Falls back to a plain "wireguard"
+// endpoint when none of the Jc/Jmin/... obfuscation params are present.
+// Reference shape: archive/config.json's "endpoints[0]" block.
+func parseAmneziaWGIni(text string) (Draft, error) {
+	iface, peer, err := splitIniSections(text)
+	if err != nil {
+		return Draft{}, err
+	}
+
+	privateKey := iface["PrivateKey"]
+	if privateKey == "" {
+		return Draft{}, fmt.Errorf("amnezia: в конфиге нет PrivateKey")
+	}
+	publicKey := peer["PublicKey"]
+	if publicKey == "" {
+		return Draft{}, fmt.Errorf("amnezia: в конфиге нет PublicKey")
+	}
+	endpoint := peer["Endpoint"]
+	host, portStr, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return Draft{}, fmt.Errorf("amnezia: не удалось разобрать Endpoint %q", endpoint)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return Draft{}, fmt.Errorf("amnezia: неверный порт %q", portStr)
+	}
+
+	address := splitAndTrim(iface["Address"])
+	if len(address) == 0 {
+		return Draft{}, fmt.Errorf("amnezia: в конфиге нет Address")
+	}
+	addrList := make([]interface{}, 0, len(address))
+	for _, a := range address {
+		addrList = append(addrList, a)
+	}
+
+	allowedIPs := splitAndTrim(peer["AllowedIPs"])
+	if len(allowedIPs) == 0 {
+		allowedIPs = []string{"0.0.0.0/0"}
+	}
+	allowedList := make([]interface{}, 0, len(allowedIPs))
+	for _, a := range allowedIPs {
+		allowedList = append(allowedList, a)
+	}
+
+	peerCfg := map[string]interface{}{
+		"address":     host,
+		"port":        port,
+		"public_key":  publicKey,
+		"allowed_ips": allowedList,
+	}
+	if psk := peer["PresharedKey"]; psk != "" {
+		peerCfg["preshared_key"] = psk
+	}
+	if ka := peer["PersistentKeepalive"]; ka != "" {
+		if n, err := strconv.Atoi(ka); err == nil {
+			peerCfg["persistent_keepalive_interval"] = n
+		}
+	}
+
+	cfg := map[string]interface{}{
+		"type":        "wireguard",
+		"private_key": privateKey,
+		"address":     addrList,
+		"peers":       []interface{}{peerCfg},
+	}
+	if mtu := iface["MTU"]; mtu != "" {
+		if n, err := strconv.Atoi(mtu); err == nil {
+			cfg["mtu"] = n
+		}
+	}
+
+	// AmneziaWG obfuscation params — presence of Jc marks this as "awg"
+	// rather than plain WireGuard.
+	if jc := iface["Jc"]; jc != "" {
+		cfg["type"] = "awg"
+		if n, err := strconv.Atoi(jc); err == nil {
+			cfg["jc"] = n
+		}
+		if n, err := strconv.Atoi(iface["Jmin"]); err == nil {
+			cfg["jmin"] = n
+		}
+		if n, err := strconv.Atoi(iface["Jmax"]); err == nil {
+			cfg["jmax"] = n
+		}
+		for _, key := range []string{"S1", "S2", "S3", "S4"} {
+			if v := iface[key]; v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					cfg[strings.ToLower(key)] = n
+				}
+			}
+		}
+		// H1-H4 and I1-I5 are opaque tokens (plain numbers or "n-n" ranges,
+		// or magic-header specs for I*) — pass through as strings verbatim.
+		for _, key := range []string{"H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5"} {
+			if v := iface[key]; v != "" {
+				cfg[strings.ToLower(key)] = v
+			}
+		}
+	}
+
+	label := host
+	return Draft{Kind: KindEndpoint, Label: label, Config: cfg}, nil
+}
+
+// splitIniSections walks a WireGuard-style ini file and returns the
+// key/value pairs of the first [Interface] and first [Peer] section.
+// Extra [Peer] sections (multi-hop configs) are ignored — only the first
+// hop is imported.
+func splitIniSections(text string) (iface, peer map[string]string, err error) {
+	iface = map[string]string{}
+	peer = map[string]string{}
+	var cur map[string]string
+	sawPeer := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section := strings.ToLower(strings.TrimSpace(line[1 : len(line)-1]))
+			switch section {
+			case "interface":
+				cur = iface
+			case "peer":
+				if sawPeer {
+					cur = nil // ignore subsequent peers
+				} else {
+					cur = peer
+					sawPeer = true
+				}
+			default:
+				cur = nil
+			}
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		eq := strings.Index(line, "=")
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:eq])
+		val := strings.TrimSpace(line[eq+1:])
+		cur[key] = val
+	}
+	if len(iface) == 0 {
+		return nil, nil, fmt.Errorf("amnezia: секция [Interface] пустая или не найдена")
+	}
+	if len(peer) == 0 {
+		return nil, nil, fmt.Errorf("amnezia: секция [Peer] пустая или не найдена")
+	}
+	return iface, peer, nil
+}
+
+// splitAndTrim splits a comma-separated ini value into trimmed, non-empty
+// parts.
+func splitAndTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

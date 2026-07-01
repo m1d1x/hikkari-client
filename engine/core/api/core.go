@@ -18,6 +18,7 @@ import (
 
 	"NekkoVPN/core/clashapi"
 	"NekkoVPN/core/configfile"
+	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/logging"
 	"NekkoVPN/core/profile"
@@ -56,6 +57,10 @@ type Core struct {
 	vpn      vpn.Manager
 	health   *health.Checker
 	uptime   *uptime.Tracker
+	// serviceUptime holds on-demand pings of arbitrary user services
+	// (YouTube, Discord, …) measured through the active profile — kept
+	// separate from the per-profile uptime tracker above.
+	serviceUptime *uptime.Tracker
 }
 
 // New returns an uninitialised Core. Call Init before use.
@@ -101,11 +106,14 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 		c.vpnHosts,
 	)
 	c.uptime = uptime.New(filepath.Join(baseDir, "uptime-history.json"))
+	c.serviceUptime = uptime.New(filepath.Join(baseDir, "service-uptime-history.json"))
 
 	c.health.LoadDirectIP()
 	c.ensureProfiles()
 	c.ensureSelectorConfig()
 	c.uptime.Load()
+	c.serviceUptime.Load()
+	geoip.Load(filepath.Join(baseDir, "geoip-cache.json"))
 	probe := uptime.NewLiveProbe(clashapi.New(""))
 	go c.uptime.Run(c.ctx, c.uptimeHosts, probe)
 	// Health probing is the slow path (HTTPS to api.ipify.org). Running it

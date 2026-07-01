@@ -195,3 +195,35 @@ class PingSample {
         rttMs: j['rtt_ms'] as int? ?? 0,
       );
 }
+
+/// A single user service to probe through the active profile. Mirrors Go's
+/// `api.ServicePingTarget`.
+class ServicePingTargetDto {
+  final String name;
+  final String url;
+
+  const ServicePingTargetDto({required this.name, required this.url});
+
+  Map<String, Object?> toJson() => {'name': name, 'url': url};
+}
+
+/// Outcome of probing one [ServicePingTargetDto]. Mirrors Go's
+/// `api.ServicePingResult`.
+class ServicePingResultDto {
+  final String name;
+  final bool ok;
+  final int rttMs;
+
+  const ServicePingResultDto({
+    required this.name,
+    required this.ok,
+    required this.rttMs,
+  });
+
+  factory ServicePingResultDto.fromJson(Map<String, dynamic> j) =>
+      ServicePingResultDto(
+        name: j['name'] as String? ?? '',
+        ok: j['ok'] as bool? ?? false,
+        rttMs: j['rtt_ms'] as int? ?? 0,
+      );
+}

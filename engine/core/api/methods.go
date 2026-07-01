@@ -6,8 +6,11 @@
 package api
 
 import (
+	"sync"
+
 	"NekkoVPN/core/clashapi"
 	"NekkoVPN/core/configfile"
+	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/uptime"
@@ -139,6 +142,40 @@ func (c *Core) AddProfileFromURI(uri string) (string, error) {
 	return name, nil
 }
 
+// ProfileCountries resolves the lowercase ISO 3166-1 alpha-2 country code
+// for each profile's server host, keyed by profile name. A resolved host is
+// cached forever (in-process and on disk — see geoip.Load, called from
+// InitWithVPN) since its country can't change without its IP changing,
+// i.e. without the profile's endpoint itself changing — so repeated calls
+// after the first are free. Profiles whose host can't be determined or
+// resolved map to "" and are retried on the next call.
+//
+// Resolutions run concurrently across profiles — this is a synchronous FFI
+// call from the UI thread, so a cold cache (DNS + online fallback per host,
+// up to ~3.5s each) must not serialize into N*3.5s.
+func (c *Core) ProfileCountries() (map[string]string, error) {
+	pf, err := c.profiles.Read()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(pf.Profiles))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, p := range pf.Profiles {
+		wg.Add(1)
+		go func(p profile.Profile) {
+			defer wg.Done()
+			code := geoip.Resolve(profile.PeerHost(p))
+			mu.Lock()
+			out[p.Name] = code
+			mu.Unlock()
+		}(p)
+	}
+	wg.Wait()
+	geoip.Save()
+	return out, nil
+}
+
 // rebuildConfig snapshots all profiles and writes the canonical selector-
 // shaped config.json. Call it after any mutation that adds, removes, or
 // changes the active profile (or toggles auto-mode).
@@ -178,3 +215,58 @@ func (c *Core) SetAutoMode(on bool) error {
 // ============================================================
 
 func (c *Core) UptimeHistory() map[string][]PingSample { return c.uptime.Snapshot() }
+
+// ============================================================
+//  Service uptime (on-demand pings of arbitrary user services
+//  through the active profile)
+// ============================================================
+
+// ServicePingTarget is a single user service to probe through the active
+// profile.
+type ServicePingTarget struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// ServicePingResult is the outcome of probing one ServicePingTarget.
+type ServicePingResult struct {
+	Name  string `json:"name"`
+	OK    bool   `json:"ok"`
+	RttMs int    `json:"rtt_ms"`
+}
+
+// PingServices probes each service in parallel through the active profile's
+// Clash-API delay endpoint, records every result in the service uptime
+// tracker (keyed by "<activeTag>|<service name>") and returns the results.
+// This is an on-demand, one-shot call — no background loop, no staggering.
+func (c *Core) PingServices(activeTag string, services []ServicePingTarget) []ServicePingResult {
+	results := make([]ServicePingResult, len(services))
+	cl := clashapi.New("")
+
+	var wg sync.WaitGroup
+	for i, svc := range services {
+		wg.Add(1)
+		go func(i int, svc ServicePingTarget) {
+			defer wg.Done()
+			ms, err := cl.Delay(activeTag, svc.URL, uptime.PingTimeoutMs)
+			res := ServicePingResult{Name: svc.Name}
+			if err == nil {
+				res.OK = true
+				res.RttMs = ms
+			}
+			results[i] = res
+		}(i, svc)
+	}
+	wg.Wait()
+
+	for i, svc := range services {
+		c.serviceUptime.Record(activeTag+"|"+svc.Name, results[i].OK, results[i].RttMs)
+	}
+	c.serviceUptime.Save()
+
+	return results
+}
+
+// ServiceUptimeHistory returns the rolling history of on-demand service pings,
+// keyed by "<activeTag>|<service name>".
+func (c *Core) ServiceUptimeHistory() map[string][]PingSample { return c.serviceUptime.Snapshot() }

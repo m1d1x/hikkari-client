@@ -159,6 +159,8 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 			return nil, err
 		}
 		return c.AddProfileFromURI(a.URI)
+	case "ProfileCountries":
+		return c.ProfileCountries()
 	case "AutoMode":
 		return c.AutoMode()
 	case "SetAutoMode":
@@ -173,6 +175,19 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 	// ----- uptime -----
 	case "UptimeHistory":
 		return c.UptimeHistory(), nil
+
+	// ----- service uptime -----
+	case "PingServices":
+		var a struct {
+			ActiveTag string              `json:"activeTag"`
+			Services  []ServicePingTarget `json:"services"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return c.PingServices(a.ActiveTag, a.Services), nil
+	case "ServiceUptimeHistory":
+		return c.ServiceUptimeHistory(), nil
 	}
 	return nil, fmt.Errorf("api.Core: unknown method %q", method)
 }

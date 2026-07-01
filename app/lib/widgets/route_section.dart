@@ -5,10 +5,13 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 
-/// "Маршрутизация" section — master toggle + mode switch + three category
-/// tabs + the items list. Layout is a single card whose body collapses;
-/// expand state is local (where the user is in the UI), but everything
-/// data-shaped (enabled flag, mode, lists) lives in [AppState.routing].
+/// "Маршрутизация" section — master toggle + three category tabs + the
+/// items list. Layout is a single card whose body collapses; expand state
+/// is local (where the user is in the UI), but everything data-shaped
+/// (enabled flag, mode, lists) lives in [AppState.routing]. The whitelist
+/// vs. blacklist mode picker ([_ModeFlipButton]/[_ModeCaption]) has moved
+/// to the settings sheet ([RouteSettingsSection]) — this section only
+/// shows a tooltip on the header explaining whichever mode is active.
 class RouteSection extends StatefulWidget {
   const RouteSection({super.key});
 
@@ -67,6 +70,15 @@ class _RouteSectionState extends State<RouteSection> {
     await context.read<AppState>().removeRule(_tab, v);
   }
 
+  static String _tooltipFor(RoutingState routing) {
+    if (!routing.enabled) {
+      return 'маршрутизация выключена — весь трафик идёт через vpn';
+    }
+    return routing.mode == RoutingMode.bypass
+        ? 'через vpn идёт всё, кроме того что в списке'
+        : 'через vpn идёт только то, что в списке';
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -107,43 +119,51 @@ class _RouteSectionState extends State<RouteSection> {
     );
   }
 
-  // Header: title + chevron + mode-flip button + master switch.
-  // Tap anywhere on the row toggles collapse — except the mode button and
-  // the switch, which absorb their own taps and don't bubble.
+  // Header: title + chevron + master switch. Tap anywhere on the row
+  // toggles collapse — except the switch, which absorbs its own tap and
+  // doesn't bubble. A tooltip over the whole row explains the active mode.
   Widget _head(NekkoTokens t, AppState s) {
-    return InkWell(
-      onTap: () => setState(() => _open = !_open),
-      mouseCursor: SystemMouseCursors.click,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            Text(
-              'маршрутизация',
-              style: TextStyle(
-                color: t.text,
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
+    return Tooltip(
+      message: _tooltipFor(s.routing),
+      waitDuration: const Duration(milliseconds: 400),
+      child: InkWell(
+        onTap: () => setState(() => _open = !_open),
+        mouseCursor: SystemMouseCursors.click,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+          child: Row(
+            children: [
+              // Optical alignment: rounded tab pills below read as starting
+              // slightly right of their true edge, so nudge the title to
+              // match rather than sit flush with the container padding.
+              const SizedBox(width: 3),
+              Text(
+                'маршрутизация',
+                style: TextStyle(
+                  color: t.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
-            ),
-            const SizedBox(width: 6),
-            AnimatedRotation(
-              duration: const Duration(milliseconds: 150),
-              turns: _open ? 0.5 : 0,
-              child: Icon(
-                Icons.keyboard_arrow_down,
-                size: 16,
-                color: t.textMuted,
+              const SizedBox(width: 6),
+              AnimatedRotation(
+                duration: const Duration(milliseconds: 150),
+                turns: _open ? 0.5 : 0,
+                child: Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 16,
+                  color: t.textMuted,
+                ),
               ),
-            ),
-            const Spacer(),
-            _ModeFlipButton(state: s),
-            const SizedBox(width: 12),
-            _IosSwitch(
-              value: s.routing.enabled,
-              onChanged: (v) => s.setRoutingEnabled(v),
-            ),
-          ],
+              const SizedBox(width: 8),
+              _ApplyStatusLabel(status: s.routingApply),
+              const Spacer(),
+              _IosSwitch(
+                value: s.routing.enabled,
+                onChanged: (v) => s.setRoutingEnabled(v),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -155,8 +175,6 @@ class _RouteSectionState extends State<RouteSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _ModeCaption(state: s),
-          const SizedBox(height: 10),
           _tabs(t),
           const SizedBox(height: 10),
           _adder(t),
@@ -232,9 +250,92 @@ class _RouteSectionState extends State<RouteSection> {
 }
 
 
+/// Compact status word in the header — shows what's happening with the
+/// pending routing edit: waiting out the debounce window, restarting the
+/// tunnel to pick the change up, or freshly applied. Empty (and takes no
+/// space) once it fades back to idle.
+class _ApplyStatusLabel extends StatelessWidget {
+  final RoutingApplyStatus status;
+  const _ApplyStatusLabel({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final (label, color) = switch (status) {
+      RoutingApplyStatus.idle => (null, t.textMuted),
+      RoutingApplyStatus.pending => ('ожидает', t.textMuted),
+      RoutingApplyStatus.applying => ('применяется…', t.warn),
+      RoutingApplyStatus.applied => ('обновлено', t.primary),
+    };
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      transitionBuilder: (child, anim) =>
+          FadeTransition(opacity: anim, child: child),
+      // Default layoutBuilder stacks children centered, so a shorter label
+      // fading in over a longer outgoing one visibly shifts sideways. Pin
+      // everything to the left edge instead — the row's own alignment stays
+      // put no matter how the label's width changes mid-transition.
+      layoutBuilder: (currentChild, previousChildren) => Stack(
+        alignment: Alignment.centerLeft,
+        children: [
+          ...previousChildren,
+          ?currentChild,
+        ],
+      ),
+      child: label == null
+          ? const SizedBox.shrink(key: ValueKey('idle'))
+          : Text(
+              label,
+              key: ValueKey(label),
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+    );
+  }
+}
+
+/// Whitelist vs. blacklist mode picker, for the settings sheet. Everything
+/// else about routing (master switch, category tabs, item lists) stays on
+/// the home screen in [RouteSection] — only the proxy/bypass choice and its
+/// explanation moved here, since most users never need to touch it.
+class RouteSettingsSection extends StatelessWidget {
+  const RouteSettingsSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final s = context.watch<AppState>();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text(
+              'режим маршрутизации',
+              style: TextStyle(
+                color: t.text,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const Spacer(),
+            _ModeFlipButton(state: s),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _ModeCaption(state: s),
+      ],
+    );
+  }
+}
+
 /// Passive caption: just tells the user what the current routing mode means.
-/// The actual flip lives in the header [_ModeFlipButton] now, so this row
-/// is non-interactive — it reads as documentation that follows the button.
+/// The actual flip lives in [_ModeFlipButton] above it, so this row is
+/// non-interactive — it reads as documentation that follows the button.
 class _ModeCaption extends StatelessWidget {
   final AppState state;
   const _ModeCaption({required this.state});
@@ -268,198 +369,86 @@ class _ModeCaption extends StatelessWidget {
   }
 }
 
-// =============================================================================
-//  МИНИ-ТУТОРИАЛ ПО FLUTTER НА ПРИМЕРЕ ЭТОЙ КНОПКИ
-// =============================================================================
-//
-//  Flutter рисует UI как ДЕРЕВО ВИДЖЕТОВ. Каждый виджет — это либо:
-//   • StatelessWidget — статичный, перерисовывается только когда родитель его
-//     перестроит. Пример в файле: _IosSwitch, _TabPill, _AddButton.
-//   • StatefulWidget — у него есть внутреннее состояние (поля _xxx), при
-//     setState() он перерисовывается. Пример: эта самая _ModeFlipButton — она
-//     помнит _hover и сама себя перерисовывает на наведение мыши.
-//
-//  StatefulWidget = два класса:
-//    1) сам виджет (`_ModeFlipButton`) — иммутабельный, хранит входные
-//       параметры (тут это `state`).
-//    2) его State (`_ModeFlipButtonState`) — мутабельный, тут живёт `_hover`
-//       и метод build(), который собирает дерево.
-//
-//  Виджеты обычно ВЛОЖЕНЫ друг в друга через `child:` или `children:`. Здесь
-//  цепочка такая (читай как матрёшку):
-//
-//    Opacity         — приглушает всё внутри (если dim==true → 50%).
-//      Tooltip       — всплывающая подсказка при наведении.
-//        MouseRegion — ловит вход/выход мыши → меняет _hover.
-//          GestureDetector — ловит клик, вызывает setRoutingMode().
-//            AnimatedContainer — фон, размер, скругление + плавная анимация.
-//              Row(children:[ AnimatedSwitcher(Text), SizedBox, Icon ])
-//                — горизонтальный ряд: текст, отступ 6px, иконка.
-//
-//  Hot reload (`r` в `flutter run`) перерисовывает дерево БЕЗ перезапуска
-//  приложения — твои правки появляются за 100мс. Если поменял поле State
-//  или импорт — нужен hot RESTART (`R`).
-//
-// =============================================================================
-
-/// Header-level mode-flip button. Compact pill that swaps proxy↔bypass on
-/// tap. Disabled (and dimmed) when master is off.
+/// Mode-flip button. Compact pill that swaps proxy↔bypass on tap. Disabled
+/// (and dimmed) when master is off.
 class _ModeFlipButton extends StatefulWidget {
-  // `final` поле = принятый снаружи параметр. Передаётся через конструктор
-  // вызывающей стороной: `_ModeFlipButton(state: s)`.
   final AppState state;
   const _ModeFlipButton({required this.state});
 
-  // Связь между виджетом и его state'ом. Flutter сам это вызовет один раз.
   @override
   State<_ModeFlipButton> createState() => _ModeFlipButtonState();
 }
 
 class _ModeFlipButtonState extends State<_ModeFlipButton> {
-  // Локальное состояние — только этот виджет о нём знает. Меняется через
-  // setState(() => _hover = ...), что триггерит перерисовку build() ниже.
   bool _hover = false;
 
-  // build() Flutter дёргает каждый раз когда:
-  //   • поменялся _hover (через setState)
-  //   • родитель сказал «перерисуйся» (например AppState уведомил)
-  // Возвращай тут дерево виджетов — Flutter сам разберётся что менять
-  // в реальном рендере.
   @override
   Widget build(BuildContext context) {
-    // ВЫЧИСЛЕНИЯ — здесь готовим всё что зависит от текущего состояния.
-    // Эти переменные пересчитываются на каждый build, это нормально.
-
-    // `t` = токены темы (цвета, радиусы, шрифт). Все цвета бери отсюда,
-    // а не хардкоди — тогда тёмная/светлая тема будут работать сами.
-    // Чтобы посмотреть что внутри: ctrl+click на `tokens` → откроется файл.
     final t = context.tokens;
-
-    // `s` = AppState (наш глобальный стейт). Через него читаем routing-режим
-    // и вызываем действия (setRoutingMode переключит и запустит debounce).
     final s = widget.state;
-
-    // dim = true когда master-свитч маршрутизации выключен. В этом случае
-    // кнопку показываем тусклой и не реагируем на клики/hover.
     final dim = !s.routing.enabled;
-
-    // Какой режим будет после клика.
     final nextMode = s.routing.mode == RoutingMode.bypass
         ? RoutingMode.proxy
         : RoutingMode.bypass;
-
-    // Текст подсказки (Tooltip) — что произойдёт по клику.
     final tooltipText = s.routing.mode == RoutingMode.bypass
         ? 'через vpn пойдёт ТОЛЬКО список'
         : 'через vpn пойдёт ВСЁ, кроме списка';
-
-    // Лейбл на самой кнопке = текущий режим. Юзер видит "в каком я сейчас",
-    // клик свапает.
     final label = s.routing.mode == RoutingMode.bypass ? 'bypass' : 'proxy';
 
-    // ===== ВОТ ОН — ЦВЕТ ФОНА =====
-    // Поменял на розовый акцент темы (`t.primary`) с прозрачностью, чтобы
-    // ты увидел эффект. Конструкция `cond ? a : b` = тернарный оператор:
-    //   "если cond то a, иначе b". Тут вложенная — три ветки:
-    //     dim  → прозрачный (выключенная маршрутизация = кнопка-призрак)
-    //     hover → плотный розовый (40% непрозрачности)
-    //     else → лёгкий розовый (15% непрозрачности, обычное состояние)
-    //
-    // ЭКСПЕРИМЕНТЫ — закомментируй текущий блок и попробуй ОДИН из:
-    //   • `final bg = Colors.transparent;`           // вообще нет фона
-    //   • `final bg = t.bg;`                         // как страница
-    //   • `final bg = const Color(0xFF00FF00);`      // лютый зелёный
-    //   • `final bg = t.surface2;`                   // как было раньше
+    // ⬇⬇⬇ ПЕСОЧНИЦА — крути эти строки, жми `r` в flutter run, смотри что вышло.
     final bg = dim
         ? Colors.transparent
         : (_hover
             ? t.primary.withValues(alpha: 0.40)
             : t.primary.withValues(alpha: 0.15));
-
-    // fg = foreground = цвет текста и иконки.
     final fg = dim ? t.textFaint : (_hover ? t.text : t.textMuted);
+    // ⬆⬆⬆
 
-    // ===== ДЕРЕВО ВИДЖЕТОВ =====
     return Opacity(
-      // Если dim → весь виджет показывается на 50% прозрачности. Это
-      // ВИЗУАЛЬНЫЙ эффект, клики всё ещё долетают (отключаем их ниже).
       opacity: dim ? 0.5 : 1,
       child: Tooltip(
-        // Подсказка появляется при наведении через 500мс.
         message: dim ? '' : tooltipText,
         waitDuration: const Duration(milliseconds: 500),
         child: MouseRegion(
-          // Курсор-указатель когда виджет кликабелен.
           cursor: dim
               ? SystemMouseCursors.basic
               : SystemMouseCursors.click,
-          // Мышь зашла на виджет — ставим _hover=true → build() побежит
-          // снова, bg и fg пересчитаются с учётом нового _hover.
           onEnter: (_) {
             if (!dim) setState(() => _hover = true);
           },
-          // Мышь ушла — обратно.
           onExit: (_) => setState(() => _hover = false),
           child: GestureDetector(
-            // opaque = ловить клики по всей площади child'а, даже по пустым
-            // местам без визуального наполнения.
             behavior: HitTestBehavior.opaque,
-            // onTap: null означает "виджет некликабельный". Так делаем когда
-            // dim=true — кнопка визуально есть, но не реагирует.
             onTap: dim ? null : () => s.setRoutingMode(nextMode),
             child: AnimatedContainer(
-              // ===== РАЗМЕР И АНИМАЦИЯ =====
-              // Container с приставкой Animated — плавно интерполирует свои
-              // параметры (color, size, padding...) между состояниями. То
-              // есть когда меняется bg при hover, переход НЕ скачком, а за
-              // 120мс. Попробуй поменять на 1000 — увидишь как плавно.
               duration: const Duration(milliseconds: 120),
-              // height = фиксированная высота кнопки. Покрути 24..40.
               height: 28,
-              // padding = ВНУТРЕННИЕ отступы (от края кнопки до её
-              // содержимого). symmetric(horizontal: X) = X слева и справа.
               padding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-              // ===== ОФОРМЛЕНИЕ =====
               decoration: BoxDecoration(
                 color: bg,
-                // Скругление углов. Покрути 0..999.
                 borderRadius: BorderRadius.circular(t.radius),
-                // РАСКОММЕНТИРУЙ для бордера:
-                // border: Border.all(color: t.primary, width: 1),
               ),
-              // ===== СОДЕРЖИМОЕ =====
               child: Row(
-                // mainAxisSize.min = Row занимает столько ширины, сколько
-                // нужно содержимому. По умолчанию был бы max (растягивается).
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   AnimatedSwitcher(
-                    // Когда `child` меняется (новый key) — старый плавно
-                    // исчезает, новый плавно появляется. Тут используется
-                    // чтобы текст "bypass" → "proxy" перетекал, а не скакал.
                     duration: const Duration(milliseconds: 140),
                     transitionBuilder: (child, anim) =>
                         FadeTransition(opacity: anim, child: child),
                     child: Text(
                       label,
-                      // key обязателен для AnimatedSwitcher — иначе он не
-                      // понимает что текст ИЗМЕНИЛСЯ и не запускает анимацию.
                       key: ValueKey(label),
                       style: TextStyle(
                         color: fg,
-                        fontSize: 12,          // 11..14 норм диапазон
-                        fontWeight: FontWeight.w500, // w400/w500/w600/w700
-                        height: 1,             // межстрочный (1.0 = впритык)
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        height: 1,
                       ),
                     ),
                   ),
-                  // SizedBox с width = горизонтальный отступ. Без него
-                  // текст и иконка слиплись бы.
                   const SizedBox(width: 6),
                   Icon(Icons.swap_horiz, size: 16, color: fg),
-                  // ↑ Все доступные иконки: google "flutter material icons"
-                  //   или https://fonts.google.com/icons
                 ],
               ),
             ),
@@ -584,13 +573,6 @@ class _IosSwitch extends StatelessWidget {
               decoration: BoxDecoration(
                 color: value ? Colors.white : const Color(0xFFDDDDDD),
                 shape: BoxShape.circle,
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x4D000000),
-                    blurRadius: 2,
-                    offset: Offset(0, 1),
-                  ),
-                ],
               ),
             ),
           ),

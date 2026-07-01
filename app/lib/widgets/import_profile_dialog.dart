@@ -135,7 +135,7 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
       );
 
   Widget _hint(NekkoTokens t) => Text(
-        'hysteria2:// · vless:// · trojan:// · ss://',
+        'hysteria2:// · vless:// · trojan:// · ss:// · AmneziaWG .conf',
         style: TextStyle(
           color: t.textFaint,
           fontSize: 11,

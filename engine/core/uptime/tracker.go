@@ -182,6 +182,13 @@ func (t *Tracker) runWindow(ctx context.Context, hosts HostProvider, probe Probe
 	t.Save()
 }
 
+// Record appends a single sample under key. Exported wrapper over record()
+// for on-demand callers outside this package (e.g. the service-ping path in
+// core/api). Persist with Save() when done.
+func (t *Tracker) Record(key string, ok bool, rttMs int) {
+	t.record(key, ok, rttMs)
+}
+
 func (t *Tracker) record(profile string, ok bool, rtt int) {
 	now := time.Now().Unix()
 	t.mu.Lock()

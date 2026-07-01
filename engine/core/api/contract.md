@@ -169,6 +169,26 @@ it restarts it to apply the change.
 `DeleteProfile` refuses to delete the last profile or the currently active
 one — the caller must switch first.
 
+### Profile geo (country flags)
+
+| method             | args | data                  |
+|---------------------|------|-----------------------|
+| `ProfileCountries`  | —    | `map[string]string`   |
+
+Resolves each profile's server host to a lowercase ISO 3166-1 alpha-2
+country code, keyed by profile name:
+
+```jsonc
+{ "main": "us", "backup": "de", "no-endpoint": "" }
+```
+
+Resolution order: local embedded IPv4 range database, then (only if the
+host is a domain) DNS, then a short-timeout online fallback for ranges the
+local database doesn't know. Every result — including an unresolved `""` —
+is cached in-process for 24h, so calling this repeatedly (e.g. after every
+profile list refresh) is cheap after the first pass. Never blocks longer
+than ~3.5s per uncached host.
+
 ### Uptime history
 
 | method          | args | data                       |
@@ -187,6 +207,43 @@ Keys are profile names. Each profile gets a rolling window of ~300 samples
   "rtt_ms": 42            // 0 if !ok
 }
 ```
+
+### Service uptime (on-demand pings of arbitrary user services)
+
+On-demand, one-shot probing of user-defined services through the active
+profile's Clash-API delay endpoint. Every result is also recorded in a
+rolling history keyed by `"<activeTag>|<service name>"`.
+
+| method                 | args                                                  | data                       |
+|------------------------|-------------------------------------------------------|----------------------------|
+| `PingServices`         | `{"activeTag":"...","services":[{"name","url"}]}`     | `ServicePingResult[]`      |
+| `ServiceUptimeHistory` | —                                                     | `map[string]PingSample[]`  |
+
+`PingServices` probes each service in parallel and returns one result per
+input service (order preserved). It is a single-shot call — no background
+loop.
+
+`ServicePingTarget` (input element):
+
+```jsonc
+{
+  "name": "youtube",              // service label / history key suffix
+  "url":  "https://youtube.com"   // URL to probe via Clash-API delay
+}
+```
+
+`ServicePingResult` (output element):
+
+```jsonc
+{
+  "name":   "youtube",
+  "ok":     true,
+  "rtt_ms": 42            // 0 if !ok
+}
+```
+
+`ServiceUptimeHistory` keys are `"<activeTag>|<service name>"`; each value is
+a rolling window of `PingSample` (same shape as under *Uptime history*).
 
 ---
 

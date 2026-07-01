@@ -15,6 +15,9 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
 
   // ----- text -----
   final Color text;
+  final Color textSecondary; // dimmed a notch below [text] — flat alternative
+  // to `text.withValues(alpha: ...)`, for headings that shouldn't compete
+  // with a brighter [text] element elsewhere on screen.
   final Color textMuted;
   final Color textFaint;
 
@@ -40,6 +43,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
     required this.border,
     required this.borderStrong,
     required this.text,
+    required this.textSecondary,
     required this.textMuted,
     required this.textFaint,
     required this.primary,
@@ -59,6 +63,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
     border: Color(0x0FFFFFFF),       // rgba(255,255,255,.06)
     borderStrong: Color(0x1FFFFFFF), // rgba(255,255,255,.12)
     text: Color(0xFFEDEDEE),
+    textSecondary: Color(0xFFC8C8CA),
     textMuted: Color(0xFF8A8A8E),
     textFaint: Color(0xFF5B5B60),
     primary: Color(0xFFFF7EB9),
@@ -79,6 +84,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
     Color? border,
     Color? borderStrong,
     Color? text,
+    Color? textSecondary,
     Color? textMuted,
     Color? textFaint,
     Color? primary,
@@ -96,6 +102,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
         border: border ?? this.border,
         borderStrong: borderStrong ?? this.borderStrong,
         text: text ?? this.text,
+        textSecondary: textSecondary ?? this.textSecondary,
         textMuted: textMuted ?? this.textMuted,
         textFaint: textFaint ?? this.textFaint,
         primary: primary ?? this.primary,
@@ -117,6 +124,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
       border: Color.lerp(border, other.border, t)!,
       borderStrong: Color.lerp(borderStrong, other.borderStrong, t)!,
       text: Color.lerp(text, other.text, t)!,
+      textSecondary: Color.lerp(textSecondary, other.textSecondary, t)!,
       textMuted: Color.lerp(textMuted, other.textMuted, t)!,
       textFaint: Color.lerp(textFaint, other.textFaint, t)!,
       primary: Color.lerp(primary, other.primary, t)!,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -10,10 +11,22 @@ import '../core/nekkobox_core.dart';
 /// mutation (master toggle, mode flip, list edit) updates Dart state only
 /// and logs to the debug console — the engine is NOT touched, so an external
 /// sing-box session keeps running. Flip back to false to wire to backend.
-const bool kRoutingDryRun = true;
+const bool kRoutingDryRun = false;
+
+/// Dev-only kill switch for everything else that would poke the real engine:
+/// VPN on/off, profile switch/rename/delete, auto-mode, and profile import.
+/// While true these mutate Dart state only (with simulated latency so the UI
+/// still feels real) and never call into [NekkoboxCore] — no real VPN
+/// connect/disconnect flapping while iterating on the frontend. Flip back to
+/// false to wire to backend.
+const bool kEngineDryRun = false;
 
 void _rlog(String msg) {
   debugPrint('[routing${kRoutingDryRun ? '/dry' : ''}] $msg');
+}
+
+void _elog(String msg) {
+  debugPrint('[engine${kEngineDryRun ? '/dry' : ''}] $msg');
 }
 
 /// Single source of truth for the UI. Owns the [NekkoboxCore] handle, polls
@@ -33,6 +46,11 @@ class AppState extends ChangeNotifier {
 
   HealthInfo? _health;
   List<ProfileInfo> _profiles = const [];
+  // Lowercase ISO country code per profile name, for the flag badge next to
+  // each profile's title. Populated in the background by
+  // [_refreshProfileCountries] — never awaited on a profile-list reload, since
+  // a cold cache can take a few seconds (DNS + online fallback per host).
+  Map<String, String> _profileCountries = const {};
   RoutingState _routing = const RoutingState.initial();
   Map<String, List<PingSample>> _uptime = const {};
   bool _busy = false;
@@ -43,12 +61,19 @@ class AppState extends ChangeNotifier {
   Timer? _routingAppliedFade;
   bool _autoMode = false;
   String? _lastError;
+  // Timestamp of the last VPN start / profile switch. The tunnel needs a
+  // moment to actually pass traffic (handshake, routing table settle), so
+  // the very first probe(s) right after this genuinely fail — that's not
+  // the same as the profile being dead. Widgets use [isWarmingUp] to show
+  // "checking" instead of "down" during this window.
+  DateTime? _connectedSince;
 
   AppState(this._core);
 
   // ----- getters -----
   HealthInfo? get health => _health;
   List<ProfileInfo> get profiles => _profiles;
+  Map<String, String> get profileCountries => _profileCountries;
   RoutingState get routing => _routing;
   Map<String, List<PingSample>> get uptime => _uptime;
   bool get busy => _busy;
@@ -56,6 +81,14 @@ class AppState extends ChangeNotifier {
   bool get autoMode => _autoMode;
   String? get lastError => _lastError;
   bool get isRunning => _health?.running ?? false;
+  // True for ~10s after a VPN start / profile switch. During this window
+  // uptime cards should show "checking" rather than "down" for probes that
+  // fail simply because the tunnel hasn't finished coming up yet.
+  bool get isWarmingUp {
+    final since = _connectedSince;
+    if (since == null) return false;
+    return DateTime.now().difference(since) < const Duration(seconds: 10);
+  }
   String? get activeProfileName {
     for (final p in _profiles) {
       if (p.active) return p.name;
@@ -63,12 +96,57 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
+  /// Sing-box proxy tag of the active profile, or null when there is no
+  /// active profile. Matches the per-profile tag the engine's uptime tracker
+  /// uses (`profile.ProfileTag` = `"p-<name>"`), so service pings and their
+  /// history land under the same routed member the VPN is currently using.
+  String? get activeTag {
+    final name = activeProfileName;
+    return name == null ? null : 'p-$name';
+  }
+
+  // ----- service ping (on-demand, sheet-driven) -----
+
+  /// Probes each service through the active profile's Clash-API delay
+  /// endpoint and records the outcome in the engine's service uptime history.
+  /// Thin pass-through to [NekkoboxCore.pingServices] — widgets don't hold a
+  /// core handle. Returns an empty list (never throws) when the engine can't
+  /// be reached, so the sheet degrades gracefully.
+  List<ServicePingResultDto> pingServices(
+    String activeTag,
+    List<ServicePingTargetDto> services,
+  ) {
+    try {
+      return _core.pingServices(activeTag, services);
+    } on NekkoboxError catch (e) {
+      _elog('pingServices failed: ${e.message}');
+      return const [];
+    } catch (e) {
+      _elog('pingServices failed: $e');
+      return const [];
+    }
+  }
+
+  /// Snapshot of the whole service-ping history, keyed by
+  /// `"<activeTag>|<service name>"`. Pass-through to the core; returns an
+  /// empty map on failure.
+  Map<String, List<PingSample>> serviceUptimeHistory() {
+    try {
+      return _core.serviceUptimeHistory();
+    } on NekkoboxError catch (e) {
+      _elog('serviceUptimeHistory failed: ${e.message}');
+      return const {};
+    } catch (e) {
+      _elog('serviceUptimeHistory failed: $e');
+      return const {};
+    }
+  }
+
   /// Initial load + start the periodic poll. Call once after the FFI handle
   /// is initialised. Health and uptime tick together at 1Hz so a single
   /// notifyListeners() updates everything that depends on either.
   void start() {
     _safeReload(() {
-      _profiles = _core.profiles();
       // In dry-run we deliberately skip reading routing from the engine —
       // any leftover live config shouldn't taint the UI we're tweaking.
       if (!kRoutingDryRun) {
@@ -77,13 +155,108 @@ class AppState extends ChangeNotifier {
         _rlog('start: dry-run, routing kept at ${_routing.mode.wire} '
             'enabled=${_routing.enabled}');
       }
-      _health = _core.health();
-      _uptime = _core.uptimeHistory();
-      _autoMode = _core.autoMode();
+      if (kEngineDryRun) {
+        _elog('start: dry-run, seeding fake profiles/health');
+        _profiles = _dryProfiles;
+        _health = _dryHealth;
+        _uptime = {'dry-demo': _seedDryUptime()};
+        _autoMode = false;
+      } else {
+        _profiles = _core.profiles();
+        _health = _core.health();
+        _uptime = _core.uptimeHistory();
+        _autoMode = _core.autoMode();
+      }
     });
     _healthTimer ??=
         Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    _refreshProfileCountries();
   }
+
+  /// Resolves each profile's country (for the flag badge) in the background.
+  /// Fire-and-forget on purpose: [NekkoboxCore.profileCountries] is a
+  /// synchronous FFI call that can take a few seconds on a cold cache (DNS +
+  /// online fallback), so it must never block a profile-list reload. Skipped
+  /// entirely in dry-run — no real hosts to resolve. Degrades to leaving the
+  /// previous map in place on failure, same as [pingServices].
+  void _refreshProfileCountries() {
+    if (kEngineDryRun) return;
+    scheduleMicrotask(() {
+      try {
+        _profileCountries = _core.profileCountries();
+        notifyListeners();
+      } on NekkoboxError catch (e) {
+        _elog('profileCountries failed: ${e.message}');
+      } catch (e) {
+        _elog('profileCountries failed: $e');
+      }
+    });
+  }
+
+  // ----- engine dry-run fakes -----
+
+  static const _dryHealthOff = HealthInfo(
+    running: false,
+    tunnelOK: false,
+    ip: '—',
+    status: 'off',
+    message: '',
+  );
+  static const _dryHealthOn = HealthInfo(
+    running: true,
+    tunnelOK: true,
+    ip: '10.13.37.1',
+    status: 'ok',
+    message: '',
+  );
+  HealthInfo _dryHealth = _dryHealthOff;
+
+  // Fake but plausible RTT wave so the sparkline has something to draw in
+  // dry-run: a slow sine drift (network "breathing") plus small per-sample
+  // jitter, with an occasional dropped probe so the "outage" rendering path
+  // gets exercised too. Seeded deterministically (no Random) so hot reload
+  // doesn't jump the chart around.
+  List<PingSample> _seedDryUptime({int count = 90, int startTs = 0}) {
+    final out = <PingSample>[];
+    for (var i = 0; i < count; i++) {
+      out.add(_dryPingSample(startTs + i));
+    }
+    return out;
+  }
+
+  PingSample _dryPingSample(int i) {
+    final wave = 90 + 40 * math.sin(i / 11) + 15 * math.sin(i / 3.3 + 1);
+    final jitter = (i * 37) % 23 - 11; // cheap deterministic pseudo-noise
+    final dropped = i % 17 == 0; // occasional missed probe
+    return PingSample(
+      ts: i,
+      ok: !dropped,
+      rttMs: dropped ? 0 : (wave + jitter).round().clamp(20, 400),
+    );
+  }
+
+  // Appends one fresh sample per tick to the active profile's history so the
+  // sparkline keeps animating in dry-run, same as it would against the real
+  // engine's 1Hz probe.
+  void _growDryUptime() {
+    final name = activeProfileName;
+    if (name == null) return;
+    final hist = List<PingSample>.of(_uptime[name] ?? const []);
+    hist.add(_dryPingSample(hist.length));
+    if (hist.length > 200) hist.removeAt(0);
+    _uptime = {..._uptime, name: hist};
+    notifyListeners();
+  }
+
+  List<ProfileInfo> _dryProfiles = const [
+    ProfileInfo(
+      name: 'dry-demo',
+      label: 'Демо-профиль (dry-run)',
+      active: true,
+      endpoint: 'demo.example.com:443',
+      protocol: 'vless',
+    ),
+  ];
 
   @override
   void dispose() {
@@ -99,6 +272,32 @@ class AppState extends ChangeNotifier {
   // ----- mutations -----
 
   Future<void> toggleVpn() async {
+    if (kEngineDryRun) {
+      await _withBusy(() async {
+        if (isRunning) {
+          _elog('toggleVpn: stop (simulated)');
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+          _dryHealth = _dryHealthOff;
+          _health = _dryHealth;
+          return;
+        }
+        _elog('toggleVpn: start (simulated)');
+        _connectedSince = DateTime.now();
+        _dryHealth = const HealthInfo(
+          running: false,
+          tunnelOK: false,
+          ip: '—',
+          status: 'connecting',
+          message: '',
+        );
+        _health = _dryHealth;
+        notifyListeners();
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        _dryHealth = _dryHealthOn;
+        _health = _dryHealth;
+      });
+      return;
+    }
     await _withBusy(() async {
       if (isRunning) {
         _core.stopVpn();
@@ -106,6 +305,7 @@ class AppState extends ChangeNotifier {
         return;
       }
       _core.startVpn();
+      _connectedSince = DateTime.now();
       // sing-box can exit asynchronously a few hundred ms after Start (e.g.
       // TUN access denied). Give it a moment, then sample health — if the
       // core died, pull the last FATAL/[singbox.err] line from the log so
@@ -143,17 +343,65 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> switchProfile(String name) async {
+    if (kEngineDryRun) {
+      _elog('switchProfile: $name (simulated)');
+      _connectedSince = DateTime.now();
+      await _withBusy(() {
+        _dryProfiles = [
+          for (final p in _dryProfiles)
+            p.name == name
+                ? ProfileInfo(
+                    name: p.name,
+                    label: p.label,
+                    active: true,
+                    endpoint: p.endpoint,
+                    protocol: p.protocol,
+                  )
+                : ProfileInfo(
+                    name: p.name,
+                    label: p.label,
+                    active: false,
+                    endpoint: p.endpoint,
+                    protocol: p.protocol,
+                  ),
+        ];
+        _profiles = _dryProfiles;
+        _uptime.putIfAbsent(name, () => _seedDryUptime());
+      });
+      return;
+    }
     await _withBusy(() {
       try {
         _core.switchProfile(name);
+        _connectedSince = DateTime.now();
       } finally {
         _profiles = _core.profiles();
         _health = _core.health();
       }
     });
+    _refreshProfileCountries();
   }
 
   Future<void> renameProfile(String name, String label) async {
+    if (kEngineDryRun) {
+      _elog('renameProfile: $name -> $label (simulated)');
+      await _withBusy(() {
+        _dryProfiles = [
+          for (final p in _dryProfiles)
+            p.name == name
+                ? ProfileInfo(
+                    name: p.name,
+                    label: label,
+                    active: p.active,
+                    endpoint: p.endpoint,
+                    protocol: p.protocol,
+                  )
+                : p,
+        ];
+        _profiles = _dryProfiles;
+      });
+      return;
+    }
     await _withBusy(() {
       _core.renameProfile(name, label);
       _profiles = _core.profiles();
@@ -161,6 +409,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteProfile(String name) async {
+    if (kEngineDryRun) {
+      _elog('deleteProfile: $name (simulated)');
+      await _withBusy(() {
+        _dryProfiles = _dryProfiles.where((p) => p.name != name).toList();
+        _profiles = _dryProfiles;
+      });
+      return;
+    }
     await _withBusy(() {
       _core.deleteProfile(name);
       _profiles = _core.profiles();
@@ -170,6 +426,14 @@ class AppState extends ChangeNotifier {
   /// Toggles auto-fastest mode. The engine reload (when running) means
   /// there's a 1-2s pause; AppState's _withBusy lock hides the spinner.
   Future<void> setAutoMode(bool on) async {
+    if (kEngineDryRun) {
+      _elog('setAutoMode: $on (simulated)');
+      await _withBusy(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        _autoMode = on;
+      });
+      return;
+    }
     await _withBusy(() {
       _core.setAutoMode(on);
       _autoMode = _core.autoMode();
@@ -181,11 +445,31 @@ class AppState extends ChangeNotifier {
   /// name on success, or null if the import failed (error is stored in
   /// [lastError]).
   Future<String?> addProfileFromUri(String uri) async {
+    if (kEngineDryRun) {
+      _elog('addProfileFromUri: $uri (simulated)');
+      String? name;
+      await _withBusy(() {
+        name = 'dry-${_dryProfiles.length + 1}';
+        _dryProfiles = [
+          ..._dryProfiles,
+          ProfileInfo(
+            name: name!,
+            label: 'Импортированный профиль ${_dryProfiles.length + 1}',
+            active: false,
+            endpoint: uri,
+            protocol: 'vless',
+          ),
+        ];
+        _profiles = _dryProfiles;
+      });
+      return name;
+    }
     String? name;
     await _withBusy(() {
       name = _core.addProfileFromUri(uri);
       _profiles = _core.profiles();
     });
+    _refreshProfileCountries();
     return name;
   }
 
@@ -236,7 +520,7 @@ class AppState extends ChangeNotifier {
         _routing = _core.routing();
       });
     }
-    await _applyRoutingNow();
+    _markRoutingDirty();
   }
 
   Future<void> setRoutingMode(RoutingMode mode) async {
@@ -250,7 +534,7 @@ class AppState extends ChangeNotifier {
         _routing = _core.routing();
       });
     }
-    await _applyRoutingNow();
+    _markRoutingDirty();
   }
 
   /// Forces the pending routing changes through right now (cancels the
@@ -307,10 +591,12 @@ class AppState extends ChangeNotifier {
   /// Refreshes uptime history. Cheap-ish (one FFI call + dart-side copies);
   /// call it from the widget that displays uptime, on its own timer.
   void refreshUptime() {
+    if (kEngineDryRun) return;
     _safeReload(() => _uptime = _core.uptimeHistory());
   }
 
   String logTail() {
+    if (kEngineDryRun) return '[engine/dry] no log — engine calls are disabled';
     try {
       return _core.logTail();
     } on NekkoboxError catch (e) {
@@ -321,6 +607,10 @@ class AppState extends ChangeNotifier {
   // ----- internals -----
 
   void _tick() {
+    if (kEngineDryRun) {
+      _growDryUptime();
+      return;
+    }
     _safeReload(() {
       _health = _core.health();
       _uptime = _core.uptimeHistory();

@@ -263,6 +263,7 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
                 style: TextStyle(
                   color: t.text,
                   fontSize: 12,
+                  fontWeight: FontWeight.w600,
                   fontFamily: t.monoFamily,
                 ),
               ),

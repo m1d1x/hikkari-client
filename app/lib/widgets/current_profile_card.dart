@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 
 import '../core/models.dart';
 import '../state/app_state.dart';
+import '../theme/tokens.dart';
 import 'profile_summary_card.dart';
 import 'profiles_sheet.dart';
+import 'service_ping_sheet.dart';
 
 /// Compact card representing the currently active profile. Tap anywhere on
 /// the card (or on the chevron) to open the full [ProfilesSheet] with all
@@ -17,6 +19,7 @@ class CurrentProfileCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = context.watch<AppState>();
+    final t = context.tokens;
     final profiles = s.profiles;
     if (profiles.isEmpty) return const SizedBox.shrink();
 
@@ -32,17 +35,30 @@ class CurrentProfileCard extends StatelessWidget {
         ? const <PingSample>[]
         : (s.uptime[active.name] ?? const <PingSample>[]);
 
-    return ProfileSummaryCard(
-      title: (active?.label ?? 'выбрать профиль').toLowerCase(),
-      samples: hist,
-      selected: active != null,
-      onTap: s.busy ? null : () => ProfilesSheet.show(context),
-      margin: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-      padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
-      titleFontSize: 15,
-      titleWeight: FontWeight.w700,
-      chartHeight: 34,
-      trailing: const Icon(Icons.unfold_more, size: 18),
+    final label = active?.label ?? 'выбрать профиль';
+    return GestureDetector(
+      onSecondaryTap: active == null
+          ? null
+          : () => ServicePingSheet.show(context, label),
+      child: ProfileSummaryCard(
+        title: label.toLowerCase(),
+        samples: hist,
+        selected: active != null,
+        forceChecking: s.isWarmingUp,
+        onTap: s.busy ? null : () => ProfilesSheet.show(context),
+        margin: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+        // +3px vs. the routing card's 16px header padding — matches the
+        // optical nudge on "маршрутизация" ([RouteSection._head]) so the
+        // two stacked cards' text starts flush on the same left edge.
+        padding: const EdgeInsets.fromLTRB(19, 17, 12, 17),
+        titleFontSize: 14,
+        titleWeight: FontWeight.w700,
+        // 28 (not e.g. 34) so the row's tallest child matches the routing
+        // card's iOS switch (28px) — keeps the two stacked home-screen
+        // cards the same overall height.
+        chartHeight: 28,
+        trailing: Icon(Icons.keyboard_arrow_down, size: 18, color: t.textMuted),
+      ),
     );
   }
 }
