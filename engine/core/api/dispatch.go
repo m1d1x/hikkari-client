@@ -209,6 +209,13 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 			return nil, err
 		}
 		return nil, c.RemoveCustomService(a.Name)
+	// ----- app discovery -----
+	case "ListApps":
+		var a struct {
+			All bool `json:"all"`
+		}
+		_ = decodeArgs(argsJSON, &a)
+		return c.ListApps(a.All), nil
 	}
 	return nil, fmt.Errorf("api.Core: unknown method %q", method)
 }

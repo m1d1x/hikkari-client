@@ -9,8 +9,16 @@ import 'profiles_sheet.dart';
 import 'service_ping_sheet.dart';
 import 'sparkline.dart';
 
-class PowerToggle extends StatelessWidget {
+class PowerToggle extends StatefulWidget {
   const PowerToggle({super.key});
+
+  @override
+  State<PowerToggle> createState() => _PowerToggleState();
+}
+
+class _PowerToggleState extends State<PowerToggle> {
+  bool _btnHover = false;
+  bool _profileHover = false;
 
   @override
   Widget build(BuildContext context) {
@@ -50,33 +58,45 @@ class PowerToggle extends StatelessWidget {
         SizedBox(
           width: 168,
           height: 168,
-          child: Material(
-            color: Colors.transparent,
-            shape: const CircleBorder(),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: busy ? null : () => s.toggleVpn(),
-              mouseCursor: busy
-                  ? SystemMouseCursors.basic
-                  : SystemMouseCursors.click,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOut,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.transparent,
-                  border: Border.all(
-                    color: running
-                        ? t.primary.withValues(alpha: 0.55)
-                        : t.border,
-                    width: running ? 3 : 1.5,
+          child: MouseRegion(
+            onEnter: (_) { if (!busy) setState(() => _btnHover = true); },
+            onExit: (_) => setState(() => _btnHover = false),
+            child: Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: busy ? null : () => s.toggleVpn(),
+                mouseCursor: busy
+                    ? SystemMouseCursors.basic
+                    : SystemMouseCursors.click,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeOut,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.transparent,
+                    border: Border.all(
+                      color: running
+                          ? t.primary.withValues(alpha: _btnHover ? 0.85 : 0.55)
+                          : (_btnHover ? t.primary.withValues(alpha: 0.4) : t.border),
+                      width: running ? 3 : 1.5,
+                    ),
                   ),
-                ),
-                child: Center(
-                  child: Icon(
-                    Icons.power_settings_new,
-                    size: 64,
-                    color: running ? t.primary : t.textMuted,
+                  child: Center(
+                    child: TweenAnimationBuilder<Color?>(
+                      tween: ColorTween(
+                        end: running
+                            ? t.primary
+                            : (_btnHover ? t.primary.withValues(alpha: 0.7) : t.textMuted),
+                      ),
+                      duration: const Duration(milliseconds: 200),
+                      builder: (_, color, __) => Icon(
+                        Icons.power_settings_new,
+                        size: 64,
+                        color: color,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -96,16 +116,24 @@ class PowerToggle extends StatelessWidget {
             cursor: busy
                 ? SystemMouseCursors.basic
                 : SystemMouseCursors.click,
+            onEnter: (_) { if (!busy) setState(() => _profileHover = true); },
+            onExit: (_) => setState(() => _profileHover = false),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: t.text,
-                    fontFamily: t.monoFamily,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(
+                    end: _profileHover ? t.primary : t.text,
+                  ),
+                  duration: const Duration(milliseconds: 150),
+                  builder: (_, color, __) => Text(
+                    label,
+                    style: TextStyle(
+                      color: color,
+                      fontFamily: t.monoFamily,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
                 if (active != null && hist.length >= 2) ...[
@@ -134,10 +162,16 @@ class PowerToggle extends StatelessWidget {
                   ),
                 ],
                 const SizedBox(width: 4),
-                Icon(
-                  Icons.keyboard_arrow_down,
-                  size: 16,
-                  color: t.textFaint,
+                TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(
+                    end: _profileHover ? t.primary : t.textFaint,
+                  ),
+                  duration: const Duration(milliseconds: 150),
+                  builder: (_, color, __) => Icon(
+                    Icons.keyboard_arrow_down,
+                    size: 16,
+                    color: color,
+                  ),
                 ),
               ],
             ),

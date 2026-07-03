@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sync"
 
+	"NekkoVPN/core/applist"
 	"NekkoVPN/core/clashapi"
 	"NekkoVPN/core/configfile"
 	"NekkoVPN/core/geoip"
@@ -295,6 +296,12 @@ func (c *Core) AddCustomService(name, url string) error {
 	c.customServices = append(c.customServices, uptime.ServiceTarget{Name: name, URL: url})
 	return c.saveCustomServices()
 }
+
+// ============================================================
+//  App discovery (process picker for routing rules)
+// ============================================================
+
+func (c *Core) ListApps(all bool) []applist.AppEntry { return applist.List(all) }
 
 func (c *Core) RemoveCustomService(name string) error {
 	c.customServicesMu.Lock()

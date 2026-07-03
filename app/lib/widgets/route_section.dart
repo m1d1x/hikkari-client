@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/app_discovery.dart';
 import '../core/models.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import 'app_picker_dialog.dart';
 
 /// "Маршрутизация" section — master toggle + three category tabs + the
 /// items list. Layout is a single card whose body collapses; expand state
@@ -21,8 +23,10 @@ class RouteSection extends StatefulWidget {
 
 class _RouteSectionState extends State<RouteSection> {
   bool _open = false;
+  bool _headerHover = false;
   String _tab = 'domains';
   final _input = TextEditingController();
+  List<DiscoveredApp>? _cachedApps;
 
   static const _labels = {
     'domains': 'домены',
@@ -32,19 +36,22 @@ class _RouteSectionState extends State<RouteSection> {
   static const _placeholders = {
     'domains': 'example.com',
     'ips': '192.168.0.0/16',
-    'processes': 'discord.exe',
   };
   static const _hints = {
     'domains':
         'example.com = все поддомены тоже. api.example.com = только этот',
     'ips': 'один ip или подсеть в cidr-нотации',
-    'processes': 'имя .exe — весь трафик процесса',
   };
 
   @override
   void dispose() {
     _input.dispose();
     super.dispose();
+  }
+
+  void _prefetchApps() async {
+    final apps = await context.read<AppState>().core.listApps();
+    if (mounted) setState(() => _cachedApps = apps);
   }
 
   List<String> _itemsFor(String tab, RouteList list) {
@@ -68,6 +75,18 @@ class _RouteSectionState extends State<RouteSection> {
 
   Future<void> _remove(String v) async {
     await context.read<AppState>().removeRule(_tab, v);
+  }
+
+  Future<void> _pickApp() async {
+    final items = _itemsFor('processes', context.read<AppState>().routing.active);
+    final exe = await AppPickerDialog.show(
+      context,
+      alreadyAdded: items.map((e) => e.toLowerCase()).toSet(),
+      cachedApps: _cachedApps,
+    );
+    if (exe != null && mounted) {
+      await context.read<AppState>().addRule('processes', exe);
+    }
   }
 
   static String _tooltipFor(RoutingState routing) {
@@ -139,43 +158,58 @@ class _RouteSectionState extends State<RouteSection> {
     return Tooltip(
       message: _tooltipFor(s.routing),
       waitDuration: const Duration(milliseconds: 400),
-      child: InkWell(
-        onTap: () => setState(() => _open = !_open),
-        mouseCursor: SystemMouseCursors.click,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
-          child: Row(
-            children: [
-              // Optical alignment: rounded tab pills below read as starting
-              // slightly right of their true edge, so nudge the title to
-              // match rather than sit flush with the container padding.
-              const SizedBox(width: 3),
-              Text(
-                'маршрутизация',
-                style: TextStyle(
-                  color: t.text,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _headerHover = true),
+        onExit: (_) => setState(() => _headerHover = false),
+        child: InkWell(
+          onTap: () {
+            setState(() => _open = !_open);
+            if (_open) _prefetchApps();
+          },
+          mouseCursor: SystemMouseCursors.click,
+          hoverColor: Colors.transparent,
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
+            child: Row(
+              children: [
+                const SizedBox(width: 3),
+                AnimatedDefaultTextStyle(
+                  duration: const Duration(milliseconds: 150),
+                  style: TextStyle(
+                    color: _headerHover ? t.primary : t.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    height: 1,
+                  ),
+                  child: const Text('маршрутизация'),
                 ),
-              ),
-              const SizedBox(width: 6),
-              AnimatedRotation(
-                duration: const Duration(milliseconds: 150),
-                turns: _open ? 0.5 : 0,
-                child: Icon(
-                  Icons.keyboard_arrow_down,
-                  size: 16,
-                  color: t.textMuted,
+                const SizedBox(width: 6),
+                AnimatedRotation(
+                  duration: const Duration(milliseconds: 150),
+                  turns: _open ? 0.5 : 0,
+                  child: TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(
+                      end: _headerHover ? t.primary : t.textMuted,
+                    ),
+                    duration: const Duration(milliseconds: 150),
+                    builder: (_, color, __) => Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: color,
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              _ApplyStatusLabel(status: s.routingApply),
-              const Spacer(),
-              _IosSwitch(
-                value: s.routing.enabled,
-                onChanged: (v) => s.setRoutingEnabled(v),
-              ),
-            ],
+                const SizedBox(width: 8),
+                _ApplyStatusLabel(status: s.routingApply),
+                const Spacer(),
+                _IosSwitch(
+                  value: s.routing.enabled,
+                  onChanged: (v) => s.setRoutingEnabled(v),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -227,6 +261,9 @@ class _RouteSectionState extends State<RouteSection> {
   }
 
   Widget _adder(NekkoTokens t) {
+    if (_tab == 'processes') {
+      return _ProcessAddButton(onTap: _pickApp);
+    }
     return Row(
       children: [
         Expanded(
@@ -258,14 +295,20 @@ class _RouteSectionState extends State<RouteSection> {
                 style: TextStyle(color: t.textFaint, fontSize: 12),
               ),
             )
-          : ListView.separated(
+          : ListView.builder(
               padding: EdgeInsets.zero,
               itemCount: items.length,
-              separatorBuilder: (_, __) =>
-                  Divider(height: 1, color: t.border),
-              itemBuilder: (_, i) => _ItemRow(
-                value: items[i],
-                onRemove: () => _remove(items[i]),
+              itemBuilder: (_, i) => Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (i > 0) Divider(height: 1, color: t.border),
+                  _ItemRow(
+                    value: items[i],
+                    onRemove: () => _remove(items[i]),
+                  ),
+                  if (i == items.length - 1)
+                    Divider(height: 1, color: t.border),
+                ],
               ),
             ),
     );
@@ -605,7 +648,7 @@ class _IosSwitch extends StatelessWidget {
   }
 }
 
-class _TabPill extends StatelessWidget {
+class _TabPill extends StatefulWidget {
   final String tab;
   final String label;
   final bool active;
@@ -618,27 +661,46 @@ class _TabPill extends StatelessWidget {
   });
 
   @override
+  State<_TabPill> createState() => _TabPillState();
+}
+
+class _TabPillState extends State<_TabPill> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final active = widget.active;
+    final hoverInactive = _hover && !active;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
-        onTap: onTap,
+        onTap: widget.onTap,
         behavior: HitTestBehavior.opaque,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           decoration: BoxDecoration(
-            color: active ? t.surface2 : Colors.transparent,
+            color: active
+                ? t.surface2
+                : (hoverInactive ? t.surface2.withValues(alpha: 0.4) : Colors.transparent),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: active ? t.text : t.textMuted,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                height: 1,
+            child: TweenAnimationBuilder<Color?>(
+              tween: ColorTween(
+                end: active ? t.text : (hoverInactive ? t.text : t.textMuted),
+              ),
+              duration: const Duration(milliseconds: 150),
+              builder: (_, color, __) => Text(
+                widget.label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  height: 1,
+                ),
               ),
             ),
           ),
@@ -648,28 +710,104 @@ class _TabPill extends StatelessWidget {
   }
 }
 
-class _AddButton extends StatelessWidget {
+class _ProcessAddButton extends StatefulWidget {
   final VoidCallback onTap;
-  const _AddButton({required this.onTap});
+  const _ProcessAddButton({required this.onTap});
+
+  @override
+  State<_ProcessAddButton> createState() => _ProcessAddButtonState();
+}
+
+class _ProcessAddButtonState extends State<_ProcessAddButton> {
+  bool _hover = false;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
-        onTap: onTap,
+        onTap: widget.onTap,
         behavior: HitTestBehavior.opaque,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          height: 40,
+          decoration: BoxDecoration(
+            color: t.bg,
+            border: Border.all(
+              color: t.border,
+            ),
+            borderRadius: BorderRadius.circular(t.radius),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: _hover ? t.primary : t.textMuted),
+                duration: const Duration(milliseconds: 150),
+                builder: (_, color, __) => Icon(Icons.add, color: color, size: 18),
+              ),
+              const SizedBox(width: 6),
+              TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: _hover ? t.primary : t.textMuted),
+                duration: const Duration(milliseconds: 150),
+                builder: (_, color, __) => Text(
+                  'добавить приложение',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AddButton extends StatefulWidget {
+  final VoidCallback onTap;
+  const _AddButton({required this.onTap});
+
+  @override
+  State<_AddButton> createState() => _AddButtonState();
+}
+
+class _AddButtonState extends State<_AddButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
           width: 40,
           height: 40,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: t.bg,
-            border: Border.all(color: t.border),
+            border: Border.all(
+              color: t.border,
+            ),
             borderRadius: BorderRadius.circular(t.radius),
           ),
-          child: Icon(Icons.add, color: t.textMuted, size: 22),
+          child: TweenAnimationBuilder<Color?>(
+            tween: ColorTween(end: _hover ? t.primary : t.textMuted),
+            duration: const Duration(milliseconds: 150),
+            builder: (_, color, __) => Icon(Icons.add, color: color, size: 22),
+          ),
         ),
       ),
     );

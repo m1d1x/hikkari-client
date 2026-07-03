@@ -36,7 +36,7 @@ class BrandHeader extends StatelessWidget {
           icon: Icons.settings_outlined,
           size: 24,
           color: baseColor,
-          hoverColor: t.text,
+          hoverColor: t.primary,
           padding: const EdgeInsets.all(14),
         ),
       ),
@@ -223,13 +223,15 @@ class _HoverIconState extends State<_HoverIcon> {
           behavior: HitTestBehavior.opaque,
           child: Padding(
             padding: widget.padding,
-            child: AnimatedSwitcher(
+            child: TweenAnimationBuilder<Color?>(
+              tween: ColorTween(
+                end: _hover ? widget.hoverColor : widget.color,
+              ),
               duration: const Duration(milliseconds: 150),
-              child: Icon(
+              builder: (_, color, __) => Icon(
                 widget.icon,
-                key: ValueKey(_hover),
                 size: widget.size,
-                color: _hover ? widget.hoverColor : widget.color,
+                color: color,
               ),
             ),
           ),

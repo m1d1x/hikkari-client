@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'app_discovery.dart';
 import 'envelope.dart';
 import 'models.dart';
 
@@ -186,4 +187,15 @@ abstract class NekkoboxCore {
 
   void removeCustomService(String name) =>
       _call('RemoveCustomService', {'name': name});
+
+  // ----- app discovery -----
+
+  Future<List<DiscoveredApp>> listApps({bool all = false}) async {
+    final data = await _callAsync('ListApps', {'all': all});
+    if (data == null) return [];
+    return (data as List)
+        .cast<Map<String, dynamic>>()
+        .map(DiscoveredApp.fromJson)
+        .toList();
+  }
 }
