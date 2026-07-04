@@ -52,6 +52,11 @@ class AppState extends ChangeNotifier {
   // [_refreshProfileCountries] — never awaited on a profile-list reload, since
   // a cold cache can take a few seconds (DNS + online fallback per host).
   Map<String, String> _profileCountries = const {};
+  // True while a background [_refreshProfileCountries] pass is in flight. Used
+  // together with [_profileCountries] so the flag badge can tell "still
+  // resolving" (show a spinner) from "resolved, no country" (show nothing):
+  // a profile that isn't yet a key in the map while this is true is loading.
+  bool _resolvingCountries = false;
   RoutingState _routing = const RoutingState.initial();
   Map<String, List<PingSample>> _uptime = const {};
   Map<String, List<PingSample>> _serviceUptime = const {};
@@ -76,6 +81,18 @@ class AppState extends ChangeNotifier {
   HealthInfo? get health => _health;
   List<ProfileInfo> get profiles => _profiles;
   Map<String, String> get profileCountries => _profileCountries;
+  /// Resolved lowercase ISO country code for [name], or null if not resolved
+  /// (either still loading, or the host couldn't be geolocated).
+  String? countryCodeFor(String name) {
+    final code = _profileCountries[name];
+    return (code == null || code.isEmpty) ? null : code;
+  }
+  /// True when [name]'s flag is still being resolved in the background — the
+  /// badge shows a spinner in this window, then the flag bounces in once the
+  /// code lands. A profile already present in [_profileCountries] (even with
+  /// an empty value) is done resolving, so it's not loading.
+  bool isCountryLoading(String name) =>
+      _resolvingCountries && !_profileCountries.containsKey(name);
   RoutingState get routing => _routing;
   Map<String, List<PingSample>> get uptime => _uptime;
   Map<String, List<PingSample>> get serviceUptime => _serviceUptime;
@@ -115,12 +132,12 @@ class AppState extends ChangeNotifier {
   /// Thin pass-through to [NekkoboxCore.pingServices] — widgets don't hold a
   /// core handle. Returns an empty list (never throws) when the engine can't
   /// be reached, so the sheet degrades gracefully.
-  List<ServicePingResultDto> pingServices(
+  Future<List<ServicePingResultDto>> pingServices(
     String activeTag,
     List<ServicePingTargetDto> services,
-  ) {
+  ) async {
     try {
-      return _core.pingServices(activeTag, services);
+      return await _core.pingServices(activeTag, services);
     } on NekkoboxError catch (e) {
       _elog('pingServices failed: ${e.message}');
       return const [];
@@ -133,9 +150,9 @@ class AppState extends ChangeNotifier {
   /// Snapshot of the whole service-ping history, keyed by
   /// `"<activeTag>|<service name>"`. Pass-through to the core; returns an
   /// empty map on failure.
-  Map<String, List<PingSample>> serviceUptimeHistory() {
+  Future<Map<String, List<PingSample>>> serviceUptimeHistory() async {
     try {
-      return _core.serviceUptimeHistory();
+      return await _core.serviceUptimeHistory();
     } on NekkoboxError catch (e) {
       _elog('serviceUptimeHistory failed: ${e.message}');
       return const {};
@@ -148,12 +165,12 @@ class AppState extends ChangeNotifier {
   /// Initial load + start the periodic poll. Call once after the FFI handle
   /// is initialised. Health and uptime tick together at 1Hz so a single
   /// notifyListeners() updates everything that depends on either.
-  void start() {
-    _safeReload(() {
+  Future<void> start() async {
+    await _safeReload(() async {
       // In dry-run we deliberately skip reading routing from the engine —
       // any leftover live config shouldn't taint the UI we're tweaking.
       if (!kRoutingDryRun) {
-        _routing = _core.routing();
+        _routing = await _core.routing();
       } else {
         _rlog('start: dry-run, routing kept at ${_routing.mode.wire} '
             'enabled=${_routing.enabled}');
@@ -165,10 +182,10 @@ class AppState extends ChangeNotifier {
         _uptime = {'dry-demo': _seedDryUptime()};
         _autoMode = false;
       } else {
-        _profiles = _core.profiles();
-        _health = _core.health();
-        _uptime = _core.uptimeHistory();
-        _autoMode = _core.autoMode();
+        _profiles = await _core.profiles();
+        _health = await _core.health();
+        _uptime = await _core.uptimeHistory();
+        _autoMode = await _core.autoMode();
       }
     });
     _healthTimer ??=
@@ -177,23 +194,26 @@ class AppState extends ChangeNotifier {
   }
 
   /// Resolves each profile's country (for the flag badge) in the background.
-  /// Fire-and-forget on purpose: [NekkoboxCore.profileCountries] is a
-  /// synchronous FFI call that can take a few seconds on a cold cache (DNS +
-  /// online fallback), so it must never block a profile-list reload. Skipped
-  /// entirely in dry-run — no real hosts to resolve. Degrades to leaving the
-  /// previous map in place on failure, same as [pingServices].
-  void _refreshProfileCountries() {
+  /// Fire-and-forget on purpose: [NekkoboxCore.profileCountries] can take a
+  /// few seconds on a cold cache (DNS + online fallback), but it runs on the
+  /// engine worker isolate, so awaiting it here never blocks the UI. While
+  /// it's in flight [_resolvingCountries] is true, so freshly added profiles
+  /// show a spinner where the flag will land. Skipped entirely in dry-run.
+  /// Degrades to leaving the previous map in place on failure.
+  Future<void> _refreshProfileCountries() async {
     if (kEngineDryRun) return;
-    scheduleMicrotask(() {
-      try {
-        _profileCountries = _core.profileCountries();
-        notifyListeners();
-      } on NekkoboxError catch (e) {
-        _elog('profileCountries failed: ${e.message}');
-      } catch (e) {
-        _elog('profileCountries failed: $e');
-      }
-    });
+    _resolvingCountries = true;
+    notifyListeners();
+    try {
+      _profileCountries = await _core.profileCountries();
+    } on NekkoboxError catch (e) {
+      _elog('profileCountries failed: ${e.message}');
+    } catch (e) {
+      _elog('profileCountries failed: $e');
+    } finally {
+      _resolvingCountries = false;
+      notifyListeners();
+    }
   }
 
   // ----- engine dry-run fakes -----
@@ -304,7 +324,7 @@ class AppState extends ChangeNotifier {
     await _withBusy(() async {
       if (isRunning) {
         await _core.stopVpnAsync();
-        _health = _core.health();
+        _health = await _core.health();
         return;
       }
       await _core.startVpnAsync();
@@ -314,9 +334,9 @@ class AppState extends ChangeNotifier {
       // core died, pull the last FATAL/[singbox.err] line from the log so
       // the UI shows something more actionable than just "выкл".
       await Future<void>.delayed(const Duration(milliseconds: 700));
-      _health = _core.health();
+      _health = await _core.health();
       if (!isRunning) {
-        final msg = _extractLogError(_core.logTail());
+        final msg = _extractLogError(await _core.logTail());
         if (msg != null) {
           throw NekkoboxError(msg);
         }
@@ -373,13 +393,13 @@ class AppState extends ChangeNotifier {
       });
       return;
     }
-    await _withBusy(() {
+    await _withBusy(() async {
       try {
-        _core.switchProfile(name);
+        await _core.switchProfile(name);
         _connectedSince = DateTime.now();
       } finally {
-        _profiles = _core.profiles();
-        _health = _core.health();
+        _profiles = await _core.profiles();
+        _health = await _core.health();
       }
     });
     _refreshProfileCountries();
@@ -405,9 +425,9 @@ class AppState extends ChangeNotifier {
       });
       return;
     }
-    await _withBusy(() {
-      _core.renameProfile(name, label);
-      _profiles = _core.profiles();
+    await _withBusy(() async {
+      await _core.renameProfile(name, label);
+      _profiles = await _core.profiles();
     });
   }
 
@@ -420,9 +440,9 @@ class AppState extends ChangeNotifier {
       });
       return;
     }
-    await _withBusy(() {
-      _core.deleteProfile(name);
-      _profiles = _core.profiles();
+    await _withBusy(() async {
+      await _core.deleteProfile(name);
+      _profiles = await _core.profiles();
     });
   }
 
@@ -437,10 +457,10 @@ class AppState extends ChangeNotifier {
       });
       return;
     }
-    await _withBusy(() {
-      _core.setAutoMode(on);
-      _autoMode = _core.autoMode();
-      _health = _core.health();
+    await _withBusy(() async {
+      await _core.setAutoMode(on);
+      _autoMode = await _core.autoMode();
+      _health = await _core.health();
     });
   }
 
@@ -468,9 +488,9 @@ class AppState extends ChangeNotifier {
       return name;
     }
     String? name;
-    await _withBusy(() {
-      name = _core.addProfileFromUri(uri);
-      _profiles = _core.profiles();
+    await _withBusy(() async {
+      name = await _core.addProfileFromUri(uri);
+      _profiles = await _core.profiles();
     });
     _refreshProfileCountries();
     return name;
@@ -488,9 +508,9 @@ class AppState extends ChangeNotifier {
         : _routing.copyWith(proxy: list);
     notifyListeners();
     if (!kRoutingDryRun) {
-      await _withBusy(() {
-        _core.addRule(_routing.mode, category, value);
-        _routing = _core.routing();
+      await _withBusy(() async {
+        await _core.addRule(_routing.mode, category, value);
+        _routing = await _core.routing();
       });
     }
     _markRoutingDirty();
@@ -504,9 +524,9 @@ class AppState extends ChangeNotifier {
         : _routing.copyWith(proxy: list);
     notifyListeners();
     if (!kRoutingDryRun) {
-      await _withBusy(() {
-        _core.removeRule(_routing.mode, category, value);
-        _routing = _core.routing();
+      await _withBusy(() async {
+        await _core.removeRule(_routing.mode, category, value);
+        _routing = await _core.routing();
       });
     }
     _markRoutingDirty();
@@ -518,9 +538,9 @@ class AppState extends ChangeNotifier {
     _routing = _routing.copyWith(enabled: on);
     notifyListeners();
     if (!kRoutingDryRun) {
-      await _withBusy(() {
-        _core.setRoutingEnabled(on);
-        _routing = _core.routing();
+      await _withBusy(() async {
+        await _core.setRoutingEnabled(on);
+        _routing = await _core.routing();
       });
     }
     _markRoutingDirty();
@@ -532,9 +552,9 @@ class AppState extends ChangeNotifier {
     _routing = _routing.copyWith(mode: mode);
     notifyListeners();
     if (!kRoutingDryRun) {
-      await _withBusy(() {
-        _core.setRoutingMode(mode);
-        _routing = _core.routing();
+      await _withBusy(() async {
+        await _core.setRoutingMode(mode);
+        _routing = await _core.routing();
       });
     }
     _markRoutingDirty();
@@ -593,15 +613,15 @@ class AppState extends ChangeNotifier {
 
   /// Refreshes uptime history. Cheap-ish (one FFI call + dart-side copies);
   /// call it from the widget that displays uptime, on its own timer.
-  void refreshUptime() {
+  Future<void> refreshUptime() async {
     if (kEngineDryRun) return;
-    _safeReload(() => _uptime = _core.uptimeHistory());
+    await _safeReload(() async => _uptime = await _core.uptimeHistory());
   }
 
-  String logTail() {
+  Future<String> logTail() async {
     if (kEngineDryRun) return '[engine/dry] no log — engine calls are disabled';
     try {
-      return _core.logTail();
+      return await _core.logTail();
     } on NekkoboxError catch (e) {
       return 'log error: ${e.message}';
     }
@@ -609,16 +629,27 @@ class AppState extends ChangeNotifier {
 
   // ----- internals -----
 
-  void _tick() {
+  // Guards against overlapping ticks: if the engine worker is still busy with
+  // the previous second's poll (e.g. queued behind a RestartVPN), we skip
+  // this tick rather than pile up a backlog of health calls.
+  bool _ticking = false;
+
+  Future<void> _tick() async {
     if (kEngineDryRun) {
       _growDryUptime();
       return;
     }
-    _safeReload(() {
-      _health = _core.health();
-      _uptime = _core.uptimeHistory();
-      _serviceUptime = _core.serviceUptimeHistory();
-    });
+    if (_ticking) return;
+    _ticking = true;
+    try {
+      await _safeReload(() async {
+        _health = await _core.health();
+        _uptime = await _core.uptimeHistory();
+        _serviceUptime = await _core.serviceUptimeHistory();
+      });
+    } finally {
+      _ticking = false;
+    }
   }
 
   Future<void> _withBusy(FutureOr<void> Function() body) async {
@@ -638,9 +669,9 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  void _safeReload(void Function() body) {
+  Future<void> _safeReload(FutureOr<void> Function() body) async {
     try {
-      body();
+      await Future.sync(body);
       _lastError = null;
     } on NekkoboxError catch (e) {
       _lastError = e.message;

@@ -8,20 +8,28 @@ import 'models.dart';
 /// (nekkobox_ffi.dart) implements [rawCall] over `dart:ffi`; mobile will
 /// add a MethodChannel implementation later. Both forward to the same
 /// Go `core/api.Core.Call` and the same JSON contract.
+///
+/// Every engine method except [init]/[shutdown] is asynchronous and runs on
+/// the FFI binding's worker isolate — the UI isolate never blocks on a Go
+/// call, no matter how slow it is (RestartVPN, a cold country lookup, etc.).
+/// [init]/[shutdown] stay synchronous: they're one-shot bootstrap that must
+/// run before/after the UI exists, and blocking the splash for them is fine.
 abstract class NekkoboxCore {
-  /// One-shot raw call. Implementations return the raw envelope JSON
-  /// string emitted by Go; the typed helpers below parse it.
+  /// One-shot raw call on the *current* isolate. Implementations return the
+  /// raw envelope JSON string emitted by Go; the typed helpers below parse
+  /// it. Reserved for bootstrap — prefer [rawCallAsync] everywhere else.
   String rawCall(String method, [String argsJson = '']);
 
-  /// Async variant — runs the FFI call in a background Isolate so the
-  /// UI thread stays responsive. Subclasses override this; the default
-  /// falls back to the sync version on the current isolate.
+  /// Async variant — runs the FFI call on a background isolate so the UI
+  /// thread stays responsive. Subclasses override this; the default falls
+  /// back to the sync version on the current isolate.
   Future<String> rawCallAsync(String method, [String argsJson = '']) async {
     return rawCall(method, argsJson);
   }
 
   // ----- typed helpers -----
 
+  /// Synchronous unwrap — bootstrap only ([init]/[shutdown]).
   Object? _call(String method, [Map<String, Object?>? args]) {
     final raw = rawCall(method, args == null ? '' : jsonEncode(args));
     final env = Envelope.fromJson(jsonDecode(raw) as Map<String, dynamic>);
@@ -35,7 +43,7 @@ abstract class NekkoboxCore {
     return env.unwrap();
   }
 
-  // ----- lifecycle -----
+  // ----- lifecycle (sync bootstrap) -----
 
   void init(String baseDir) {
     _call('Init', {'baseDir': baseDir});
@@ -47,89 +55,90 @@ abstract class NekkoboxCore {
 
   // ----- VPN -----
 
-  void startVpn() => _call('StartVPN');
-  void stopVpn() => _call('StopVPN');
-  void restartVpn() => _call('RestartVPN');
-
   Future<void> restartVpnAsync() => _callAsync('RestartVPN');
   Future<void> startVpnAsync() => _callAsync('StartVPN');
   Future<void> stopVpnAsync() => _callAsync('StopVPN');
-  bool isRunning() => _call('IsRunning') as bool;
+  Future<bool> isRunning() async => await _callAsync('IsRunning') as bool;
 
   // ----- health -----
 
-  HealthInfo health() =>
-      HealthInfo.fromJson(_call('Health') as Map<String, dynamic>);
+  Future<HealthInfo> health() async =>
+      HealthInfo.fromJson(await _callAsync('Health') as Map<String, dynamic>);
 
-  String externalIp() => _call('ExternalIP') as String;
+  Future<String> externalIp() async => await _callAsync('ExternalIP') as String;
 
   // ----- logs -----
 
-  String logTail() => _call('LogTail') as String;
+  Future<String> logTail() async => await _callAsync('LogTail') as String;
 
   // ----- routing -----
 
-  RoutingState routing() =>
-      RoutingState.fromJson(_call('Routing') as Map<String, dynamic>);
+  Future<RoutingState> routing() async =>
+      RoutingState.fromJson(await _callAsync('Routing') as Map<String, dynamic>);
 
-  void setRoutingEnabled(bool on) =>
-      _call('SetRoutingEnabled', {'on': on});
+  Future<void> setRoutingEnabled(bool on) =>
+      _callAsync('SetRoutingEnabled', {'on': on});
 
-  void setRoutingMode(RoutingMode mode) =>
-      _call('SetRoutingMode', {'mode': mode.wire});
+  Future<void> setRoutingMode(RoutingMode mode) =>
+      _callAsync('SetRoutingMode', {'mode': mode.wire});
 
-  void addRule(RoutingMode mode, String category, String value) => _call(
+  Future<void> addRule(RoutingMode mode, String category, String value) =>
+      _callAsync(
         'AddRule',
         {'mode': mode.wire, 'category': category, 'value': value},
       );
 
-  void removeRule(RoutingMode mode, String category, String value) => _call(
+  Future<void> removeRule(RoutingMode mode, String category, String value) =>
+      _callAsync(
         'RemoveRule',
         {'mode': mode.wire, 'category': category, 'value': value},
       );
 
   // ----- profiles -----
 
-  List<ProfileInfo> profiles() => (_call('Profiles') as List)
+  Future<List<ProfileInfo>> profiles() async => (await _callAsync('Profiles')
+          as List)
       .cast<Map<String, dynamic>>()
       .map(ProfileInfo.fromJson)
       .toList();
 
-  String activeProfile() => _call('ActiveProfile') as String;
+  Future<String> activeProfile() async =>
+      await _callAsync('ActiveProfile') as String;
 
-  void renameProfile(String name, String label) =>
-      _call('RenameProfile', {'name': name, 'label': label});
+  Future<void> renameProfile(String name, String label) =>
+      _callAsync('RenameProfile', {'name': name, 'label': label});
 
-  void deleteProfile(String name) =>
-      _call('DeleteProfile', {'name': name});
+  Future<void> deleteProfile(String name) =>
+      _callAsync('DeleteProfile', {'name': name});
 
-  void switchProfile(String name) =>
-      _call('SwitchProfile', {'name': name});
+  Future<void> switchProfile(String name) =>
+      _callAsync('SwitchProfile', {'name': name});
 
   /// Imports a profile from a server URI (e.g. `hysteria2://...`). Returns
   /// the generated profile name on success; throws [NekkoboxError] if the
   /// URI scheme is unsupported or malformed.
-  String addProfileFromUri(String uri) =>
-      _call('AddProfileFromURI', {'uri': uri}) as String;
+  Future<String> addProfileFromUri(String uri) async =>
+      await _callAsync('AddProfileFromURI', {'uri': uri}) as String;
 
   /// Lowercase ISO 3166-1 alpha-2 country code per profile name, resolved
   /// from each profile's server host. Missing/unresolved entries map to "".
   /// Cached engine-side, but the first call per host can take up to ~3.5s
-  /// (DNS + online fallback) — callers should not await this on a hot path.
-  Map<String, String> profileCountries() =>
-      (_call('ProfileCountries') as Map<String, dynamic>)
+  /// (DNS + online fallback) — runs on the worker isolate, so awaiting it
+  /// never blocks the UI.
+  Future<Map<String, String>> profileCountries() async =>
+      (await _callAsync('ProfileCountries') as Map<String, dynamic>)
           .cast<String, String>();
 
   /// Whether auto-fastest mode (urltest group) is on.
-  bool autoMode() => _call('AutoMode') as bool;
+  Future<bool> autoMode() async => await _callAsync('AutoMode') as bool;
 
   /// Toggles auto-fastest mode. Reloads the engine if it was running.
-  void setAutoMode(bool on) => _call('SetAutoMode', {'on': on});
+  Future<void> setAutoMode(bool on) => _callAsync('SetAutoMode', {'on': on});
 
   // ----- uptime -----
 
-  Map<String, List<PingSample>> uptimeHistory() {
-    final raw = _call('UptimeHistory') as Map<String, dynamic>;
+  Future<Map<String, List<PingSample>>> uptimeHistory() async {
+    final raw = await _callAsync('UptimeHistory') as Map<String, dynamic>;
     return raw.map((k, v) => MapEntry(
           k,
           (v as List)
@@ -144,11 +153,11 @@ abstract class NekkoboxCore {
   /// Probes each service in parallel through the active profile and returns
   /// one result per service (order preserved). Also records each outcome in
   /// the service uptime history (see [serviceUptimeHistory]).
-  List<ServicePingResultDto> pingServices(
+  Future<List<ServicePingResultDto>> pingServices(
     String activeTag,
     List<ServicePingTargetDto> services,
-  ) {
-    final data = _call('PingServices', {
+  ) async {
+    final data = await _callAsync('PingServices', {
       'activeTag': activeTag,
       'services': services.map((s) => s.toJson()).toList(),
     });
@@ -160,8 +169,8 @@ abstract class NekkoboxCore {
 
   /// Rolling history of on-demand service pings, keyed by
   /// `"<activeTag>|<service name>"`.
-  Map<String, List<PingSample>> serviceUptimeHistory() {
-    final raw = _call('ServiceUptimeHistory') as Map<String, dynamic>;
+  Future<Map<String, List<PingSample>>> serviceUptimeHistory() async {
+    final raw = await _callAsync('ServiceUptimeHistory') as Map<String, dynamic>;
     return raw.map((k, v) => MapEntry(
           k,
           (v as List)
@@ -173,8 +182,8 @@ abstract class NekkoboxCore {
 
   // ----- custom services -----
 
-  List<CustomService> listCustomServices() {
-    final data = _call('ListCustomServices');
+  Future<List<CustomService>> listCustomServices() async {
+    final data = await _callAsync('ListCustomServices');
     if (data == null) return [];
     return (data as List)
         .cast<Map<String, dynamic>>()
@@ -182,11 +191,11 @@ abstract class NekkoboxCore {
         .toList();
   }
 
-  void addCustomService(String name, String url) =>
-      _call('AddCustomService', {'name': name, 'url': url});
+  Future<void> addCustomService(String name, String url) =>
+      _callAsync('AddCustomService', {'name': name, 'url': url});
 
-  void removeCustomService(String name) =>
-      _call('RemoveCustomService', {'name': name});
+  Future<void> removeCustomService(String name) =>
+      _callAsync('RemoveCustomService', {'name': name});
 
   // ----- app discovery -----
 

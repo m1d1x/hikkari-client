@@ -179,7 +179,7 @@ class _RouteSectionState extends State<RouteSection> {
                   duration: const Duration(milliseconds: 150),
                   style: TextStyle(
                     color: _headerHover ? t.primary : t.text,
-                    fontSize: 14,
+                    fontSize: 16,
                     fontWeight: FontWeight.w700,
                     height: 1,
                   ),

@@ -32,7 +32,12 @@ class _HomeScreenState extends State<HomeScreen> {
           BrandHeader(onOpenLogs: _openLog),
           if (_logOpen) LogOverlay(onClose: _closeLog),
           const Expanded(
-            child: Center(child: PowerToggle()),
+            // Nudge the button + profile block up a touch from dead-centre so
+            // it sits higher in the empty space above the routing bar.
+            child: Align(
+              alignment: Alignment(0, -0.22),
+              child: PowerToggle(),
+            ),
           ),
           const SafeArea(
             top: false,

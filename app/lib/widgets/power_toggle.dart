@@ -5,6 +5,7 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import 'profile_flag_badge.dart';
 import 'profiles_sheet.dart';
 import 'service_ping_sheet.dart';
 import 'sparkline.dart';
@@ -44,6 +45,8 @@ class _PowerToggleState extends State<PowerToggle> {
     final dead = !checking && (recent < 0 || recent > 1000);
 
     final label = active?.label.toLowerCase() ?? 'выбрать профиль';
+    final endpoint = active?.endpoint ?? '';
+    final countryCode = active == null ? null : s.profileCountries[active.name];
 
     final rttText = dead
         ? 'down'
@@ -56,8 +59,8 @@ class _PowerToggleState extends State<PowerToggle> {
       children: [
         // Power button
         SizedBox(
-          width: 168,
-          height: 168,
+          width: 176,
+          height: 176,
           child: MouseRegion(
             onEnter: (_) { if (!busy) setState(() => _btnHover = true); },
             onExit: (_) => setState(() => _btnHover = false),
@@ -93,7 +96,7 @@ class _PowerToggleState extends State<PowerToggle> {
                       duration: const Duration(milliseconds: 200),
                       builder: (_, color, __) => Icon(
                         Icons.power_settings_new,
-                        size: 64,
+                        size: 68,
                         color: color,
                       ),
                     ),
@@ -104,76 +107,126 @@ class _PowerToggleState extends State<PowerToggle> {
           ),
         ),
 
-        const SizedBox(height: 20),
+        const SizedBox(height: 18),
 
-        // Profile subtitle — tappable
-        GestureDetector(
-          onTap: busy ? null : () => ProfilesSheet.show(context),
-          onSecondaryTap: active == null
-              ? null
-              : () => ServicePingSheet.show(context, label),
-          child: MouseRegion(
-            cursor: busy
+        // Profile block — one large tappable zone (vertically padded, easy to
+        // hit with a thumb). [InkWell] supplies the pointer cursor and hover
+        // state, so no separate MouseRegion is needed.
+        //
+        // Both rows are [MainAxisSize.min] and the [Column] centres them: the
+        // chevron just lives at the end of the HERO row (so it's part of what
+        // gets centred), and the flag+IP row centres on its own below. No fake
+        // gutters — everything is honestly centred by its own content width.
+        Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(t.radiusLg),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: busy ? null : () => ProfilesSheet.show(context),
+            onSecondaryTap: active == null
+                ? null
+                : () => ServicePingSheet.show(context, label),
+            onHover: busy
+                ? null
+                : (h) => setState(() => _profileHover = h),
+            borderRadius: BorderRadius.circular(t.radiusLg),
+            hoverColor: t.primary.withValues(alpha: 0.05),
+            mouseCursor: busy
                 ? SystemMouseCursors.basic
                 : SystemMouseCursors.click,
-            onEnter: (_) { if (!busy) setState(() => _profileHover = true); },
-            onExit: (_) => setState(() => _profileHover = false),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TweenAnimationBuilder<Color?>(
-                  tween: ColorTween(
-                    end: _profileHover ? t.primary : t.text,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // HERO row — label + sparkline + rtt + chevron.
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TweenAnimationBuilder<Color?>(
+                        tween: ColorTween(
+                          end: _profileHover ? t.primary : t.text,
+                        ),
+                        duration: const Duration(milliseconds: 150),
+                        builder: (_, color, __) => Text(
+                          label,
+                          style: TextStyle(
+                            color: color,
+                            fontFamily: t.monoFamily,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (active != null && hist.length >= 2) ...[
+                        const SizedBox(width: 11),
+                        SizedBox(
+                          width: 50,
+                          height: 17,
+                          child: Sparkline(
+                            samples: hist,
+                            color: running
+                                ? t.primary
+                                : t.textMuted.withValues(alpha: 0.4),
+                          ),
+                        ),
+                      ],
+                      if (active != null && !dead) ...[
+                        const SizedBox(width: 9),
+                        Text(
+                          rttText,
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontFamily: t.monoFamily,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      TweenAnimationBuilder<Color?>(
+                        tween: ColorTween(
+                          end: _profileHover ? t.primary : t.textFaint,
+                        ),
+                        duration: const Duration(milliseconds: 150),
+                        builder: (_, color, __) => Icon(
+                          Icons.keyboard_arrow_down,
+                          size: 18,
+                          color: color,
+                        ),
+                      ),
+                    ],
                   ),
-                  duration: const Duration(milliseconds: 150),
-                  builder: (_, color, __) => Text(
-                    label,
-                    style: TextStyle(
-                      color: color,
-                      fontFamily: t.monoFamily,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
+
+                  // Info row — flag + server IP, grouped together and centred.
+                  if (active != null && endpoint.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ProfileFlagBadge(
+                          countryCode: countryCode,
+                          width: 16,
+                          height: 12,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          endpoint,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.textMuted.withValues(alpha: 0.55),
+                            fontFamily: t.monoFamily,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ),
-                if (active != null && hist.length >= 2) ...[
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: 48,
-                    height: 16,
-                    child: Sparkline(
-                      samples: hist,
-                      color: running
-                          ? t.primary
-                          : t.textMuted.withValues(alpha: 0.4),
-                    ),
-                  ),
+                  ],
                 ],
-                if (active != null && !dead) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    rttText,
-                    style: TextStyle(
-                      color: t.textMuted,
-                      fontFamily: t.monoFamily,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-                const SizedBox(width: 4),
-                TweenAnimationBuilder<Color?>(
-                  tween: ColorTween(
-                    end: _profileHover ? t.primary : t.textFaint,
-                  ),
-                  duration: const Duration(milliseconds: 150),
-                  builder: (_, color, __) => Icon(
-                    Icons.keyboard_arrow_down,
-                    size: 16,
-                    color: color,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),

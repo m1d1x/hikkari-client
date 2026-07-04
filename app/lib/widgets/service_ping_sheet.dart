@@ -128,20 +128,23 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
     _loadCustomServices();
   }
 
-  void _loadCustomServices() {
+  Future<void> _loadCustomServices() async {
     final state = context.read<AppState>();
-    final custom = state.core.listCustomServices();
-    for (final svc in custom) {
-      final host = _hostFromUrl(svc.url);
-      _services.add(_ServicePing(
-        name: svc.name,
-        host: host,
-        icon: Icons.public,
-        color: Colors.grey,
-        custom: true,
-        faviconUrl: _faviconUrlForHost(host),
-      ));
-    }
+    final custom = await state.core.listCustomServices();
+    if (!mounted) return;
+    setState(() {
+      for (final svc in custom) {
+        final host = _hostFromUrl(svc.url);
+        _services.add(_ServicePing(
+          name: svc.name,
+          host: host,
+          icon: Icons.public,
+          color: Colors.grey,
+          custom: true,
+          faviconUrl: _faviconUrlForHost(host),
+        ));
+      }
+    });
   }
 
   // Brand glyphs from `simple_icons` + their official colors, so the row

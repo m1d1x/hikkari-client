@@ -63,8 +63,9 @@ class _LogOverlayState extends State<LogOverlay> {
     }
   }
 
-  void _refresh() {
-    final tail = context.read<AppState>().logTail();
+  Future<void> _refresh() async {
+    final tail = await context.read<AppState>().logTail();
+    if (!mounted) return;
     final lines = tail
         .split('\n')
         .map((l) => l.replaceAll(_ansi, '').trimRight())
