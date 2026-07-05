@@ -5,6 +5,8 @@ import '../core/app_discovery.dart';
 import '../core/models.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_segmented.dart';
+import '../ui/nekko_text_field.dart';
 import 'app_picker_dialog.dart';
 
 /// "Маршрутизация" section — master toggle + three category tabs + the
@@ -28,11 +30,6 @@ class _RouteSectionState extends State<RouteSection> {
   final _input = TextEditingController();
   List<DiscoveredApp>? _cachedApps;
 
-  static const _labels = {
-    'domains': 'домены',
-    'ips': 'ip',
-    'processes': 'приложения',
-  };
   static const _placeholders = {
     'domains': 'example.com',
     'ips': '192.168.0.0/16',
@@ -177,11 +174,8 @@ class _RouteSectionState extends State<RouteSection> {
                 const SizedBox(width: 3),
                 AnimatedDefaultTextStyle(
                   duration: const Duration(milliseconds: 150),
-                  style: TextStyle(
+                  style: t.sectionTitle.copyWith(
                     color: _headerHover ? t.primary : t.text,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    height: 1,
                   ),
                   child: const Text('маршрутизация'),
                 ),
@@ -231,32 +225,17 @@ class _RouteSectionState extends State<RouteSection> {
   }
 
   Widget _tabs(NekkoTokens t) {
-    return Container(
-      height: 40,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: t.bg,
-        border: Border.all(color: t.border),
-        borderRadius: BorderRadius.circular(t.radius),
-      ),
-      child: Row(
-        children: [
-          for (var i = 0; i < 3; i++) ...[
-            if (i > 0) const SizedBox(width: 4),
-            Expanded(
-              child: _TabPill(
-                tab: const ['domains', 'processes', 'ips'][i],
-                label: _labels[const ['domains', 'processes', 'ips'][i]]!,
-                active: _tab == const ['domains', 'processes', 'ips'][i],
-                onTap: () => setState(() {
-                  _tab = const ['domains', 'processes', 'ips'][i];
-                  _input.clear();
-                }),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return NekkoSegmented(
+      selected: _tab,
+      onChanged: (v) => setState(() {
+        _tab = v;
+        _input.clear();
+      }),
+      segments: const [
+        NekkoSegment('domains', 'домены'),
+        NekkoSegment('processes', 'приложения'),
+        NekkoSegment('ips', 'ip'),
+      ],
     );
   }
 
@@ -267,10 +246,11 @@ class _RouteSectionState extends State<RouteSection> {
     return Row(
       children: [
         Expanded(
-          child: _RouteInput(
+          child: NekkoTextField(
             controller: _input,
-            placeholder: _placeholders[_tab] ?? '',
-            hint: _hints[_tab] ?? '',
+            hint: _placeholders[_tab] ?? '',
+            tooltip: _hints[_tab] ?? '',
+            textInputAction: TextInputAction.done,
             onSubmitted: (_) => _add(),
           ),
         ),
@@ -525,86 +505,6 @@ class _ModeFlipButtonState extends State<_ModeFlipButton> {
   }
 }
 
-class _RouteInput extends StatefulWidget {
-  final TextEditingController controller;
-  final String placeholder;
-  final String hint;
-  final ValueChanged<String> onSubmitted;
-
-  const _RouteInput({
-    required this.controller,
-    required this.placeholder,
-    required this.hint,
-    required this.onSubmitted,
-  });
-
-  @override
-  State<_RouteInput> createState() => _RouteInputState();
-}
-
-class _RouteInputState extends State<_RouteInput> {
-  final _focusNode = FocusNode();
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final textStyle = TextStyle(
-      color: t.text,
-      fontFamily: t.monoFamily,
-      fontSize: 12,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.02 * 12,
-    );
-
-    return Tooltip(
-      message: widget.hint,
-      child: Container(
-        height: 40,
-        decoration: BoxDecoration(
-          color: t.bg,
-          border: Border.all(color: t.border),
-          borderRadius: BorderRadius.circular(t.radius),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Material(
-          type: MaterialType.transparency,
-          child: TextField(
-            controller: widget.controller,
-            focusNode: _focusNode,
-            style: textStyle,
-            cursorColor: t.text,
-            cursorWidth: 1.5,
-            cursorRadius: const Radius.circular(1),
-            maxLines: 1,
-            textInputAction: TextInputAction.done,
-            onSubmitted: widget.onSubmitted,
-            decoration: InputDecoration(
-              isDense: true,
-              filled: true,
-              fillColor: Colors.transparent,
-              hoverColor: Colors.transparent,
-              focusColor: Colors.transparent,
-              contentPadding:
-                  const EdgeInsets.fromLTRB(14, 13, 14, 9),
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              hintText: widget.placeholder,
-              hintStyle: textStyle.copyWith(color: t.textFaint),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// iOS-style toggle. 46×28 track, 24×24 knob.
 class _IosSwitch extends StatelessWidget {
   final bool value;
@@ -639,68 +539,6 @@ class _IosSwitch extends StatelessWidget {
               decoration: BoxDecoration(
                 color: value ? Colors.white : const Color(0xFFDDDDDD),
                 shape: BoxShape.circle,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TabPill extends StatefulWidget {
-  final String tab;
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-  const _TabPill({
-    required this.tab,
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
-
-  @override
-  State<_TabPill> createState() => _TabPillState();
-}
-
-class _TabPillState extends State<_TabPill> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = context.tokens;
-    final active = widget.active;
-    final hoverInactive = _hover && !active;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          decoration: BoxDecoration(
-            color: active
-                ? t.surface2
-                : (hoverInactive ? t.surface2.withValues(alpha: 0.4) : Colors.transparent),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Center(
-            child: TweenAnimationBuilder<Color?>(
-              tween: ColorTween(
-                end: active ? t.text : (hoverInactive ? t.text : t.textMuted),
-              ),
-              duration: const Duration(milliseconds: 150),
-              builder: (_, color, __) => Text(
-                widget.label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  height: 1,
-                ),
               ),
             ),
           ),

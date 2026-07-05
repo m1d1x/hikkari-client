@@ -36,6 +36,24 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
   // ----- type -----
   final String monoFamily;
 
+  // ----- type scale -----
+  // Единая лестница размеров, чтобы заголовки/лейблы не расходились по
+  // экранам. Меняешь константу здесь — двигаются все места разом.
+  static const double sizeSectionTitle = 16; // маршрутизация / профили
+  static const double sizeSubtitle = 15;     // счётчик рядом с заголовком
+  static const double sizeLabel = 13;        // чипы, вторичные подписи
+  static const double sizeBody = 12;         // строки, поиск, тело
+  static const double sizeCaption = 11;      // мелкие пометки
+
+  /// Общий стиль для заголовков секций верхнего уровня. Цвет можно
+  /// переопределить через copyWith (напр. hover-подсветка).
+  TextStyle get sectionTitle => TextStyle(
+        color: text,
+        fontSize: sizeSectionTitle,
+        fontWeight: FontWeight.w700,
+        height: 1,
+      );
+
   const NekkoTokens({
     required this.bg,
     required this.surface,

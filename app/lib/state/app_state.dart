@@ -11,7 +11,7 @@ import '../core/nekkobox_core.dart';
 /// mutation (master toggle, mode flip, list edit) updates Dart state only
 /// and logs to the debug console — the engine is NOT touched, so an external
 /// sing-box session keeps running. Flip back to false to wire to backend.
-const bool kRoutingDryRun = false;
+const bool kRoutingDryRun = kDebugMode;
 
 /// Dev-only kill switch for everything else that would poke the real engine:
 /// VPN on/off, profile switch/rename/delete, auto-mode, and profile import.
@@ -19,7 +19,7 @@ const bool kRoutingDryRun = false;
 /// still feels real) and never call into [NekkoboxCore] — no real VPN
 /// connect/disconnect flapping while iterating on the frontend. Flip back to
 /// false to wire to backend.
-const bool kEngineDryRun = false;
+const bool kEngineDryRun = kDebugMode;
 
 void _rlog(String msg) {
   debugPrint('[routing${kRoutingDryRun ? '/dry' : ''}] $msg');
@@ -494,6 +494,33 @@ class AppState extends ChangeNotifier {
     });
     _refreshProfileCountries();
     return name;
+  }
+
+  /// Shareable subscription URI for [name], or null if the engine can't
+  /// export it (older backend without `ExportProfileURI`, or a profile that
+  /// can't be serialised). Never throws — the share sheet degrades to a
+  /// "ссылка недоступна" state on null.
+  Future<String?> exportProfileUri(String name) async {
+    if (kEngineDryRun) {
+      final p = _profiles.firstWhere(
+        (p) => p.name == name,
+        orElse: () => ProfileInfo(
+            name: name, label: name, active: false, endpoint: '', protocol: 'vless'),
+      );
+      final proto = p.protocol.isEmpty ? 'vless' : p.protocol;
+      final host = p.endpoint.isEmpty ? 'demo.example.com:443' : p.endpoint;
+      return '$proto://dry-run-uuid@$host'
+          '?type=tcp#${Uri.encodeComponent(p.label)}';
+    }
+    try {
+      return await _core.exportProfileUri(name);
+    } on NekkoboxError catch (e) {
+      _elog('exportProfileUri failed: ${e.message}');
+      return null;
+    } catch (e) {
+      _elog('exportProfileUri failed: $e');
+      return null;
+    }
   }
 
   // Debounce window for batching list edits — paste of 50 domains from

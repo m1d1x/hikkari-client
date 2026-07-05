@@ -46,7 +46,9 @@ class _PowerToggleState extends State<PowerToggle> {
 
     final label = active?.label.toLowerCase() ?? 'выбрать профиль';
     final endpoint = active?.endpoint ?? '';
-    final countryCode = active == null ? null : s.profileCountries[active.name];
+    final countryCode = active == null ? null : s.countryCodeFor(active.name);
+    final countryLoading =
+        active != null && s.isCountryLoading(active.name);
 
     final rttText = dead
         ? 'down'
@@ -206,6 +208,7 @@ class _PowerToggleState extends State<PowerToggle> {
                       children: [
                         ProfileFlagBadge(
                           countryCode: countryCode,
+                          loading: countryLoading,
                           width: 16,
                           height: 12,
                         ),

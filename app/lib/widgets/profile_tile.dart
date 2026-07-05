@@ -5,7 +5,9 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_inline_edit_field.dart';
 import 'profile_flag_badge.dart';
+import 'profile_share_sheet.dart';
 import 'profile_summary_card.dart';
 import 'service_ping_sheet.dart';
 
@@ -28,29 +30,6 @@ class ProfileTile extends StatefulWidget {
 }
 
 class _ProfileTileState extends State<ProfileTile> {
-  bool _editing = false;
-  late final TextEditingController _editCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _editCtrl = TextEditingController(text: widget.profile.label);
-  }
-
-  @override
-  void didUpdateWidget(ProfileTile old) {
-    super.didUpdateWidget(old);
-    if (old.profile.label != widget.profile.label && !_editing) {
-      _editCtrl.text = widget.profile.label;
-    }
-  }
-
-  @override
-  void dispose() {
-    _editCtrl.dispose();
-    super.dispose();
-  }
-
   Future<void> _switchProfile() async {
     final s = context.read<AppState>();
     if (s.busy) return;
@@ -64,10 +43,7 @@ class _ProfileTileState extends State<ProfileTile> {
     );
   }
 
-  Future<void> _saveLabel() async {
-    final v = _editCtrl.text.trim();
-    setState(() => _editing = false);
-    if (v.isEmpty || v == widget.profile.label) return;
+  Future<void> _rename(String v) async {
     await context.read<AppState>().renameProfile(widget.profile.name, v);
   }
 
@@ -105,7 +81,8 @@ class _ProfileTileState extends State<ProfileTile> {
     final t = context.tokens;
     final s = context.watch<AppState>();
     final hist = s.uptime[widget.profile.name] ?? const <PingSample>[];
-    final countryCode = s.profileCountries[widget.profile.name];
+    final countryCode = s.countryCodeFor(widget.profile.name);
+    final countryLoading = s.isCountryLoading(widget.profile.name);
 
     // ПКМ по карточке — вместо технических подробностей открывает пинги
     // до популярных сервисов (YouTube, Telegram и т.д.), см. подробности
@@ -115,9 +92,12 @@ class _ProfileTileState extends State<ProfileTile> {
           ServicePingSheet.show(context, widget.profile.label),
       child: ProfileSummaryCard(
         title: widget.profile.label,
-        leading: countryCode == null || countryCode.isEmpty
+        leading: (countryCode == null && !countryLoading)
             ? null
-            : ProfileFlagBadge(countryCode: countryCode),
+            : ProfileFlagBadge(
+                countryCode: countryCode,
+                loading: countryLoading,
+              ),
         samples: hist,
         selected: widget.profile.active,
         forceChecking: widget.profile.active && s.isWarmingUp,
@@ -143,7 +123,7 @@ class _ProfileTileState extends State<ProfileTile> {
     final pct = UptimeStats.uptimePct(hist);
     final rtt = UptimeStats.avgRtt(hist);
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -161,37 +141,97 @@ class _ProfileTileState extends State<ProfileTile> {
           _kv(context, t, 'протокол',
               widget.profile.protocol.isEmpty ? '—' : widget.profile.protocol),
           _labelRow(context, t),
-          if (!widget.profile.active)
-            Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _confirmDelete,
-                  icon: const Icon(Icons.delete_outline, size: 16),
-                  label: const Text('удалить профиль'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: t.bad,
-                    overlayColor: Colors.transparent,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          Padding(
+            padding: const EdgeInsets.only(top: 18),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _actionButton(
+                    t,
+                    icon: Icons.ios_share,
+                    label: 'поделиться',
+                    color: t.text,
+                    hover: t.primary,
+                    onTap: () =>
+                        ProfileShareSheet.show(context, widget.profile),
                   ),
                 ),
-              ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _actionButton(
+                    t,
+                    icon: Icons.delete_outline,
+                    label: 'удалить',
+                    color: t.bad,
+                    hover: t.bad,
+                    onTap: _confirmDelete,
+                  ),
+                ),
+              ],
             ),
+          ),
         ],
       ),
     );
   }
 
+  // Заполненная кнопка действия в развороте (поделиться / удалить). Тянется
+  // на половину ширины; фон surface2 + hairline-бордер делают её заметной
+  // «плашкой», а не дешёвой текстовой ссылкой. [color] красит иконку/текст,
+  // [hover] — цвет подсветки при наведении.
+  Widget _actionButton(
+    NekkoTokens t, {
+    required IconData icon,
+    required String label,
+    required Color color,
+    required Color hover,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: t.surface2,
+      borderRadius: BorderRadius.circular(t.radius),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        mouseCursor: SystemMouseCursors.click,
+        hoverColor: hover.withValues(alpha: 0.12),
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            border: Border.all(color: t.border),
+            borderRadius: BorderRadius.circular(t.radius),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 17, color: color),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: NekkoTokens.sizeBody,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Единая высота строки разворота — все строки (kv + «профиль») выровнены
+  // по одному ритму, чтобы отступы читались симметрично.
+  static const double _rowHeight = 32;
+
   Widget _kv(BuildContext context, NekkoTokens t, String k, String v,
       {bool mono = false}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+    return SizedBox(
+      height: _rowHeight,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           SizedBox(
             width: 80,
@@ -214,45 +254,25 @@ class _ProfileTileState extends State<ProfileTile> {
   }
 
   Widget _labelRow(BuildContext context, NekkoTokens t) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+    return SizedBox(
+      height: _rowHeight,
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          // 71 = 80 − (рамка 1 + левый padding 8 внутри поля): компенсирует
+          // внутренний отступ инлайн-поля, чтобы имя встало по левому краю как
+          // остальные значения в строках выше.
           SizedBox(
-            width: 80,
+            width: 71,
             child: Text('профиль',
                 style: TextStyle(color: t.textMuted, fontSize: 12)),
           ),
           Expanded(
-            child: _editing
-                ? TextField(
-                    controller: _editCtrl,
-                    autofocus: true,
-                    style: TextStyle(color: t.text, fontSize: 12),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 6),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(t.radius),
-                      ),
-                    ),
-                    onSubmitted: (_) => _saveLabel(),
-                    onTapOutside: (_) => _saveLabel(),
-                  )
-                : GestureDetector(
-                    onDoubleTap: () => setState(() => _editing = true),
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: Tooltip(
-                        message: 'двойной клик — переименовать',
-                        child: Text(
-                          widget.profile.label,
-                          style: TextStyle(color: t.text, fontSize: 12),
-                        ),
-                      ),
-                    ),
-                  ),
+            child: NekkoInlineEditField(
+              value: widget.profile.label,
+              onSubmitted: _rename,
+              height: 28,
+            ),
           ),
         ],
       ),

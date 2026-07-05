@@ -120,6 +120,12 @@ abstract class NekkoboxCore {
   Future<String> addProfileFromUri(String uri) async =>
       await _callAsync('AddProfileFromURI', {'uri': uri}) as String;
 
+  /// Serialises [name] back into a shareable subscription URI (the inverse of
+  /// [addProfileFromUri]), for the share sheet's QR + copy. Throws
+  /// [NekkoboxError] if the engine can't export this profile.
+  Future<String> exportProfileUri(String name) async =>
+      await _callAsync('ExportProfileURI', {'name': name}) as String;
+
   /// Lowercase ISO 3166-1 alpha-2 country code per profile name, resolved
   /// from each profile's server host. Missing/unresolved entries map to "".
   /// Cached engine-side, but the first call per host can take up to ~3.5s

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../core/app_discovery.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_text_field.dart';
 
 class AppPickerDialog extends StatefulWidget {
   final Set<String> alreadyAdded;
@@ -250,52 +251,11 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-              child: Container(
-                height: 40,
-                decoration: BoxDecoration(
-                  color: t.bg,
-                  border: Border.all(color: t.border),
-                  borderRadius: BorderRadius.circular(t.radius),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: TextField(
-                    controller: _searchCtl,
-                    autofocus: true,
-                    style: TextStyle(
-                      color: t.text,
-                      fontFamily: t.monoFamily,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      letterSpacing: 0.02 * 12,
-                    ),
-                    cursorColor: t.text,
-                    cursorWidth: 1.5,
-                    cursorRadius: const Radius.circular(1),
-                    onChanged: (v) => setState(() => _query = v),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      filled: true,
-                      fillColor: Colors.transparent,
-                      hoverColor: Colors.transparent,
-                      focusColor: Colors.transparent,
-                      contentPadding:
-                          const EdgeInsets.fromLTRB(14, 13, 14, 9),
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      hintText: 'поиск…',
-                      hintStyle: TextStyle(
-                        color: t.textFaint,
-                        fontFamily: t.monoFamily,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0.02 * 12,
-                      ),
-                    ),
-                  ),
-                ),
+              child: NekkoTextField(
+                controller: _searchCtl,
+                autofocus: true,
+                hint: 'поиск…',
+                onChanged: (v) => setState(() => _query = v),
               ),
             ),
             Expanded(

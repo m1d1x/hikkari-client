@@ -179,6 +179,21 @@ func (s *Store) List() ([]Info, error) {
 	return out, nil
 }
 
+// Get returns the full stored profile by name. ok is false when no profile
+// with that name exists (not an error — the caller decides how to report it).
+func (s *Store) Get(name string) (Profile, bool, error) {
+	pf, err := s.Read()
+	if err != nil {
+		return Profile{}, false, err
+	}
+	for _, p := range pf.Profiles {
+		if p.Name == name {
+			return p, true, nil
+		}
+	}
+	return Profile{}, false, nil
+}
+
 func (s *Store) Active() (string, error) {
 	pf, err := s.Read()
 	if err != nil {

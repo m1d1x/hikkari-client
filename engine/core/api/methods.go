@@ -144,6 +144,19 @@ func (c *Core) AddProfileFromURI(uri string) (string, error) {
 	return name, nil
 }
 
+// ExportProfileURI serialises a stored profile back into a shareable import
+// link (the inverse of AddProfileFromURI) for the share sheet's QR + copy.
+func (c *Core) ExportProfileURI(name string) (string, error) {
+	p, ok, err := c.profiles.Get(name)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("профиль %q не найден", name)
+	}
+	return profile.ExportURI(p)
+}
+
 // ProfileCountries resolves the lowercase ISO 3166-1 alpha-2 country code
 // for each profile's server host, keyed by profile name. A resolved host is
 // cached forever (in-process and on disk — see geoip.Load, called from

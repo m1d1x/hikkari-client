@@ -78,7 +78,7 @@ ThemeData buildAppTheme() {
         height: 1.4,
       ),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      constraints: const BoxConstraints(maxWidth: 220),
+      constraints: const BoxConstraints(maxWidth: 280),
       waitDuration: const Duration(milliseconds: 450),
       showDuration: const Duration(seconds: 4),
       preferBelow: false,

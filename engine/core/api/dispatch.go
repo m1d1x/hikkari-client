@@ -159,6 +159,14 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 			return nil, err
 		}
 		return c.AddProfileFromURI(a.URI)
+	case "ExportProfileURI":
+		var a struct {
+			Name string `json:"name"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return c.ExportProfileURI(a.Name)
 	case "ProfileCountries":
 		return c.ProfileCountries()
 	case "AutoMode":

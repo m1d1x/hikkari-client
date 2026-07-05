@@ -5,6 +5,7 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_text_field.dart';
 import 'import_profile_dialog.dart';
 import 'profile_tile.dart';
 
@@ -107,10 +108,14 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
           children: [
             _grabber(t),
             _header(t, all.length),
-            _search(t),
-            const SizedBox(height: 10),
+            if (all.isNotEmpty) ...[
+              _search(t),
+              const SizedBox(height: 10),
+            ],
             Expanded(
-              child: filtered.isEmpty
+              child: all.isEmpty
+                  ? _emptyState(t)
+                  : filtered.isEmpty
                   ? Center(
                       child: Text(
                         'ничего не найдено',
@@ -152,6 +157,69 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
         ),
       );
 
+  // Пусто = ни одного профиля. Большая понятная кнопка-плашка в стиле
+  // активного профиля (тёмная заливка + primary-аутлайн), чтобы сразу
+  // было ясно единственное осмысленное действие — импортировать профиль.
+  Widget _emptyState(NekkoTokens t) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Material(
+            color: const Color(0xFF1A1014),
+            borderRadius: BorderRadius.circular(t.radiusLg),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => ImportProfileDialog.show(context),
+              mouseCursor: SystemMouseCursors.click,
+              borderRadius: BorderRadius.circular(t.radiusLg),
+              hoverColor: t.primary.withValues(alpha: 0.06),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 26),
+                decoration: BoxDecoration(
+                  border: Border.all(color: t.primary.withValues(alpha: 0.32)),
+                  borderRadius: BorderRadius.circular(t.radiusLg),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: t.primary.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.add, color: t.primary, size: 30),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'добавить профиль',
+                      style: t.sectionTitle,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'вставьте ссылку — vless://, trojan://, ss://,\nhysteria2:// или конфиг AmneziaWG',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: NekkoTokens.sizeBody,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _header(NekkoTokens t, int count) {
     final s = context.watch<AppState>();
     return Padding(
@@ -168,29 +236,22 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
               children: [
-                Text(
-                  'профили',
-                  style: TextStyle(
-                    color: t.text,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                Text('профили', style: t.sectionTitle),
                 const SizedBox(width: 8),
                 Text(
                   '$count',
                   style: TextStyle(
                     color: t.textMuted,
-                    fontSize: 13,
+                    fontSize: NekkoTokens.sizeSubtitle,
                     fontWeight: FontWeight.w600,
                     fontFamily: t.monoFamily,
                   ),
                 ),
               ],
             ),
-            const Spacer(),
+            const SizedBox(width: 12),
             _autoChip(t, s),
-            const SizedBox(width: 6),
+            const Spacer(),
             _addProfileButton(t),
           ],
         ),
@@ -220,7 +281,7 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
               border: Border.all(color: t.borderStrong),
               borderRadius: BorderRadius.circular(t.radius),
             ),
-            child: Icon(Icons.add, color: t.text, size: 18),
+            child: Icon(Icons.add, color: t.text, size: 20),
           ),
         ),
       ),
@@ -240,13 +301,19 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
         borderRadius: BorderRadius.circular(t.radius),
         mouseCursor: SystemMouseCursors.click,
         hoverColor: t.primary.withValues(alpha: 0.10),
-        child: Container(
-          height: 34,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+        // Включённое состояние = как активный профиль: тёмная primary-
+        // заливка, primary-аутлайн, иконка и текст в primary. Иначе по
+        // одной только смене иконки было не считать, что режим активен.
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          height: 30,
+          padding: const EdgeInsets.fromLTRB(9, 0, 13, 0),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: on ? t.surface2 : Colors.transparent,
-            border: Border.all(color: t.borderStrong),
+            color: on ? const Color(0xFF1A1014) : Colors.transparent,
+            border: Border.all(
+              color: on ? t.primary.withValues(alpha: 0.32) : t.borderStrong,
+            ),
             borderRadius: BorderRadius.circular(t.radius),
           ),
           child: Row(
@@ -254,15 +321,15 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
             children: [
               Icon(
                 on ? Icons.bolt : Icons.bolt_outlined,
-                size: 14,
-                color: on ? t.ok : t.text,
+                size: 16,
+                color: on ? t.primary : t.text,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 1),
               Text(
                 'auto',
                 style: TextStyle(
-                  color: t.text,
-                  fontSize: 12,
+                  color: on ? t.primary : t.text,
+                  fontSize: NekkoTokens.sizeLabel,
                   fontWeight: FontWeight.w600,
                   fontFamily: t.monoFamily,
                 ),
@@ -275,54 +342,12 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
   }
 
   Widget _search(NekkoTokens t) {
-    final textStyle = TextStyle(
-      color: t.text,
-      fontFamily: t.monoFamily,
-      fontSize: 12,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.02 * 12,
-    );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        height: 40,
-        decoration: BoxDecoration(
-          color: t.bg,
-          border: Border.all(color: t.border),
-          borderRadius: BorderRadius.circular(t.radius),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Material(
-          type: MaterialType.transparency,
-          child: TextField(
-            onChanged: (v) => setState(() => _query = v),
-            style: textStyle,
-            cursorColor: t.text,
-            cursorWidth: 1.5,
-            cursorRadius: const Radius.circular(1),
-            maxLines: 1,
-            textAlignVertical: TextAlignVertical.center,
-            decoration: InputDecoration(
-              isDense: true,
-              filled: true,
-              fillColor: Colors.transparent,
-              hoverColor: Colors.transparent,
-              focusColor: Colors.transparent,
-              hintText: 'поиск',
-              hintStyle: textStyle.copyWith(color: t.textFaint),
-              prefixIcon: Icon(Icons.search, size: 16, color: t.textMuted),
-              prefixIconConstraints: const BoxConstraints(
-                minWidth: 40,
-                minHeight: 40,
-              ),
-              contentPadding:
-                  const EdgeInsets.fromLTRB(0, 9, 0, 11),
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-            ),
-          ),
-        ),
+      child: NekkoTextField(
+        hint: 'поиск',
+        prefixIcon: Icon(Icons.search, size: 16, color: t.textMuted),
+        onChanged: (v) => setState(() => _query = v),
       ),
     );
   }
