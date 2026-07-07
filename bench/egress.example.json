@@ -1,0 +1,30 @@
+[
+  {
+    "name": "dc-nl-aeza",
+    "label": "Aeza Amsterdam",
+    "kind": "outbound",
+    "meta": { "dc": "aeza", "region": "nl", "note": "тест разных city-эндпоинтов" },
+    "config": {
+      "type": "vless",
+      "server": "1.2.3.4",
+      "server_port": 443,
+      "uuid": "REPLACE-ME",
+      "flow": "xtls-rprx-vision",
+      "tls": { "enabled": true, "server_name": "example.com", "utls": { "enabled": true, "fingerprint": "chrome" } }
+    }
+  },
+  {
+    "name": "residential-1",
+    "label": "Residential SOCKS",
+    "kind": "outbound",
+    "meta": { "dc": "resi-provider", "region": "de" },
+    "config": {
+      "type": "socks",
+      "server": "resi.example.com",
+      "server_port": 1080,
+      "version": "5",
+      "username": "user",
+      "password": "pass"
+    }
+  }
+]

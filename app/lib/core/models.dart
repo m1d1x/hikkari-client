@@ -30,6 +30,158 @@ class HealthInfo {
       'HealthInfo(status=$status, ip=$ip, running=$running, msg=$message)';
 }
 
+/// Одна конкретная причина, почему выход выглядит грязным (или заметка, почему
+/// чистым). Mirrors Go's `cleanliness.Reason`.
+class CleanlinessReason {
+  final String severity; // "high" | "med" | "low" | "good"
+  final String title;
+  final String fix; // как починить ("" если нет)
+
+  const CleanlinessReason({
+    required this.severity,
+    required this.title,
+    required this.fix,
+  });
+
+  factory CleanlinessReason.fromJson(Map<String, dynamic> j) =>
+      CleanlinessReason(
+        severity: j['severity'] as String? ?? 'low',
+        title: j['title'] as String? ?? '',
+        fix: j['fix'] as String? ?? '',
+      );
+}
+
+/// Dart projection of Go's `cleanliness.Report` — the "whiteness" of the
+/// active egress as the internet sees it. Field names mirror the Go JSON
+/// tags exactly.
+class ServerCleanliness {
+  final bool running; // tunnel up
+  final bool checked; // we have a successful probe
+  final String ip;
+  final String asn; // "AS210644"
+  final String asname; // "AEZA-AS"
+  final String asnType; // "hosting" | "isp" | ...
+  final String asnCountry; // ISO code where the ASN is registered
+  final String isp;
+  final String org;
+  final String country; // ISO code
+  final String city;
+  final bool isHosting; // datacenter range
+  final bool isMobile;
+  final bool isProxy;
+  final bool isVpn;
+  final bool isTor;
+  final bool isAbuser; // seen in abuse/spam feeds
+  final bool isCrawler;
+  final String abuserLabel; // "High"/"Elevated"/... or ""
+  final int fraudScore; // 0-100, or -1 when unknown (no IPQS key)
+  final String abuseEmail; // network abuse contact
+  final String cfColo; // Cloudflare edge, e.g. "FRA"
+  final String cfWarp;
+  final int score; // 0-100 whiteness index
+  final String verdict; // off|checking|clean|suspicious|datacenter|flagged
+  final String message;
+  final List<CleanlinessReason> reasons; // почему фродит
+  final String checkedAt;
+
+  const ServerCleanliness({
+    required this.running,
+    required this.checked,
+    required this.ip,
+    required this.asn,
+    required this.asname,
+    required this.asnType,
+    required this.asnCountry,
+    required this.isp,
+    required this.org,
+    required this.country,
+    required this.city,
+    required this.isHosting,
+    required this.isMobile,
+    required this.isProxy,
+    required this.isVpn,
+    required this.isTor,
+    required this.isAbuser,
+    required this.isCrawler,
+    required this.abuserLabel,
+    required this.fraudScore,
+    required this.abuseEmail,
+    required this.cfColo,
+    required this.cfWarp,
+    required this.score,
+    required this.verdict,
+    required this.message,
+    required this.reasons,
+    required this.checkedAt,
+  });
+
+  factory ServerCleanliness.fromJson(Map<String, dynamic> j) =>
+      ServerCleanliness(
+        running: j['running'] as bool? ?? false,
+        checked: j['checked'] as bool? ?? false,
+        ip: j['ip'] as String? ?? '',
+        asn: j['asn'] as String? ?? '',
+        asname: j['asname'] as String? ?? '',
+        asnType: j['asnType'] as String? ?? '',
+        asnCountry: j['asnCountry'] as String? ?? '',
+        isp: j['isp'] as String? ?? '',
+        org: j['org'] as String? ?? '',
+        country: j['country'] as String? ?? '',
+        city: j['city'] as String? ?? '',
+        isHosting: j['isHosting'] as bool? ?? false,
+        isMobile: j['isMobile'] as bool? ?? false,
+        isProxy: j['isProxy'] as bool? ?? false,
+        isVpn: j['isVpn'] as bool? ?? false,
+        isTor: j['isTor'] as bool? ?? false,
+        isAbuser: j['isAbuser'] as bool? ?? false,
+        isCrawler: j['isCrawler'] as bool? ?? false,
+        abuserLabel: j['abuserLabel'] as String? ?? '',
+        fraudScore: (j['fraudScore'] as num?)?.toInt() ?? -1,
+        abuseEmail: j['abuseEmail'] as String? ?? '',
+        cfColo: j['cfColo'] as String? ?? '',
+        cfWarp: j['cfWarp'] as String? ?? '',
+        score: (j['score'] as num?)?.toInt() ?? 0,
+        verdict: j['verdict'] as String? ?? 'off',
+        message: j['message'] as String? ?? '',
+        reasons: (j['reasons'] as List<dynamic>? ?? const [])
+            .map((e) =>
+                CleanlinessReason.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        checkedAt: j['checkedAt'] as String? ?? '',
+      );
+
+  static const off = ServerCleanliness(
+    running: false,
+    checked: false,
+    ip: '',
+    asn: '',
+    asname: '',
+    asnType: '',
+    asnCountry: '',
+    isp: '',
+    org: '',
+    country: '',
+    city: '',
+    isHosting: false,
+    isMobile: false,
+    isProxy: false,
+    isVpn: false,
+    isTor: false,
+    isAbuser: false,
+    isCrawler: false,
+    abuserLabel: '',
+    fraudScore: -1,
+    abuseEmail: '',
+    cfColo: '',
+    cfWarp: '',
+    score: 0,
+    verdict: 'off',
+    message: '',
+    reasons: [],
+    checkedAt: '',
+  );
+}
+
 class ProfileInfo {
   final String name;
   final String label;

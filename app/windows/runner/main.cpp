@@ -33,8 +33,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  // Portrait phone-sized window — same dimensions as the original Wails
-  // app (440x780). The layout below is designed around this width; opening
+  // Portrait phone-sized window (440x780). The layout below is designed
+  // around this width; opening
   // wider just creates empty side space.
   Win32Window::Size size(440, 780);
   if (!window.Create(L"Nekko VPN", origin, size)) {

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"NekkoVPN/core/applist"
+	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/clashapi"
 	"NekkoVPN/core/configfile"
 	"NekkoVPN/core/geoip"
@@ -20,13 +21,15 @@ import (
 )
 
 // Re-exported types — same Go type, shorter name inside api/. JSON shape is
-// unchanged, so every UI (Wails, Flutter, gomobile) sees the same fields.
+// unchanged, so every UI (Flutter, gomobile) sees the same fields.
 type (
 	HealthInfo   = health.Info
 	RoutingState = configfile.RoutingState
 	RoutingMode  = configfile.RoutingMode
 	ProfileInfo  = profile.Info
 	PingSample   = uptime.Sample
+
+	CleanlinessReport = cleanliness.Report
 )
 
 // ============================================================
@@ -48,6 +51,11 @@ func (c *Core) IsRunning() bool { return vpn.ClashAPIRunning() }
 
 func (c *Core) Health() HealthInfo { return c.health.Probe() }
 func (c *Core) ExternalIP() string { return c.health.ExternalIP() }
+
+// ServerCleanliness returns the cached "whiteness" report for the active
+// egress: exit IP, ASN, hosting flag, optional fraud-score, and how
+// Cloudflare classifies it. Instant read — the probing runs in background.
+func (c *Core) ServerCleanliness() CleanlinessReport { return c.cleanliness.Report() }
 
 // ============================================================
 //  Logging

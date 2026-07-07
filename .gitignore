@@ -1,4 +1,10 @@
-# === Archive (локальный мусор, не в git) ===
+# =============================================================
+#  NEKOBOX monorepo — корневой .gitignore
+#  Подпроекты (app/ — Flutter, engine/ — Go) имеют свои .gitignore
+#  для генерируемых ими артефактов. Здесь — только сквозное.
+# =============================================================
+
+# === Локальный мусор прежнего проекта (не в git) ===
 archive/
 
 # === OS ===
@@ -11,6 +17,7 @@ $RECYCLE.BIN/
 # === Editors / IDE ===
 .vscode/
 .idea/
+*.iml
 *.swp
 *.swo
 *~
@@ -34,50 +41,24 @@ vendor/
 go.work
 go.work.sum
 
-# === Node / Frontend ===
-node_modules/
+# === Native deps (распространяются отдельно, не коммитим) ===
+sing-box.exe
+wintun.dll
 dist/
-.svelte-kit/
-.vite/
-.cache/
-*.tsbuildinfo
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.pnpm-store/
 
-# === Wails ===
-build/bin/
-build/windows/installer/
-build/darwin/
-frontend/wailsjs/
-frontend/package.json.md5
+# === Runtime / сгенерированное движком (у каждого юзера своё) ===
+config.json
+profiles.json
+uptime-history.json
+direct-ip.txt
 
-# === Env / Secrets ===
+# === Env / Secrets (никогда не коммитим) ===
 .env
 .env.*
 !.env.example
 *.pem
 *.key
-
-# === Runtime / Generated ===
-config.json
-profiles.json
-uptime-history.json
-direct-ip.txt
-*.conf
-!example.conf
-
-# === Native deps (распространяются отдельно) ===
-sing-box.exe
-wintun.dll
-
-# === cgo build artifacts ===
-NekkoVPN/nekkobox.dll
-NekkoVPN/nekkobox.h
-NekkoVPN/libnekkobox.so
-NekkoVPN/libnekkobox.dylib
+ipqs-key.txt
 
 # === Backups / Temp ===
 *.bak

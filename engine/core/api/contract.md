@@ -1,14 +1,12 @@
 # nekkobox engine — API contract
 
-This is the single contract every UI talks to: Wails (current Svelte
-frontend), Flutter on desktop (via `dart:ffi` + cgo DLL), Flutter on
-Android/iOS (via `gomobile bind`).
+This is the single contract every UI talks to: Flutter on desktop (via
+`dart:ffi` + cgo DLL) and Flutter on Android/iOS (via `gomobile bind`).
 
 Two equivalent surfaces sit on top of one `api.Core`:
 
-1. **Typed Go methods** (`methods.go`) — used directly by Wails bindings
-   and by `gomobile bind` on mobile. Native Java/Kotlin/Swift methods are
-   generated 1:1 from these.
+1. **Typed Go methods** (`methods.go`) — used by `gomobile bind` on mobile.
+   Native Java/Kotlin/Swift methods are generated 1:1 from these.
 2. **JSON dispatch** (`dispatch.go`) — `Core.Call(method, argsJSON)` returns
    a JSON envelope. This is what `cgo` exports as a single C function for
    `dart:ffi` on the desktop side.
@@ -274,12 +272,6 @@ val health = core.health() // typed HealthInfo
 
 Mobile builds may also use `core.call("Health", "")` if it's more ergonomic
 on the Flutter side (single MethodChannel handler) — both work.
-
-### Wails (current)
-
-`app.go` is a thin facade that delegates to `api.Core`. The JSON shapes
-in `methods.go` are identical to what Wails was already generating, so the
-existing Svelte frontend continues to work without changes.
 
 ---
 

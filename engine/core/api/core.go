@@ -1,8 +1,8 @@
 // Package api is the single public surface every UI uses to talk to the
 // nekkobox engine. Two layers sit on top of one Core:
 //
-//   - Typed Go methods (methods.go) — used directly by Wails-style bindings
-//     and by gomobile bind on Android/iOS.
+//   - Typed Go methods (methods.go) — used directly by gomobile bind on
+//     Android/iOS.
 //   - JSON dispatch (dispatch.go) — Core.Call(method, argsJSON) returns
 //     resultJSON inside an envelope. This is what cgo exports as a single
 //     C function for dart:ffi on the desktop side.
@@ -16,9 +16,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"NekkoVPN/core/clashapi"
+	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/configfile"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
@@ -56,9 +58,10 @@ type Core struct {
 	logger   *logging.Logger
 	configs  *configfile.Store
 	profiles *profile.Store
-	vpn      vpn.Manager
-	health   *health.Checker
-	uptime   *uptime.Tracker
+	vpn         vpn.Manager
+	health      *health.Checker
+	cleanliness *cleanliness.Checker
+	uptime      *uptime.Tracker
 	// serviceUptime holds on-demand pings of arbitrary user services
 	// (YouTube, Discord, …) measured through the active profile — kept
 	// separate from the per-profile uptime tracker above.
@@ -113,6 +116,14 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	)
 	c.uptime = uptime.New(filepath.Join(baseDir, "uptime-history.json"))
 	c.serviceUptime = uptime.New(filepath.Join(baseDir, "service-uptime-history.json"))
+	// Server-cleanliness scoring. Gated on TunnelOK so we never score the
+	// bare ISP IP. IPQS key is optional — dropped as plain text in
+	// baseDir/ipqs-key.txt; absent → fraud-score step is simply skipped.
+	c.cleanliness = cleanliness.New(
+		c.logger,
+		func() bool { return c.health.Probe().TunnelOK },
+		readOptionalKey(filepath.Join(baseDir, "ipqs-key.txt")),
+	)
 
 	c.health.LoadDirectIP()
 	c.ensureProfiles()
@@ -130,6 +141,7 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	// in the background keeps FFI calls instant — UI threads on the other
 	// side of the FFI boundary must never wait on network.
 	go c.health.Run(c.ctx)
+	go c.cleanliness.Run(c.ctx)
 
 	c.logger.Logf("=== api.Core init, baseDir=%s ===", baseDir)
 	return nil
@@ -265,6 +277,17 @@ func (c *Core) saveCustomServices() error {
 		return err
 	}
 	return os.WriteFile(c.customServicesPath, data, 0644)
+}
+
+// readOptionalKey returns the trimmed contents of a small text file, or ""
+// if it's missing/unreadable. Used for the optional IPQS API key so the
+// secret lives on disk (baseDir/ipqs-key.txt) instead of in code or config.
+func readOptionalKey(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func defaultServiceTargets() []uptime.ServiceTarget {

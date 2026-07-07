@@ -76,6 +76,8 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return c.Health(), nil
 	case "ExternalIP":
 		return c.ExternalIP(), nil
+	case "ServerCleanliness":
+		return c.ServerCleanliness(), nil
 
 	// ----- logging -----
 	case "LogTail":

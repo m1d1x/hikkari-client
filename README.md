@@ -1,1 +1,1 @@
-# obxodvpn
+# hikkari-client

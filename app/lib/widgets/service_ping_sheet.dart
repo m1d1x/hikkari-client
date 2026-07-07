@@ -6,6 +6,7 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import 'server_cleanliness_card.dart';
 import 'service_icon.dart';
 import 'sparkline.dart';
 
@@ -331,6 +332,9 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
           children: [
             _grabber(t),
             _header(t),
+            // Плашка «чистоты» текущего сервера — над всеми сервисами. Сама
+            // прячется, когда туннель выключен (verdict == 'off').
+            if (hasActive) const ServerCleanlinessCard(),
             Expanded(
               child: hasActive
                   ? _list(t, scrollCtrl)

@@ -87,6 +87,12 @@ add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
           -DSRC=${NEKKOBOX_BIN_SRC}/profiles.json
           -DDST=$<TARGET_FILE_DIR:${BINARY_NAME}>/profiles.json
           -P ${CMAKE_CURRENT_SOURCE_DIR}/copy_if_missing.cmake
+  # Optional IPQS API key (gitignored secret at repo root). copy_if_missing
+  # tolerates a missing source, so builds without a key just skip this.
+  COMMAND ${CMAKE_COMMAND}
+          -DSRC=${NEKKOBOX_REPO_ROOT}/ipqs-key.txt
+          -DDST=$<TARGET_FILE_DIR:${BINARY_NAME}>/ipqs-key.txt
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/copy_if_missing.cmake
   COMMENT "Seed nekkobox runtime files → $<TARGET_FILE_DIR:${BINARY_NAME}>"
   VERBATIM
 )

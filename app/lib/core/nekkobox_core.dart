@@ -67,6 +67,11 @@ abstract class NekkoboxCore {
 
   Future<String> externalIp() async => await _callAsync('ExternalIP') as String;
 
+  /// "Whiteness" of the active egress — cached engine-side, instant read.
+  Future<ServerCleanliness> serverCleanliness() async =>
+      ServerCleanliness.fromJson(
+          await _callAsync('ServerCleanliness') as Map<String, dynamic>);
+
   // ----- logs -----
 
   Future<String> logTail() async => await _callAsync('LogTail') as String;
