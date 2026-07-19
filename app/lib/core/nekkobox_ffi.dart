@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
@@ -62,7 +62,15 @@ class NekkoboxCoreFfi extends NekkoboxCore {
 
   static String _libName() {
     if (Platform.isWindows) return 'nekkobox.dll';
-    if (Platform.isMacOS) return 'libnekkobox.dylib';
+    if (Platform.isMacOS) {
+      // dlopen won't search the app bundle for a bare leaf name — on
+      // Apple Silicon it only looks at DYLD paths, not the executable's
+      // folder. Hand it an absolute path next to the executable, i.e.
+      // Nekko.app/Contents/MacOS/libnekkobox.dylib (same dir main.dart's
+      // _baseDir() uses).
+      final dir = File(Platform.resolvedExecutable).parent.path;
+      return '$dir/libnekkobox.dylib';
+    }
     return 'libnekkobox.so';
   }
 
