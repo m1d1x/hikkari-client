@@ -16,6 +16,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -36,10 +37,16 @@ import (
 // inject a libbox-backed Manager via InitWithVPN instead.
 type VPNFactory func(baseDir string, log vpn.LineLogger) vpn.Manager
 
-// DefaultVPNFactory is the desktop ProcessManager factory.
+// DefaultVPNFactory is the desktop ProcessManager factory. The sing-box
+// binary is bundled next to baseDir under an OS-specific name (sing-box.exe on
+// Windows, sing-box elsewhere).
 func DefaultVPNFactory(baseDir string, log vpn.LineLogger) vpn.Manager {
+	bin := "sing-box"
+	if runtime.GOOS == "windows" {
+		bin = "sing-box.exe"
+	}
 	return vpn.NewProcessManager(
-		filepath.Join(baseDir, "sing-box.exe"),
+		filepath.Join(baseDir, bin),
 		filepath.Join(baseDir, "config.json"),
 		baseDir,
 		log,
