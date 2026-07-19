@@ -1,13 +1,18 @@
 name: macOS app (.app)
 
-# Собирает несигнованный (ad-hoc) Nekko.app под Apple Silicon: движок (dylib) +
-# Flutter-UI. Каркас macos/ в репо отсутствует, поэтому генерируется на лету
-# через `flutter create --platforms=macos`.
+# Собирает несигнованный (ad-hoc) Nekko.app под Apple Silicon:
+#   движок (libnekkobox.dylib) + Flutter-UI + бинарь sing-box.
+# Каркас macos/ в репо отсутствует — генерируется на лету через
+# `flutter create --platforms=macos`.
 #
-# ВАЖНО: это тестовая сборка UI. VPN-туннель под macOS ещё заглушка
-# (engine/core/vpn/process_other.go) — окно и интерфейс работают, кнопка
-# «подключиться» вернёт ошибку. Приложение только ad-hoc-подписано, без
-# нотаризации: на маке снимай карантин `xattr -cr Nekko.app` перед запуском.
+# sing-box берётся НЕ из официального релиза: конфиги проекта используют
+# AmneziaWG-эндпоинты ("type": "awg"), которых нет в upstream. Поэтому
+# собираем форк hoaxisr/amnezia-box (тег SINGBOX_TAG) под darwin/arm64 с
+# тегом with_awg — тот же бинарь, что и в Windows-сборке.
+#
+# ВАЖНО: приложение только ad-hoc-подписано, без нотаризации — на маке снимай
+# карантин `xattr -cr Nekko.app`. Для реального туннеля sing-box нужен root
+# (utun): запускать app из-под sudo или ставить привилегированный хелпер.
 
 on:
   push:
@@ -27,14 +32,17 @@ jobs:
   build:
     name: build Nekko.app (arm64, unsigned)
     runs-on: macos-14        # Apple Silicon
+    env:
+      SINGBOX_REPO: https://github.com/hoaxisr/amnezia-box.git
+      SINGBOX_TAG: v1.13.8-awg2.0
 
     steps:
       - uses: actions/checkout@v4
 
+      # 1.24.7 покрывает и движок (go.mod 1.23), и форк sing-box (go.mod 1.24.7).
       - uses: actions/setup-go@v5
         with:
-          go-version-file: engine/go.mod
-          cache-dependency-path: engine/go.sum
+          go-version: '1.24.7'
 
       - uses: subosito/flutter-action@v2
         with:
@@ -50,6 +58,28 @@ jobs:
         run: |
           go build -buildmode=c-shared -o "$GITHUB_WORKSPACE/libnekkobox.dylib" ./cmd/nekkobox-ffi
           file "$GITHUB_WORKSPACE/libnekkobox.dylib"
+
+      - name: Build sing-box (awg fork, darwin/arm64)
+        env:
+          CGO_ENABLED: '1'          # darwin-нативно; keychain-зависимости могут требовать cgo
+          GOOS: darwin
+          GOARCH: arm64
+          GOTOOLCHAIN: local        # используем ровно go 1.24.7 из setup-go
+        run: |
+          git clone --depth 1 --branch "$SINGBOX_TAG" "$SINGBOX_REPO" "$RUNNER_TEMP/singbox-src"
+          cd "$RUNNER_TEMP/singbox-src"
+          # Теги/ldflags — как в Makefile форка (release/*), плюс with_awg.
+          TAGS="$(cat release/DEFAULT_BUILD_TAGS_OTHERS),with_awg"
+          LDFLAGS_SHARED="$(cat release/LDFLAGS)"
+          VERSION="${SINGBOX_TAG#v}"
+          echo "sing-box TAGS=$TAGS VERSION=$VERSION"
+          go build -v -trimpath \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$VERSION' $LDFLAGS_SHARED -s -w -buildid=" \
+            -tags "$TAGS" \
+            -o "$GITHUB_WORKSPACE/sing-box" \
+            ./cmd/sing-box
+          file "$GITHUB_WORKSPACE/sing-box"
+          "$GITHUB_WORKSPACE/sing-box" version
 
       - name: Generate macOS scaffold + deps
         working-directory: app
@@ -68,15 +98,23 @@ jobs:
           FLUTTER_XCODE_DEVELOPMENT_TEAM: ''
         run: flutter build macos --release
 
-      - name: Bundle dylib into .app and re-sign
+      - name: Bundle dylib + sing-box into .app and re-sign
         working-directory: app
         run: |
           APP_PATH="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -1)"
           if [ -z "$APP_PATH" ]; then echo "::error::.app not found"; exit 1; fi
           echo "APP_PATH=$APP_PATH"
-          cp "$GITHUB_WORKSPACE/libnekkobox.dylib" "$APP_PATH/Contents/MacOS/"
-          # Пересобрать ad-hoc подпись бандла — иначе добавленный dylib
-          # ломает подпись и macOS не запустит приложение.
+          MACOS_DIR="$APP_PATH/Contents/MacOS"
+          # Движок и sing-box кладём рядом с исполняемым файлом — там же, где
+          # их ищет движок (baseDir = Contents/MacOS).
+          cp "$GITHUB_WORKSPACE/libnekkobox.dylib" "$MACOS_DIR/"
+          cp "$GITHUB_WORKSPACE/sing-box" "$MACOS_DIR/"
+          chmod +x "$MACOS_DIR/sing-box"
+          # Подписать вложенные Mach-O явно (--deep не всегда покрывает «голые»
+          # бинари в Contents/MacOS), затем пересобрать подпись всего бандла —
+          # иначе добавленные файлы ломают подпись и macOS не запустит app.
+          codesign --force --sign - "$MACOS_DIR/libnekkobox.dylib"
+          codesign --force --sign - "$MACOS_DIR/sing-box"
           codesign --force --deep --sign - "$APP_PATH"
           codesign --verify --deep --strict --verbose=2 "$APP_PATH" || true
           # ditto сохраняет структуру бандла, symlink'и и подпись (в отличие
