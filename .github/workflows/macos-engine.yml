@@ -1,0 +1,55 @@
+name: macOS engine (dylib)
+
+# Собирает cgo c-shared библиотеку движка под Apple Silicon и кладёт артефактом.
+# Первый шаг к macOS-порту: проверяет, что Go-движок компилируется на darwin/arm64.
+# VPN-слой под macOS ещё заглушка (см. engine/core/vpn/process_other.go) — здесь
+# собирается только .dylib, не рабочий клиент.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'engine/**'
+      - '.github/workflows/macos-engine.yml'
+  pull_request:
+    paths:
+      - 'engine/**'
+      - '.github/workflows/macos-engine.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build libnekkobox.dylib (arm64)
+    runs-on: macos-14        # Apple Silicon
+    defaults:
+      run:
+        working-directory: engine
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: engine/go.mod
+          cache-dependency-path: engine/go.sum
+
+      - name: Build c-shared library
+        env:
+          CGO_ENABLED: '1'
+          GOOS: darwin
+          GOARCH: arm64
+        run: |
+          go build -buildmode=c-shared \
+            -o libnekkobox.dylib \
+            ./cmd/nekkobox-ffi
+          file libnekkobox.dylib
+          ls -lh libnekkobox.dylib libnekkobox.h
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libnekkobox-darwin-arm64
+          path: |
+            engine/libnekkobox.dylib
+            engine/libnekkobox.h
+          if-no-files-found: error
