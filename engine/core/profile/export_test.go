@@ -13,8 +13,9 @@ func TestExportRoundTrip(t *testing.T) {
 		uri  string
 	}{
 		{"hysteria2", "hysteria2://pass123@h2.example.com:443?sni=cdn.example.com&insecure=1&obfs=salamander&obfs-password=obf#My%20HY2"},
-		{"vless-tls-ws", "vless://11111111-2222-3333-4444-555555555555@vl.example.com:443?security=tls&sni=vl.example.com&fp=chrome&type=ws&path=/ws&host=cdn.example.com#VL"},
-		{"vless-reality", "vless://11111111-2222-3333-4444-555555555555@re.example.com:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=PUBKEY&sid=abcd&flow=xtls-rprx-vision#RE"},
+		{"vless-tls-ws", "vless://11111111-2222-3333-4444-555555555555@vl.example.com:443?packetEncoding=xudp&security=tls&sni=vl.example.com&fp=chrome&type=ws&path=/ws&host=cdn.example.com#VL"},
+		{"vless-reality", "vless://11111111-2222-3333-4444-555555555555@re.example.com:443?packetEncoding=xudp&security=reality&sni=www.microsoft.com&fp=chrome&pbk=PUBKEY&sid=abcd&flow=xtls-rprx-vision#RE"},
+		{"vless-xhttp", "vless://11111111-2222-3333-4444-555555555555@xh.example.com:443?host=xh.example.com&mode=auto&packetEncoding=xudp&path=/artwork/api/uploads&security=tls&sni=xh.example.com&type=xhttp#XH"},
 		{"trojan", "trojan://trojanpass@tj.example.com:443?security=tls&sni=tj.example.com#TJ"},
 		{"shadowsocks", "ss://YWVzLTI1Ni1nY206c2VjcmV0@ss.example.com:8388#SS"},
 	}

@@ -7,10 +7,13 @@ package profile
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Draft is the parsed result of an import URI. Kind/Config are what
@@ -37,6 +40,15 @@ func ParseURI(uri string) (Draft, error) {
 		return Draft{}, fmt.Errorf("не удалось разобрать ссылку: %w", err)
 	}
 	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		drafts, err := fetchSubscription(uri)
+		if err != nil {
+			return Draft{}, err
+		}
+		if len(drafts) == 0 {
+			return Draft{}, fmt.Errorf("подписка пуста")
+		}
+		return drafts[0], nil
 	case "hysteria2", "hy2":
 		return parseHysteria2(u)
 	case "vless":
@@ -47,6 +59,125 @@ func ParseURI(uri string) (Draft, error) {
 		return parseShadowsocks(uri, u)
 	}
 	return Draft{}, fmt.Errorf("неподдерживаемая схема: %s", u.Scheme)
+}
+
+// ParseURIs parses either a single URI, a multi-line string of URIs,
+// or fetches an http/https subscription URL and parses all URIs in it.
+func ParseURIs(input string) ([]Draft, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil, fmt.Errorf("пустая ссылка")
+	}
+
+	if strings.HasPrefix(strings.ToLower(input), "http://") || strings.HasPrefix(strings.ToLower(input), "https://") {
+		return fetchSubscription(input)
+	}
+
+	if looksLikeWireGuardIni(input) {
+		d, err := parseAmneziaWGIni(input)
+		if err != nil {
+			return nil, err
+		}
+		return []Draft{d}, nil
+	}
+
+	if !strings.Contains(input, "://") && !strings.Contains(input, "\n") {
+		if decoded, err := decodeBase64Subscription(input); err == nil && len(decoded) > 0 {
+			input = decoded
+		}
+	}
+
+	lines := strings.Split(input, "\n")
+	var drafts []Draft
+	var firstErr error
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+		d, err := ParseURI(line)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		drafts = append(drafts, d)
+	}
+
+	if len(drafts) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	if len(drafts) == 0 {
+		return nil, fmt.Errorf("в ссылке не найдено поддерживаемых серверов")
+	}
+	return drafts, nil
+}
+
+func fetchSubscription(subURL string) ([]Draft, error) {
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+	}
+	req, err := http.NewRequest(http.MethodGet, subURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка создания запроса подписки: %w", err)
+	}
+	req.Header.Set("User-Agent", "v2rayN/6.42 Hikkari/1.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось загрузить подписку: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("подписка вернула HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения подписки: %w", err)
+	}
+
+	content := strings.TrimSpace(string(body))
+	if decoded, err := decodeBase64Subscription(content); err == nil && len(decoded) > 0 {
+		content = decoded
+	}
+
+	lines := strings.Split(content, "\n")
+	var drafts []Draft
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		d, err := ParseURI(line)
+		if err != nil {
+			continue
+		}
+		drafts = append(drafts, d)
+	}
+
+	if len(drafts) == 0 {
+		return nil, fmt.Errorf("подписка не содержит поддерживаемых профилей")
+	}
+	return drafts, nil
+}
+
+func decodeBase64Subscription(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	clean := strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", "")
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.RawURLEncoding} {
+		data, err := enc.DecodeString(clean)
+		if err == nil && len(data) > 0 {
+			res := string(data)
+			if strings.Contains(res, "://") {
+				return res, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("not base64")
 }
 
 // parseHysteria2 maps a hysteria2:// URI to the sing-box outbound shape.
@@ -133,16 +264,18 @@ func parseVLESS(u *url.URL) (Draft, error) {
 		"server_port": port,
 		"uuid":        u.User.Username(),
 	}
-	if pe := q.Get("packetEncoding"); pe != "" {
-		cfg["packet_encoding"] = pe
+	pe := q.Get("packetEncoding")
+	if pe == "" {
+		pe = "xudp"
 	}
+	cfg["packet_encoding"] = pe
 	if flow := q.Get("flow"); flow != "" {
 		cfg["flow"] = flow
 	}
 	if tls := buildTLS(q, host); tls != nil {
 		cfg["tls"] = tls
 	}
-	if tr := buildTransport(q); tr != nil {
+	if tr := buildTransport(q, host); tr != nil {
 		cfg["transport"] = tr
 	}
 	return Draft{Kind: KindOutbound, Label: labelOrHost(u, host), Config: cfg}, nil
@@ -170,7 +303,7 @@ func parseTrojan(u *url.URL) (Draft, error) {
 	} else {
 		cfg["tls"] = map[string]interface{}{"enabled": true, "server_name": host}
 	}
-	if tr := buildTransport(q); tr != nil {
+	if tr := buildTransport(q, host); tr != nil {
 		cfg["transport"] = tr
 	}
 	return Draft{Kind: KindOutbound, Label: labelOrHost(u, host), Config: cfg}, nil
@@ -334,12 +467,12 @@ func buildTLS(q url.Values, fallbackSNI string) map[string]interface{} {
 	return tls
 }
 
-// buildTransport reads transport-layer params (type=ws/grpc/http) and emits
+// buildTransport reads transport-layer params (type=ws/grpc/http/xhttp/httpupgrade) and emits
 // the sing-box transport block. Returns nil for plain TCP.
-func buildTransport(q url.Values) map[string]interface{} {
+func buildTransport(q url.Values, fallbackHost string) map[string]interface{} {
 	t := strings.ToLower(q.Get("type"))
 	switch t {
-	case "ws":
+	case "ws", "websocket":
 		tr := map[string]interface{}{"type": "ws"}
 		if path := q.Get("path"); path != "" {
 			tr["path"] = path
@@ -362,6 +495,37 @@ func buildTransport(q url.Values) map[string]interface{} {
 		if hostHdr := q.Get("host"); hostHdr != "" {
 			tr["host"] = []interface{}{hostHdr}
 		}
+		return tr
+	case "httpupgrade":
+		tr := map[string]interface{}{"type": "httpupgrade"}
+		if path := q.Get("path"); path != "" {
+			tr["path"] = path
+		}
+		hostHdr := q.Get("host")
+		if hostHdr == "" {
+			hostHdr = fallbackHost
+		}
+		if hostHdr != "" {
+			tr["host"] = hostHdr
+		}
+		return tr
+	case "xhttp", "splithttp":
+		tr := map[string]interface{}{"type": "xhttp"}
+		if path := q.Get("path"); path != "" {
+			tr["path"] = path
+		}
+		hostHdr := q.Get("host")
+		if hostHdr == "" {
+			hostHdr = fallbackHost
+		}
+		if hostHdr != "" {
+			tr["host"] = hostHdr
+		}
+		mode := q.Get("mode")
+		if mode == "" {
+			mode = "auto"
+		}
+		tr["mode"] = mode
 		return tr
 	}
 	return nil

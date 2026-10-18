@@ -36,9 +36,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "archive"
 
-          # 1. Download sing-box 1.14.3 for windows-amd64
-          Write-Host "Downloading sing-box..."
-          Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-box/releases/download/v1.14.3/sing-box-1.14.3-windows-amd64.zip" -OutFile "sing-box.zip"
+          # 1. Download sing-box 1.14.3 (sing-box-lx fork with xhttp, AmneziaWG, anti-DPI patches)
+          Write-Host "Downloading sing-box (lx with xhttp & awg support)..."
+          Invoke-WebRequest -Uri "https://github.com/Leadaxe/sing-box-lx/releases/download/v1.14.3-lx.21/sing-box-1.14.3-lx.21-windows-amd64.zip" -OutFile "sing-box.zip"
           Expand-Archive -Path "sing-box.zip" -DestinationPath "temp_sb" -Force
           Get-ChildItem -Path "temp_sb" -Recurse -Filter "sing-box.exe" | Select-Object -First 1 | Copy-Item -Destination "archive/sing-box.exe"
           Get-ChildItem -Path "temp_sb" -Recurse -Filter "libcronet.dll" | Select-Object -First 1 | Copy-Item -Destination "archive/libcronet.dll"

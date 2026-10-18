@@ -90,7 +90,7 @@ func tunInbound() map[string]interface{} {
 func DefaultConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"log": map[string]interface{}{
-			"level":     "info",
+			"level":     "warn",
 			"timestamp": true,
 		},
 		"dns": map[string]interface{}{
@@ -216,6 +216,7 @@ func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, autoMode bo
 	for _, p := range specs {
 		profileTags = append(profileTags, p.Tag)
 		if p.Kind == kindOutbound {
+			healOutboundConfig(p.Config)
 			outboundBlocks = append(outboundBlocks, p.Config)
 			hasOutbound = true
 		} else {
@@ -349,6 +350,53 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 	if exp, ok := cfg["experimental"].(map[string]interface{}); ok {
 		if cache, ok := exp["cache_file"].(map[string]interface{}); ok {
 			cache["store_fakeip"] = true
+		}
+	}
+	// Enforce quiet log level (warn) to eliminate packet-level connection spam.
+	cfg["log"] = map[string]interface{}{
+		"level":     "warn",
+		"timestamp": true,
+	}
+}
+
+// healOutboundConfig ensures VLESS profiles have proper packet_encoding and
+// automatically restores missing transport for known providers (e.g. zovfy xhttp).
+func healOutboundConfig(cfg map[string]interface{}) {
+	if cfg == nil {
+		return
+	}
+	t, _ := cfg["type"].(string)
+	if t != "vless" {
+		return
+	}
+	if pe, _ := cfg["packet_encoding"].(string); pe == "" {
+		cfg["packet_encoding"] = "xudp"
+	}
+	server, _ := cfg["server"].(string)
+	server = strings.ToLower(strings.TrimSpace(server))
+	if cfg["transport"] == nil {
+		switch server {
+		case "web.zovfy.ru":
+			cfg["transport"] = map[string]interface{}{
+				"type": "xhttp",
+				"host": "web.zovfy.ru",
+				"path": "/artwork/api/uploads/sync-3cfbabbe8c07",
+				"mode": "auto",
+			}
+		case "alinazabrikosina.zovfy.ru":
+			cfg["transport"] = map[string]interface{}{
+				"type": "xhttp",
+				"host": "alinazabrikosina.zovfy.ru",
+				"path": "/artwork/api/uploads/sync-3cfbabbe5c03",
+				"mode": "auto",
+			}
+		case "pomoyka.inc.zovfy.ru":
+			cfg["transport"] = map[string]interface{}{
+				"type": "xhttp",
+				"host": "pomoyka.inc.zovfy.ru",
+				"path": "/artwork/api/uploads",
+				"mode": "auto",
+			}
 		}
 	}
 }

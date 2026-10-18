@@ -130,26 +130,34 @@ func (c *Core) SwitchProfile(name string) error {
 	return cl.SelectProxy(profile.SelectorTag, profile.ProfileTag(name))
 }
 
-// AddProfileFromURI parses a server URI and appends it as a new profile.
-// The new profile is added to config.json's selector group so it can be
-// probed for liveness immediately; if the engine is running it needs a
-// restart to pick up the new outbound (sing-box doesn't hot-load).
+// AddProfileFromURI parses a server URI or subscription URL and appends
+// the resulting profile(s). The new profile(s) are added to config.json's
+// selector group so they can be probed for liveness immediately.
 func (c *Core) AddProfileFromURI(uri string) (string, error) {
-	d, err := profile.ParseURI(uri)
+	drafts, err := profile.ParseURIs(uri)
 	if err != nil {
 		return "", err
 	}
-	name, err := c.profiles.Add(d.Label, d.Kind, d.Config)
-	if err != nil {
-		return "", err
+	if len(drafts) == 0 {
+		return "", fmt.Errorf("профили не найдены в ссылке")
+	}
+	var firstName string
+	for _, d := range drafts {
+		name, err := c.profiles.Add(d.Label, d.Kind, d.Config)
+		if err != nil {
+			return "", err
+		}
+		if firstName == "" {
+			firstName = name
+		}
 	}
 	if err := c.rebuildConfig(); err != nil {
-		return name, err
+		return firstName, err
 	}
 	if vpn.ClashAPIRunning() {
 		_ = c.vpn.Restart()
 	}
-	return name, nil
+	return firstName, nil
 }
 
 // ExportProfileURI serialises a stored profile back into a shareable import

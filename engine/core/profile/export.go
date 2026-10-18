@@ -269,6 +269,25 @@ func writeTransportQuery(q url.Values, tr map[string]interface{}) {
 				q.Set("host", h)
 			}
 		}
+	case "httpupgrade":
+		q.Set("type", "httpupgrade")
+		if path := cfgString(tr, "path"); path != "" {
+			q.Set("path", path)
+		}
+		if h := cfgString(tr, "host"); h != "" {
+			q.Set("host", h)
+		}
+	case "xhttp", "splithttp":
+		q.Set("type", "xhttp")
+		if path := cfgString(tr, "path"); path != "" {
+			q.Set("path", path)
+		}
+		if h := cfgString(tr, "host"); h != "" {
+			q.Set("host", h)
+		}
+		if m := cfgString(tr, "mode"); m != "" {
+			q.Set("mode", m)
+		}
 	}
 }
 

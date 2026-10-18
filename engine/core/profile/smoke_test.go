@@ -136,3 +136,48 @@ func TestAddOnFreshInstall(t *testing.T) {
 		t.Fatalf("List = %+v, want the profile just added (%q)", list, name)
 	}
 }
+
+func TestParseVLESS_XHTTP_Zovfy(t *testing.T) {
+	uri := "vless://c18cef8f-a1a7-4f58-b32b-21d54b8ad4f2@web.zovfy.ru:443?encryption=none&type=xhttp&path=%2Fartwork%2Fapi%2Fuploads%2Fsync-3cfbabbe8c07&mode=auto&security=tls&sni=web.zovfy.ru&fp=edge&alpn=h2%2Chttp%2F1.1#%F0%9F%87%AB%F0%9F%87%AE%D0%A4%D0%98%D0%9D%D0%9A%D0%90%20%D0%A1%D0%A2%D0%90%D0%A0%D0%90%D0%AF"
+	d, err := ParseURI(uri)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if d.Kind != KindOutbound {
+		t.Fatalf("kind = %q, want %q", d.Kind, KindOutbound)
+	}
+	if d.Label != "🇫🇮ФИНКА СТАРАЯ" {
+		t.Fatalf("label = %q", d.Label)
+	}
+	tr, ok := d.Config["transport"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing transport block in config: %#v", d.Config)
+	}
+	if tr["type"] != "xhttp" || tr["path"] != "/artwork/api/uploads/sync-3cfbabbe8c07" || tr["mode"] != "auto" || tr["host"] != "web.zovfy.ru" {
+		t.Fatalf("unexpected transport: %#v", tr)
+	}
+	tls, ok := d.Config["tls"].(map[string]interface{})
+	if !ok || tls["server_name"] != "web.zovfy.ru" {
+		t.Fatalf("unexpected tls: %#v", tls)
+	}
+}
+
+func TestParseURIs_Subscription(t *testing.T) {
+	sub := "dmxlc3M6Ly9jMThjZWY4Zi1hMWE3LTRmNTgtYjMyYi0yMWQ1NGI4YWQ0ZjJAYWxpbmF6YWJyaWtvc2luYS56b3ZmeS5ydTo0NDM/ZW5jcnlwdGlvbj1ub25lJnR5cGU9eGh0dHAmcGF0aD0lMkZhcnR3b3JrJTJGYXBpJTJGdXBsb2FkcyUyRnN5bmMtM2NmYmFiYmU1YzAzJm1vZGU9YXV0byZzZWN1cml0eT10bHMmc25pPWFsaW5hemFicmlrb3NpbmEuem92ZnkucnUmZnA9ZWRnZSZhbHBuPWgyJTJDaHR0cCUyRjEuMSMlRjAlOUYlODclQUIlRjAlOUYlODclQUUlMjAlRDAlQTQlRDAlOTglRDAlOUQlRDAlOUElRDAlOTAKdmxlc3M6Ly9jMThjZWY4Zi1hMWE3LTRmNTgtYjMyYi0yMWQ1NGI4YWQ0ZjJAcG9tb3lrYS5pbmMuem92ZnkucnU6NDQzP2VuY3J5cHRpb249bm9uZSZ0eXBlPXhodHRwJnBhdGg9JTJGYXJ0d29yayUyRmFwaSUyRnVwbG9hZHMmbW9kZT1hdXRvJnNlY3VyaXR5PXRscyZzbmk9cG9tb3lrYS5pbmMuem92ZnkucnUmZnA9ZWRnZSZhbHBuPWgyJTJDaHR0cCUyRjEuMSMlRjAlOUYlODclQTklRjAlOUYlODclQUElMjAlRDAlOTMlRDAlOTUlRDAlQTAlRDAlOUMlRDAlOTAlRDAlOUQlRDAlQTElRDAlOUElMjBYSFRUUAp2bGVzczovL2MxOGNlZjhmLWExYTctNGY1OC1iMzJiLTIxZDU0YjhhZDRmMkB3ZWIuem92ZnkucnU6NDQzP2VuY3J5cHRpb249bm9uZSZ0eXBlPXhodHRwJnBhdGg9JTJGYXJ0d29yayUyRmFwaSUyRnVwbG9hZHMlMkZzeW5jLTNjZmJhYmJlOGMwNyZtb2RlPWF1dG8mc2VjdXJpdHk9dGxzJnNuaT13ZWIuem92ZnkucnUmZnA9ZWRnZSZhbHBuPWgyJTJDaHR0cCUyRjEuMSMlRjAlOUYlODclQUIlRjAlOUYlODclQUUlRDAlQTQlRDAlOTglRDAlOUQlRDAlOUElRDAlOTAlMjAlRDAlQTElRDAlQTIlRDAlOTAlRDAlQTAlRDAlOTAlRDAlQUYKc3M6Ly9ZMmhoWTJoaE1qQXRhV1YwWmkxd2IyeDVNVE13TlRwWlRYSmhla1pIY1VaeVEzbzFYMGRIWXpCb05sbGlUa1I2UldjdFFYbGlkdz09QG5pa3lkYToxMjM0IyVEMCU5RSVEMSU4MSVEMSU4MiVEMCVCMCVEMCVCQiVEMCVCRSVEMSU4MSVEMSU4QyUyMCVEMCU5NCVEMCU5RC4lMjAxMCUyMCU1QlBlbG1lc2thX3MlNUQ="
+	drafts, err := ParseURIs(sub)
+	if err != nil {
+		t.Fatalf("ParseURIs: %v", err)
+	}
+	if len(drafts) != 4 {
+		t.Fatalf("expected 4 drafts, got %d", len(drafts))
+	}
+	if drafts[0].Label != "🇫🇮 ФИНКА" {
+		t.Errorf("draft[0].Label = %q", drafts[0].Label)
+	}
+	if drafts[1].Label != "🇩🇪 ГЕРМАНСК XHTTP" {
+		t.Errorf("draft[1].Label = %q", drafts[1].Label)
+	}
+	if drafts[2].Label != "🇫🇮ФИНКА СТАРАЯ" {
+		t.Errorf("draft[2].Label = %q", drafts[2].Label)
+	}
+}

@@ -90,14 +90,16 @@ func (l *Logger) Tail() string {
 }
 
 var (
-	reConnID    = regexp.MustCompile(`\[\d+\s+\d+ms\]`)
+	reConnID    = regexp.MustCompile(`\[\d+\s+[^\]]+\]`)
 	reTimestamp = regexp.MustCompile(`^\+\d{4}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?\s+`)
+	reIPPort    = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{4,5}\b`)
 )
 
 func normalizeLogLine(s string) string {
 	s = reTimestamp.ReplaceAllString(s, "")
 	s = reConnID.ReplaceAllString(s, "[id]")
-	return s
+	s = reIPPort.ReplaceAllString(s, "[ip:port]")
+	return strings.TrimSpace(s)
 }
 
 // PipeLines reads r line-by-line and logs each non-empty line with the given

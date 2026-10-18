@@ -23,8 +23,9 @@ class LogOverlay extends StatefulWidget {
 
 class _LogOverlayState extends State<LogOverlay> {
   static final _ansi = RegExp(r'\x1B\[[0-9;]*[A-Za-z]');
-  static final _reConnId = RegExp(r'\[\d+\s+\d+ms\]');
+  static final _reConnId = RegExp(r'\[\d+\s+[^\]]+\]');
   static final _reTs = RegExp(r'^\+?\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2}(\.\d+)?\s*');
+  static final _reIpPort = RegExp(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{4,5}\b');
   static const _errorMarkers = [
     'FATAL',
     'ERROR',
@@ -37,6 +38,7 @@ class _LogOverlayState extends State<LogOverlay> {
     var res = s.replaceAll(_ansi, '');
     res = res.replaceAll(_reTs, '');
     res = res.replaceAll(_reConnId, '[id]');
+    res = res.replaceAll(_reIpPort, '[ip:port]');
     return res.trim();
   }
 
