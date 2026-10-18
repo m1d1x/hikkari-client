@@ -71,17 +71,20 @@ func (s *Store) Write(cfg map[string]interface{}) error {
 // route.rules and route.final are left to RebuildActive/ApplyRouting, which
 // overwrite them from profiles.json + routing.json on every change.
 func tunInbound() map[string]interface{} {
-	in := map[string]interface{}{
-		"tag":        "tun-in",
-		"type":       "tun",
-		"address":    []interface{}{"172.19.0.1/30"},
-		"auto_route": true,
-		"stack":      "gvisor",
-		"mtu":        1500,
+	stack := "gvisor"
+	if runtime.GOOS == "windows" {
+		stack = "mixed"
 	}
-	// strict_route is a Linux/Windows-only knob in sing-box; leaving it in
-	// on macOS just gets the core rejected at startup.
-	if runtime.GOOS != "darwin" {
+	in := map[string]interface{}{
+		"tag":                      "tun-in",
+		"type":                     "tun",
+		"address":                  []interface{}{"172.19.0.1/30"},
+		"auto_route":               true,
+		"stack":                    stack,
+		"mtu":                      1400,
+		"endpoint_independent_nat": true,
+	}
+	if runtime.GOOS == "linux" {
 		in["strict_route"] = true
 	}
 	return in
@@ -356,6 +359,10 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 	cfg["log"] = map[string]interface{}{
 		"level":     "warn",
 		"timestamp": true,
+	}
+	// Always heal tun-in inbound for optimal MTU (1400), mixed stack, and FullCone NAT.
+	cfg["inbounds"] = []interface{}{
+		tunInbound(),
 	}
 }
 
