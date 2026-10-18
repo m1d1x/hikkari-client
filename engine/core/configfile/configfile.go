@@ -102,7 +102,7 @@ func DefaultConfig() map[string]interface{} {
 			"servers": []interface{}{
 				map[string]interface{}{
 					"tag":    "dns-remote",
-					"type":   "udp",
+					"type":   "tcp",
 					"server": "1.1.1.1",
 					"detour": SelectorTag,
 				},
@@ -214,6 +214,11 @@ func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, autoMode bo
 	for _, p := range specs {
 		profileTags = append(profileTags, p.Tag)
 		if p.Kind == kindOutbound {
+			if t, ok := p.Config["type"].(string); ok && t == "vless" {
+				if _, has := p.Config["packet_encoding"]; !has {
+					p.Config["packet_encoding"] = "xudp"
+				}
+			}
 			outboundBlocks = append(outboundBlocks, p.Config)
 			hasOutbound = true
 		} else {
