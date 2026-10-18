@@ -102,7 +102,7 @@ func DefaultConfig() map[string]interface{} {
 			"servers": []interface{}{
 				map[string]interface{}{
 					"tag":    "dns-remote",
-					"type":   "tls",
+					"type":   "udp",
 					"server": "1.1.1.1",
 					"detour": SelectorTag,
 				},
