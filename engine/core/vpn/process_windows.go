@@ -4,7 +4,10 @@ package vpn
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -14,6 +17,21 @@ import (
 )
 
 const createNoWindow = 0x08000000
+
+// unblockBinary removes the NTFS Zone.Identifier stream (Mark of the Web)
+// which triggers Windows Smart App Control ("An Application Control policy has blocked this file").
+func unblockBinary(path string) {
+	_ = os.Remove(path + ":Zone.Identifier")
+	dir := filepath.Dir(path)
+	_ = os.Remove(filepath.Join(dir, "wintun.dll:Zone.Identifier"))
+	_ = os.Remove(filepath.Join(dir, "libcronet.dll:Zone.Identifier"))
+	_ = os.Remove(filepath.Join(dir, "nekkobox.dll:Zone.Identifier"))
+
+	psCmd := fmt.Sprintf(`Unblock-File -LiteralPath "%s"`, path)
+	c := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
+	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	_ = c.Run()
+}
 
 // ProcessManager runs sing-box.exe as a hidden child process. The child is
 // wrapped in a Windows Job Object configured with
@@ -101,6 +119,7 @@ func (m *ProcessManager) Start() error {
 	// for orphans pre-dating that mechanism or for ones that somehow
 	// escaped (e.g. user manually launched sing-box.exe outside us).
 	m.killStrays()
+	unblockBinary(m.binPath)
 
 	cmd := exec.Command(m.binPath, "run", "-c", m.configPath)
 	cmd.Dir = m.workDir
@@ -111,6 +130,10 @@ func (m *ProcessManager) Start() error {
 
 	if err := cmd.Start(); err != nil {
 		m.log.Logf("vpn.Start: failed to start sing-box: %v", err)
+		errStr := err.Error()
+		if strings.Contains(errStr, "Application Control") || strings.Contains(errStr, "blocked this file") {
+			return fmt.Errorf("Windows Smart App Control заблокировал sing-box.exe. Разблокируйте sing-box.exe в свойствах файла или добавьте папку программы в исключения Защитника Windows")
+		}
 		return fmt.Errorf("не удалось запустить sing-box: %w", err)
 	}
 	m.cmd = cmd

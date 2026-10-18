@@ -94,6 +94,15 @@ jobs:
             Copy-Item -Force "archive/libcronet.dll" -Destination "$releaseDir/"
           }
 
+          # Helper batch script to unblock Smart App Control / Mark of the Web
+          @'
+@echo off
+echo [Hikkari] Unblocking downloaded files...
+powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0*' -Recurse | Unblock-File"
+echo [Hikkari] Files unblocked! Starting Hikkari...
+start "" "%~dp0nekkobox.exe"
+'@ | Out-File -FilePath "$releaseDir/unblock.bat" -Encoding ascii
+
           Write-Host "Release folder contents:"
           Get-ChildItem -Path $releaseDir
 
