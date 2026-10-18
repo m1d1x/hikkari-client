@@ -94,29 +94,28 @@ func DefaultConfig() map[string]interface{} {
 			"timestamp": true,
 		},
 		"dns": map[string]interface{}{
-			// Resolution goes through the active profile so DNS can't leak
-			// around the tunnel; detour is re-pointed at the selector (or
-			// urltest in auto mode) by rewriteRouteRefs on every rebuild.
-			// Server shape is the post-1.12 one (type/server instead of a
-			// URL in "address") — the legacy format is gone in sing-box 1.14.
 			"servers": []interface{}{
 				map[string]interface{}{
-					"tag":    "dns-remote",
-					"type":   "udp",
-					"server": "8.8.8.8",
-					"detour": SelectorTag,
+					"tag":         "fakeip-dns",
+					"type":        "fakeip",
+					"inet4_range": "198.18.0.0/15",
+					"inet6_range": "fc00::/18",
 				},
-				// No detour: since 1.12 sing-box refuses a detour to a plain
-				// "direct" outbound ("makes no sense"), and direct is what an
-				// undetoured server does anyway.
 				map[string]interface{}{
 					"tag":    "dns-direct",
 					"type":   "udp",
 					"server": "8.8.8.8",
 				},
 			},
-			"final":    "dns-remote",
-			"strategy": "prefer_ipv4",
+			"rules": []interface{}{
+				map[string]interface{}{
+					"inbound": []interface{}{"tun-in"},
+					"server":  "fakeip-dns",
+				},
+			},
+			"final":           "dns-direct",
+			"strategy":        "prefer_ipv4",
+			"reverse_mapping": true,
 		},
 		"inbounds": []interface{}{
 			tunInbound(),
@@ -144,7 +143,10 @@ func DefaultConfig() map[string]interface{} {
 			"clash_api": map[string]interface{}{
 				"external_controller": "127.0.0.1:9090",
 			},
-			"cache_file": map[string]interface{}{"enabled": true},
+			"cache_file": map[string]interface{}{
+				"enabled":      true,
+				"store_fakeip": true,
+			},
 		},
 	}
 }
@@ -214,12 +216,6 @@ func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, autoMode bo
 	for _, p := range specs {
 		profileTags = append(profileTags, p.Tag)
 		if p.Kind == kindOutbound {
-			if t, ok := p.Config["type"].(string); ok && t == "vless" {
-				pe, _ := p.Config["packet_encoding"].(string)
-				if pe == "" {
-					p.Config["packet_encoding"] = "xudp"
-				}
-			}
 			outboundBlocks = append(outboundBlocks, p.Config)
 			hasOutbound = true
 		} else {
@@ -324,15 +320,15 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 			}
 		}
 	}
-	// Always enforce canonical working UDP DNS (Google 8.8.8.8).
-	// This heals configs created by older versions where dns-remote had type="tls", "https", or "1.1.1.1".
+	// Always enforce canonical FakeIP DNS.
+	// This heals configs created by older versions and eliminates all UDP/XUDP DNS errors.
 	cfg["dns"] = map[string]interface{}{
 		"servers": []interface{}{
 			map[string]interface{}{
-				"tag":    "dns-remote",
-				"type":   "udp",
-				"server": "8.8.8.8",
-				"detour": head,
+				"tag":         "fakeip-dns",
+				"type":        "fakeip",
+				"inet4_range": "198.18.0.0/15",
+				"inet6_range": "fc00::/18",
 			},
 			map[string]interface{}{
 				"tag":    "dns-direct",
@@ -340,8 +336,20 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 				"server": "8.8.8.8",
 			},
 		},
-		"final":    "dns-remote",
-		"strategy": "prefer_ipv4",
+		"rules": []interface{}{
+			map[string]interface{}{
+				"inbound": []interface{}{"tun-in"},
+				"server":  "fakeip-dns",
+			},
+		},
+		"final":           "dns-direct",
+		"strategy":        "prefer_ipv4",
+		"reverse_mapping": true,
+	}
+	if exp, ok := cfg["experimental"].(map[string]interface{}); ok {
+		if cache, ok := exp["cache_file"].(map[string]interface{}); ok {
+			cache["store_fakeip"] = true
+		}
 	}
 }
 

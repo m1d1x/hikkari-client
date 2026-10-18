@@ -128,11 +128,10 @@ func parseVLESS(u *url.URL) (Draft, error) {
 	}
 	q := u.Query()
 	cfg := map[string]interface{}{
-		"type":            "vless",
-		"server":          host,
-		"server_port":     port,
-		"uuid":            u.User.Username(),
-		"packet_encoding": "xudp",
+		"type":        "vless",
+		"server":      host,
+		"server_port": port,
+		"uuid":        u.User.Username(),
 	}
 	if pe := q.Get("packetEncoding"); pe != "" {
 		cfg["packet_encoding"] = pe
