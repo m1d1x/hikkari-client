@@ -102,8 +102,8 @@ func DefaultConfig() map[string]interface{} {
 			"servers": []interface{}{
 				map[string]interface{}{
 					"tag":    "dns-remote",
-					"type":   "https",
-					"server": "1.1.1.1",
+					"type":   "udp",
+					"server": "8.8.8.8",
 					"detour": SelectorTag,
 				},
 				// No detour: since 1.12 sing-box refuses a detour to a plain
@@ -112,7 +112,7 @@ func DefaultConfig() map[string]interface{} {
 				map[string]interface{}{
 					"tag":    "dns-direct",
 					"type":   "udp",
-					"server": "1.1.1.1",
+					"server": "8.8.8.8",
 				},
 			},
 			"final":    "dns-remote",
@@ -215,7 +215,8 @@ func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, autoMode bo
 		profileTags = append(profileTags, p.Tag)
 		if p.Kind == kindOutbound {
 			if t, ok := p.Config["type"].(string); ok && t == "vless" {
-				if _, has := p.Config["packet_encoding"]; !has {
+				pe, _ := p.Config["packet_encoding"].(string)
+				if pe == "" {
 					p.Config["packet_encoding"] = "xudp"
 				}
 			}
@@ -317,23 +318,30 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		if v, _ := route["final"].(string); shouldRewrite(v) || v == "" {
 			route["final"] = head
 		}
-	}
-	dns, ok := cfg["dns"].(map[string]interface{})
-	if !ok {
-		return
-	}
-	if v, _ := dns["final"].(string); shouldRewrite(v) {
-		dns["final"] = head
-	}
-	servers, _ := dns["servers"].([]interface{})
-	for _, srv := range servers {
-		m, ok := srv.(map[string]interface{})
-		if !ok {
-			continue
+		if _, has := route["default_domain_resolver"]; !has {
+			route["default_domain_resolver"] = map[string]interface{}{
+				"server": "dns-direct",
+			}
 		}
-		if v, _ := m["detour"].(string); shouldRewrite(v) {
-			m["detour"] = head
-		}
+	}
+	// Always enforce canonical working UDP DNS (Google 8.8.8.8).
+	// This heals configs created by older versions where dns-remote had type="tls", "https", or "1.1.1.1".
+	cfg["dns"] = map[string]interface{}{
+		"servers": []interface{}{
+			map[string]interface{}{
+				"tag":    "dns-remote",
+				"type":   "udp",
+				"server": "8.8.8.8",
+				"detour": head,
+			},
+			map[string]interface{}{
+				"tag":    "dns-direct",
+				"type":   "udp",
+				"server": "8.8.8.8",
+			},
+		},
+		"final":    "dns-remote",
+		"strategy": "prefer_ipv4",
 	}
 }
 
