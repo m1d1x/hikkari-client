@@ -1,11 +1,12 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package vpn
 
 import "fmt"
 
-// ProcessManager on non-Windows is an intentional stub. The mobile builds
-// will swap this out for a libbox-backed Manager; for now any call returns
+// ProcessManager on platforms without a native backend (Windows has one,
+// macOS has one) is an intentional stub. The mobile builds will swap this
+// out for a libbox-backed Manager; for now any call returns
 // an error so a misconfigured build fails loudly instead of silently
 // pretending to work.
 type ProcessManager struct {

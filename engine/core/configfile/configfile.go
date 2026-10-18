@@ -7,9 +7,12 @@ package configfile
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -31,8 +34,15 @@ func New(path string) *Store {
 func (s *Store) Path() string        { return s.path }
 func (s *Store) RoutingPath() string { return s.routingPath }
 
+// Read loads config.json. Like ReadRouting, a missing file yields the
+// default rather than an error — on a fresh install nothing has seeded one
+// yet, and RebuildActive must still be able to compile the user's first
+// profile into a working config.
 func (s *Store) Read() (map[string]interface{}, error) {
 	raw, err := os.ReadFile(s.path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return DefaultConfig(), nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +59,94 @@ func (s *Store) Write(cfg map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		return err
+	}
 	return os.WriteFile(s.path, out, 0644)
+}
+
+// DefaultConfig is the skeleton sing-box config a fresh install starts from:
+// everything the engine does NOT manage itself (log, dns, inbounds, the
+// Clash API binding, the sniff/hijack-dns prelude). Outbounds, endpoints,
+// route.rules and route.final are left to RebuildActive/ApplyRouting, which
+// overwrite them from profiles.json + routing.json on every change.
+func tunInbound() map[string]interface{} {
+	in := map[string]interface{}{
+		"tag":        "tun-in",
+		"type":       "tun",
+		"address":    []interface{}{"172.19.0.1/30"},
+		"auto_route": true,
+		"stack":      "gvisor",
+		"mtu":        9000,
+	}
+	// strict_route is a Linux/Windows-only knob in sing-box; leaving it in
+	// on macOS just gets the core rejected at startup.
+	if runtime.GOOS != "darwin" {
+		in["strict_route"] = true
+	}
+	return in
+}
+
+func DefaultConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"log": map[string]interface{}{
+			"level":     "info",
+			"timestamp": true,
+		},
+		"dns": map[string]interface{}{
+			// Resolution goes through the active profile so DNS can't leak
+			// around the tunnel; detour is re-pointed at the selector (or
+			// urltest in auto mode) by rewriteRouteRefs on every rebuild.
+			// Server shape is the post-1.12 one (type/server instead of a
+			// URL in "address") — the legacy format is gone in sing-box 1.14.
+			"servers": []interface{}{
+				map[string]interface{}{
+					"tag":    "dns-remote",
+					"type":   "tls",
+					"server": "1.1.1.1",
+					"detour": SelectorTag,
+				},
+				// No detour: since 1.12 sing-box refuses a detour to a plain
+				// "direct" outbound ("makes no sense"), and direct is what an
+				// undetoured server does anyway.
+				map[string]interface{}{
+					"tag":    "dns-direct",
+					"type":   "udp",
+					"server": "1.1.1.1",
+				},
+			},
+			"final":    "dns-remote",
+			"strategy": "prefer_ipv4",
+		},
+		"inbounds": []interface{}{
+			tunInbound(),
+		},
+		"outbounds": []interface{}{
+			map[string]interface{}{"tag": "direct", "type": "direct"},
+		},
+		"route": map[string]interface{}{
+			// Kept verbatim by ApplyRouting's prelude check.
+			"rules": []interface{}{
+				map[string]interface{}{"action": "sniff"},
+				map[string]interface{}{"protocol": "dns", "action": "hijack-dns"},
+			},
+			"final":                 SelectorTag,
+			"auto_detect_interface": true,
+			// Names in outbound configs (a profile's "server", say) resolve
+			// through this server, outside the tunnel. Mandatory since
+			// sing-box 1.14 — a missing one is a hard error.
+			"default_domain_resolver": map[string]interface{}{
+				"server": "dns-direct",
+			},
+		},
+		"experimental": map[string]interface{}{
+			// clashapi.DefaultBaseURL is hardcoded against this binding.
+			"clash_api": map[string]interface{}{
+				"external_controller": "127.0.0.1:9090",
+			},
+			"cache_file": map[string]interface{}{"enabled": true},
+		},
+	}
 }
 
 // ProfileSpec is the slice of profile data RebuildActive needs. Defined
@@ -453,4 +550,3 @@ func stripLineComments(raw []byte) []byte {
 	}
 	return []byte(strings.Join(out, "\n"))
 }
-

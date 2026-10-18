@@ -231,3 +231,47 @@ func TestNeedsSelectorMigration(t *testing.T) {
 		t.Fatal("expected no migration needed for selector config")
 	}
 }
+
+// RebuildActive on a machine that has never run the engine: no config.json,
+// no routing.json. It must compile the first profile into the DefaultConfig
+// skeleton instead of failing with ENOENT.
+func TestRebuildActive_FreshInstall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "config.json")
+	s := New(path)
+
+	specs := []ProfileSpec{{
+		Tag:  "p-germany",
+		Kind: "outbound",
+		Config: map[string]interface{}{
+			"tag": "p-germany", "type": "vless",
+			"server": "144.31.104.44", "server_port": 443,
+		},
+	}}
+	if err := s.RebuildActive(specs, "p-germany", false, nil); err != nil {
+		t.Fatalf("RebuildActive on fresh install: %v", err)
+	}
+
+	cfg, err := s.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg["inbounds"].([]interface{}); !ok {
+		t.Error("default skeleton lost its inbounds")
+	}
+	route, _ := cfg["route"].(map[string]interface{})
+	if f, _ := route["final"].(string); f != SelectorTag {
+		t.Errorf("route.final = %q, want %q", f, SelectorTag)
+	}
+	obs, _ := cfg["outbounds"].([]interface{})
+	tags := map[string]bool{}
+	for _, ob := range obs {
+		m, _ := ob.(map[string]interface{})
+		tag, _ := m["tag"].(string)
+		tags[tag] = true
+	}
+	for _, want := range []string{"direct", "p-germany", SelectorTag} {
+		if !tags[want] {
+			t.Errorf("outbound %q missing (got %v)", want, tags)
+		}
+	}
+}

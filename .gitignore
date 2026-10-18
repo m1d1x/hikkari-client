@@ -43,6 +43,7 @@ go.work.sum
 
 # === Native deps (распространяются отдельно, не коммитим) ===
 sing-box.exe
+sing-box
 wintun.dll
 dist/
 

@@ -1,0 +1,144 @@
+package configfile
+
+import (
+	"fmt"
+	"net/netip"
+	"net/url"
+	"strings"
+)
+
+// normalizeRouteValue validates and canonicalises one user-typed routing
+// entry before it reaches routing.json.
+//
+// Why this exists: every value in RouteList is compiled verbatim into a
+// sing-box route rule, and sing-box parses those rules at startup. A single
+// unparseable entry is not a soft error there — the core exits with FATAL
+// before it ever opens the TUN device, and the launchd supervisor restarts it
+// once a second forever. From the app's side that looks like nothing
+// happening at all. So the only safe place to reject bad input is here, at
+// the point the user types it, where an error message can still explain
+// itself.
+//
+// The categories match addToList: "domains", "ips", "processes".
+func normalizeRouteValue(category, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("пустое значение")
+	}
+	switch category {
+	case "ips":
+		return normalizeIPValue(value)
+	case "domains":
+		return normalizeDomainValue(value)
+	case "processes":
+		return value, nil
+	default:
+		return "", fmt.Errorf("неизвестная категория: %s", category)
+	}
+}
+
+// normalizeIPValue accepts either a bare address or a CIDR prefix and always
+// returns prefix form, which is what ip_cidr expects. A bare address becomes
+// a host prefix (/32 or /128) rather than being passed through: sing-box
+// accepts both, but storing one shape keeps dedup honest.
+func normalizeIPValue(value string) (string, error) {
+	if p, err := netip.ParsePrefix(value); err == nil {
+		return p.Masked().String(), nil
+	}
+	if a, err := netip.ParseAddr(value); err == nil {
+		return netip.PrefixFrom(a, a.BitLen()).String(), nil
+	}
+	// The mistake worth naming: a URL or domain typed into the ip field.
+	if host := hostFromURLish(value); host != "" && !isIPish(host) {
+		return "", fmt.Errorf(
+			"%q — это не ip: добавь %q во вкладку «домены»", value, host)
+	}
+	return "", fmt.Errorf(
+		"%q — не ip и не подсеть; примеры: 1.2.3.4, 192.168.0.0/16, 2001:db8::/32",
+		value)
+}
+
+// normalizeDomainValue reduces whatever the user pasted to the bare host
+// sing-box's domain_suffix matches against. A pasted link is the common case
+// — the list is usually built by copying addresses out of a browser or a
+// chat — so a scheme, a path, a port or a leading wildcard are stripped
+// instead of rejected.
+func normalizeDomainValue(value string) (string, error) {
+	host := value
+	if h := hostFromURLish(value); h != "" {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "*."), ".")
+	host = strings.TrimPrefix(host, ".")
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return "", fmt.Errorf("%q — не удалось извлечь домен", value)
+	}
+	if isIPish(host) {
+		return "", fmt.Errorf(
+			"%q — это ip: добавь его во вкладку «ip»", host)
+	}
+	if strings.ContainsAny(host, " \t/\\?#@") {
+		return "", fmt.Errorf("%q — не похоже на домен", value)
+	}
+	if !strings.Contains(host, ".") {
+		return "", fmt.Errorf("%q — домен без точки, нужен вид example.com", host)
+	}
+	return host, nil
+}
+
+// hostFromURLish pulls the host out of anything URL-shaped ("https://x/y",
+// "x.com/y", "x.com:443"), and returns "" when there is nothing to strip.
+func hostFromURLish(value string) string {
+	s := value
+	if !strings.Contains(s, "://") && strings.ContainsAny(s, "/?#") {
+		s = "//" + s // url.Parse needs an authority marker to see a host
+	} else if !strings.Contains(s, "://") {
+		return stripPort(s)
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return stripPort(u.Host)
+}
+
+// stripPort drops a trailing :port, leaving bracketless IPv6 and bare hosts
+// alone. netip does the IPv6 disambiguation: "2001:db8::1" has colons but no
+// port, "example.com:443" does.
+func stripPort(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "[") {
+		if i := strings.Index(s, "]"); i > 0 {
+			return s[1:i]
+		}
+		return s
+	}
+	if _, err := netip.ParseAddr(s); err == nil {
+		return s // bare IPv6, every colon belongs to the address
+	}
+	if i := strings.LastIndex(s, ":"); i > 0 {
+		if _, err := netip.ParseAddr(s[:i]); err == nil || !strings.Contains(s[:i], ":") {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+func isIPish(s string) bool {
+	if _, err := netip.ParseAddr(s); err == nil {
+		return true
+	}
+	_, err := netip.ParsePrefix(s)
+	return err == nil
+}
+
+// validRouteValue reports whether an entry already sitting in routing.json is
+// safe to compile into a rule. Used by sanitizeList to drop legacy garbage:
+// a routing.json written before this validation existed can hold a value that
+// kills the core on every start, and the user has no way to reach it from the
+// UI once the tunnel never comes up.
+func validRouteValue(category, value string) bool {
+	_, err := normalizeRouteValue(category, value)
+	return err == nil
+}

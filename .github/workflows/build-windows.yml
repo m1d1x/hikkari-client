@@ -1,0 +1,109 @@
+name: Build Windows Client
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: engine/go.sum
+
+      - name: Setup MinGW GCC for CGO
+        run: |
+          echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Prepare native binaries (sing-box & wintun)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "archive"
+
+          # 1. Download sing-box 1.14.3 for windows-amd64
+          Write-Host "Downloading sing-box..."
+          Invoke-WebRequest -Uri "https://github.com/SagerNet/sing-box/releases/download/v1.14.3/sing-box-1.14.3-windows-amd64.zip" -OutFile "sing-box.zip"
+          Expand-Archive -Path "sing-box.zip" -DestinationPath "temp_sb" -Force
+          Get-ChildItem -Path "temp_sb" -Recurse -Filter "sing-box.exe" | Select-Object -First 1 | Copy-Item -Destination "archive/sing-box.exe"
+          Get-ChildItem -Path "temp_sb" -Recurse -Filter "libcronet.dll" | Select-Object -First 1 | Copy-Item -Destination "archive/libcronet.dll"
+
+          # 2. Download wintun 0.14.1
+          Write-Host "Downloading wintun..."
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "wintun.zip"
+          Expand-Archive -Path "wintun.zip" -DestinationPath "temp_wintun" -Force
+          Copy-Item -Path "temp_wintun/wintun/bin/amd64/wintun.dll" -Destination "archive/wintun.dll"
+
+          # Cleanup temporary zip files
+          Remove-Item -Recurse -Force "temp_sb", "temp_wintun", "sing-box.zip", "wintun.zip"
+
+          Write-Host "Binaries ready in archive/:"
+          Get-ChildItem -Path "archive"
+
+      - name: Build Go Engine (nekkobox.dll)
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CC = "gcc"
+          cd engine
+          go build -buildmode=c-shared -o ../nekkobox.dll ./cmd/nekkobox-ffi
+          cd ..
+          if (-not (Test-Path "nekkobox.dll")) {
+            throw "nekkobox.dll was not generated!"
+          }
+          Write-Host "nekkobox.dll generated successfully."
+
+      - name: Build Flutter Windows App
+        shell: pwsh
+        run: |
+          cd app
+          flutter pub get
+          flutter build windows --release
+          cd ..
+
+      - name: Assemble Release Bundle
+        shell: pwsh
+        run: |
+          $releaseDir = "app/build/windows/x64/runner/Release"
+          if (-not (Test-Path $releaseDir)) {
+            throw "Release directory does not exist: $releaseDir"
+          }
+
+          # Ensure all engine and driver binaries are present in the release folder
+          Copy-Item -Force "nekkobox.dll" -Destination "$releaseDir/"
+          Copy-Item -Force "archive/sing-box.exe" -Destination "$releaseDir/"
+          Copy-Item -Force "archive/wintun.dll" -Destination "$releaseDir/"
+          if (Test-Path "archive/libcronet.dll") {
+            Copy-Item -Force "archive/libcronet.dll" -Destination "$releaseDir/"
+          }
+
+          Write-Host "Release folder contents:"
+          Get-ChildItem -Path $releaseDir
+
+          # Create zip archive
+          Compress-Archive -Path "$releaseDir/*" -DestinationPath "hikkari-windows-x64.zip" -Force
+          Write-Host "hikkari-windows-x64.zip created successfully."
+
+      - name: Upload Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hikkari-windows-x64
+          path: hikkari-windows-x64.zip
+          retention-days: 14

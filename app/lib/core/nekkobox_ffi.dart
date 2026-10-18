@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:ffi' as ffi;
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
@@ -62,7 +62,19 @@ class NekkoboxCoreFfi extends NekkoboxCore {
 
   static String _libName() {
     if (Platform.isWindows) return 'nekkobox.dll';
-    if (Platform.isMacOS) return 'libnekkobox.dylib';
+    if (Platform.isMacOS) {
+      // dyld does not search the executable's folder for a bare name, and
+      // inside a .app the dylib lives in Contents/Frameworks (one level up
+      // from Contents/MacOS) — so resolve it to an absolute path.
+      final exeDir = File(Platform.resolvedExecutable).parent;
+      for (final candidate in [
+        '${exeDir.parent.path}/Frameworks/libnekkobox.dylib',
+        '${exeDir.path}/libnekkobox.dylib',
+      ]) {
+        if (File(candidate).existsSync()) return candidate;
+      }
+      return 'libnekkobox.dylib';
+    }
     return 'libnekkobox.so';
   }
 

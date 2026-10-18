@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -90,6 +91,13 @@ type Checker struct {
 	running func() bool // true when the tunnel is up (from health)
 	ipqsKey string      // optional; empty → fraud-score step skipped
 
+	// One backoff per source: a quota-exhausted ip-api says nothing about
+	// ipapi.is, and the loop must not keep hammering either one at
+	// RefreshInterval once it starts refusing.
+	ipAPIBackoff   *probeBackoff
+	ipAPIIsBackoff *probeBackoff
+	ipqsBackoff    *probeBackoff
+
 	mu     sync.Mutex
 	cached Report
 }
@@ -97,10 +105,13 @@ type Checker struct {
 // New wires the checker. `running` gates probing; `ipqsKey` is optional.
 func New(log Logger, running func() bool, ipqsKey string) *Checker {
 	return &Checker{
-		log:     log,
-		running: running,
-		ipqsKey: strings.TrimSpace(ipqsKey),
-		cached:  Report{Verdict: "off", FraudScore: -1},
+		log:            log,
+		running:        running,
+		ipqsKey:        strings.TrimSpace(ipqsKey),
+		ipAPIBackoff:   newProbeBackoff("ip-api"),
+		ipAPIIsBackoff: newProbeBackoff("ipapi.is"),
+		ipqsBackoff:    newProbeBackoff("ipqs"),
+		cached:         Report{Verdict: "off", FraudScore: -1},
 	}
 }
 
@@ -153,24 +164,46 @@ func (c *Checker) probeOnce() Report {
 	rep.Running = true
 
 	// 1) exit IP + geo/ASN/ISP (ip-api, free). Goes through the tunnel.
+	// Everything downstream needs rep.IP, so a backoff here means there is
+	// nothing to build a fresh report from: serve the last good one instead
+	// of blanking the card for as long as the source stays down.
+	if ok, left := c.ipAPIBackoff.ready(); !ok {
+		return c.heldReport(left)
+	}
 	if err := c.fillIPAPI(&rep); err != nil {
+		c.noteProbeFailure(c.ipAPIBackoff, err)
+		if held, ok := c.held(); ok {
+			return held
+		}
 		rep.Verdict = "checking"
 		rep.Message = "проверяю выход…"
-		c.log.Logf("cleanliness: ip-api probe failed: %v", err)
 		return rep
 	}
+	c.ipAPIBackoff.succeed()
 	rep.Checked = true
 	rep.CheckedAt = time.Now().UTC().Format(time.RFC3339)
 
 	// 1b) ipapi.is — the real intelligence: datacenter/abuse/ASN-country.
-	if err := c.fillIPApiIs(&rep); err != nil {
-		c.log.Logf("cleanliness: ipapi.is probe failed: %v", err)
+	// Optional: a missing answer costs detail, not the report, so a backoff
+	// here just skips the step.
+	if ok, _ := c.ipAPIIsBackoff.ready(); ok {
+		if err := c.fillIPApiIs(&rep); err != nil {
+			c.noteProbeFailure(c.ipAPIIsBackoff, err)
+		} else {
+			c.ipAPIIsBackoff.succeed()
+		}
+	} else {
+		c.carryOverIntel(&rep)
 	}
 
 	// 2) optional IPQS fraud-score (only if a key is configured AND funded).
 	if c.ipqsKey != "" && rep.IP != "" {
-		if err := c.fillIPQS(&rep); err != nil {
-			c.log.Logf("cleanliness: ipqs probe skipped: %v", err)
+		if ok, _ := c.ipqsBackoff.ready(); ok {
+			if err := c.fillIPQS(&rep); err != nil {
+				c.noteProbeFailure(c.ipqsBackoff, err)
+			} else {
+				c.ipqsBackoff.succeed()
+			}
 		}
 	}
 
@@ -179,6 +212,115 @@ func (c *Checker) probeOnce() Report {
 
 	rep.Score, rep.Verdict, rep.Message, rep.Reasons = analyze(rep)
 	return rep
+}
+
+// rateLimited turns a throttling response into a rateLimitError, and any
+// other non-2xx into a plain error. Returns nil for a usable response.
+func rateLimited(source string, resp *http.Response) error {
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests,
+		resp.StatusCode == http.StatusServiceUnavailable:
+		return &rateLimitError{
+			source:     source,
+			status:     resp.StatusCode,
+			retryAfter: retryAfterFromResponse(resp),
+		}
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		return fmt.Errorf("%s: http %d", source, resp.StatusCode)
+	}
+	return nil
+}
+
+// noteProbeFailure records the failure against the source's backoff and logs
+// it. The log line is written on the first failure of a run and then only when
+// the delay grows, which is what turns a screenful of identical lines into a
+// readable history of one source going down.
+func (c *Checker) noteProbeFailure(b *probeBackoff, err error) {
+	var retryAfter time.Duration
+	if re, ok := err.(*rateLimitError); ok {
+		retryAfter = re.retryAfter
+	}
+	delay := b.fail(err.Error(), retryAfter)
+	failures, _ := b.state()
+	c.log.Logf("cleanliness: %s probe failed (%d in a row), next try in %s: %v",
+		b.name, failures, delay.Round(time.Second), err)
+}
+
+// held returns the last report that had real data in it, ready to be served
+// again while a source is backing off.
+func (c *Checker) held() (Report, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.cached.Checked || c.cached.IP == "" {
+		return Report{}, false
+	}
+	return c.cached, true
+}
+
+// heldReport serves the last good report during a backoff window, with the
+// remaining wait spelled out so the UI can explain why the numbers are not
+// moving. When there is nothing held yet (a backoff that started before the
+// first successful probe) it degrades to the plain "checking" state.
+func (c *Checker) heldReport(left time.Duration) Report {
+	held, ok := c.held()
+	if !ok {
+		return Report{
+			Running:    true,
+			FraudScore: -1,
+			Verdict:    "checking",
+			Message:    fmt.Sprintf("источник проверки недоступен, повтор через %s", left.Round(time.Second)),
+		}
+	}
+	held.Running = true
+	held.Message = fmt.Sprintf("данные от %s, источник недоступен — повтор через %s",
+		held.CheckedAt, left.Round(time.Second))
+	return held
+}
+
+// carryOverIntel copies the ipapi.is-derived fields from the last good report
+// into a fresh one, so skipping that source during a backoff does not read as
+// "this address is not a datacenter" — absence of the answer is not an answer.
+// Only applied when the address is unchanged; a new egress IP invalidates it.
+func (c *Checker) carryOverIntel(rep *Report) {
+	prev, ok := c.held()
+	if !ok || prev.IP != rep.IP {
+		return
+	}
+	rep.IsHosting = rep.IsHosting || prev.IsHosting
+	rep.IsVPN = rep.IsVPN || prev.IsVPN
+	rep.IsProxy = rep.IsProxy || prev.IsProxy
+	rep.IsTor = rep.IsTor || prev.IsTor
+	rep.IsAbuser = rep.IsAbuser || prev.IsAbuser
+	rep.IsMobile = rep.IsMobile || prev.IsMobile
+	rep.IsCrawler = rep.IsCrawler || prev.IsCrawler
+	if rep.ASNType == "" {
+		rep.ASNType = prev.ASNType
+	}
+	if rep.ASNCountry == "" {
+		rep.ASNCountry = prev.ASNCountry
+	}
+	if rep.AbuseEmail == "" {
+		rep.AbuseEmail = prev.AbuseEmail
+	}
+	if rep.AbuserLabel == "" {
+		rep.AbuserLabel = prev.AbuserLabel
+	}
+}
+
+// rateLimitError marks a failure the source itself timed for us, so the
+// backoff can use that number instead of its own escalation.
+type rateLimitError struct {
+	source     string
+	status     int
+	retryAfter time.Duration
+}
+
+func (e *rateLimitError) Error() string {
+	if e.retryAfter > 0 {
+		return fmt.Sprintf("%s: rate limited (http %d), retry after %s",
+			e.source, e.status, e.retryAfter.Round(time.Second))
+	}
+	return fmt.Sprintf("%s: rate limited (http %d)", e.source, e.status)
 }
 
 // ----- individual probes ---------------------------------------------------
@@ -190,6 +332,12 @@ func (c *Checker) fillIPAPI(rep *Report) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// ip-api answers 429 once its per-minute window is spent, and says in
+	// X-Ttl how many seconds are left in that window. Reporting it as a rate
+	// limit lets the backoff use that number instead of guessing.
+	if err := rateLimited("ip-api", resp); err != nil {
+		return err
+	}
 	body, _ := io.ReadAll(resp.Body)
 
 	var j struct {
@@ -229,6 +377,60 @@ func (c *Checker) fillIPAPI(rep *Report) error {
 	return nil
 }
 
+// ipapiOrg is one of ipapi.is's "company"/"asn" blocks. It is not always a
+// block: for an address with no company on record the API answers with an
+// empty string in that field instead of an object, and for some addresses
+// abuser_score comes back as a JSON number rather than the documented
+// "0.0586 (High)" string. Both shapes made the whole response fail to decode,
+// which dropped every flag the probe was there to collect — including the
+// datacenter and VPN ones the UI actually shows. Decoding leniently keeps a
+// partial answer partial instead of turning it into no answer at all.
+type ipapiOrg struct {
+	Type        string
+	Country     string
+	AbuserScore string
+}
+
+func (o *ipapiOrg) UnmarshalJSON(b []byte) error {
+	trimmed := strings.TrimSpace(string(b))
+	// "", null, or any other non-object: nothing on record, not an error.
+	if !strings.HasPrefix(trimmed, "{") {
+		*o = ipapiOrg{}
+		return nil
+	}
+	var raw struct {
+		Type        string          `json:"type"`
+		Country     string          `json:"country"`
+		AbuserScore json.RawMessage `json:"abuser_score"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	o.Type = raw.Type
+	o.Country = raw.Country
+	o.AbuserScore = jsonScalarToString(raw.AbuserScore)
+	return nil
+}
+
+// jsonScalarToString renders a string-or-number JSON scalar as a string, and
+// anything else (null, object, array, absent) as "". parseAbuserLabel reads
+// the result, and it already tolerates an empty input.
+func jsonScalarToString(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	var asString string
+	if err := json.Unmarshal(raw, &asString); err == nil {
+		return asString
+	}
+	var asNumber float64
+	if err := json.Unmarshal(raw, &asNumber); err == nil {
+		return strconv.FormatFloat(asNumber, 'f', -1, 64)
+	}
+	return ""
+}
+
 // fillIPApiIs enriches with ipapi.is — the source that actually catches VPS
 // providers (AEZA etc.) and abuse-feed membership. Merges flags (never
 // downgrades): if either source says datacenter, it's datacenter.
@@ -241,26 +443,22 @@ func (c *Checker) fillIPApiIs(rep *Report) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if err := rateLimited("ipapi.is", resp); err != nil {
+		return err
+	}
 	body, _ := io.ReadAll(resp.Body)
 
 	var j struct {
-		IsDatacenter bool `json:"is_datacenter"`
-		IsVPN        bool `json:"is_vpn"`
-		IsProxy      bool `json:"is_proxy"`
-		IsTor        bool `json:"is_tor"`
-		IsAbuser     bool `json:"is_abuser"`
-		IsMobile     bool `json:"is_mobile"`
-		IsCrawler    bool `json:"is_crawler"`
-		Company      struct {
-			Type        string `json:"type"`
-			AbuserScore string `json:"abuser_score"` // "0.0586 (High)"
-		} `json:"company"`
-		Asn struct {
-			Type        string `json:"type"`
-			Country     string `json:"country"`
-			AbuserScore string `json:"abuser_score"`
-		} `json:"asn"`
-		Abuse struct {
+		IsDatacenter bool     `json:"is_datacenter"`
+		IsVPN        bool     `json:"is_vpn"`
+		IsProxy      bool     `json:"is_proxy"`
+		IsTor        bool     `json:"is_tor"`
+		IsAbuser     bool     `json:"is_abuser"`
+		IsMobile     bool     `json:"is_mobile"`
+		IsCrawler    bool     `json:"is_crawler"`
+		Company      ipapiOrg `json:"company"`
+		Asn          ipapiOrg `json:"asn"`
+		Abuse        struct {
 			Email string `json:"email"`
 		} `json:"abuse"`
 	}
@@ -315,6 +513,9 @@ func (c *Checker) fillIPQS(rep *Report) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if err := rateLimited("ipqs", resp); err != nil {
+		return err
+	}
 	body, _ := io.ReadAll(resp.Body)
 
 	var j struct {

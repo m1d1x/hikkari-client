@@ -2,7 +2,7 @@
 // hands off to HomeScreen. Everything else is composed from screens/ and
 // widgets/.
 
-import 'dart:io' show File, Platform;
+import 'dart:io' show Directory, File, Platform;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -81,10 +81,22 @@ class _BootGateState extends State<_BootGate> {
     }
   }
 
-  /// Base directory for the engine — folder containing the running
-  /// executable. sing-box.exe, wintun.dll, config.json, profiles.json,
-  /// nekkobox.dll all live here.
-  String _baseDir() => File(Platform.resolvedExecutable).parent.path;
+  /// Base directory for the engine — everything it reads and writes
+  /// (config.json, profiles.json, logs, caches) lives here.
+  ///
+  /// On Windows that is simply the folder containing the running executable,
+  /// next to sing-box.exe, wintun.dll and nekkobox.dll. On macOS the
+  /// executable sits inside a signed .app bundle that must stay read-only, so
+  /// the engine's state goes to the usual per-user location instead.
+  String _baseDir() {
+    if (Platform.isMacOS) {
+      final home = Platform.environment['HOME'] ?? '';
+      final dir = Directory('$home/Library/Application Support/nekkobox');
+      dir.createSync(recursive: true);
+      return dir.path;
+    }
+    return File(Platform.resolvedExecutable).parent.path;
+  }
 
   @override
   void dispose() {

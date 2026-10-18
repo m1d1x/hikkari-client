@@ -7,8 +7,11 @@ package profile
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -119,8 +122,15 @@ func New(path string) *Store { return &Store{path: path} }
 
 func (s *Store) Path() string { return s.path }
 
+// Read loads profiles.json. A missing file is not an error: a fresh install
+// has no profiles yet, and the very first Add (an import link, say) has to
+// work without anything having seeded the file first — it materialises on
+// the following Write.
 func (s *Store) Read() (*File, error) {
 	raw, err := os.ReadFile(s.path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return &File{Profiles: []Profile{}}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +144,9 @@ func (s *Store) Read() (*File, error) {
 func (s *Store) Write(pf *File) error {
 	out, err := json.MarshalIndent(pf, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(s.path, out, 0644)

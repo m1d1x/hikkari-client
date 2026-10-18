@@ -39,7 +39,7 @@ type VPNFactory func(baseDir string, log vpn.LineLogger) vpn.Manager
 // DefaultVPNFactory is the desktop ProcessManager factory.
 func DefaultVPNFactory(baseDir string, log vpn.LineLogger) vpn.Manager {
 	return vpn.NewProcessManager(
-		filepath.Join(baseDir, "sing-box.exe"),
+		filepath.Join(baseDir, vpn.BinaryName),
 		filepath.Join(baseDir, "config.json"),
 		baseDir,
 		log,

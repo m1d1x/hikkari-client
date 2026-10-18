@@ -61,16 +61,26 @@ func (s RoutingState) sanitize() RoutingState {
 }
 
 func sanitizeList(l RouteList) RouteList {
-	if l.Domains == nil {
-		l.Domains = []string{}
-	}
-	if l.IPs == nil {
-		l.IPs = []string{}
-	}
-	if l.Processes == nil {
-		l.Processes = []string{}
-	}
+	l.Domains = keepValid("domains", l.Domains)
+	l.IPs = keepValid("ips", l.IPs)
+	l.Processes = keepValid("processes", l.Processes)
 	return l
+}
+
+// keepValid drops entries that no longer compile into a usable rule, and
+// never returns nil. Dropping is deliberate: an unparseable ip_cidr makes
+// sing-box exit FATAL on every start, so keeping such a value would leave the
+// tunnel permanently dead with no way for the user to edit it out. Only
+// routing.json files written before normalizeRouteValue existed can contain
+// one — AddRouteRule rejects them at the source now.
+func keepValid(category string, vals []string) []string {
+	out := make([]string, 0, len(vals))
+	for _, v := range vals {
+		if norm, err := normalizeRouteValue(category, v); err == nil {
+			out = append(out, norm)
+		}
+	}
+	return out
 }
 
 // ReadRouting loads routing.json. Missing file returns DefaultRoutingState
@@ -133,9 +143,9 @@ func (s *Store) SetRoutingMode(mode RoutingMode) error {
 // AddRouteRule appends a value to the (mode, category) list. Dedup is
 // case-insensitive to match the original whitelist behaviour.
 func (s *Store) AddRouteRule(mode RoutingMode, category, value string) error {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fmt.Errorf("пустое значение")
+	value, err := normalizeRouteValue(category, value)
+	if err != nil {
+		return err
 	}
 	state, err := s.ReadRouting()
 	if err != nil {
@@ -157,6 +167,12 @@ func (s *Store) AddRouteRule(mode RoutingMode, category, value string) error {
 // RemoveRouteRule removes a value from the (mode, category) list.
 // Removing something that isn't there is a no-op, not an error.
 func (s *Store) RemoveRouteRule(mode RoutingMode, category, value string) error {
+	// Normalise when possible so "1.2.3.4" deletes the stored "1.2.3.4/32";
+	// an unnormalisable value is still passed through, since a legacy entry
+	// has to stay deletable by its literal text.
+	if norm, err := normalizeRouteValue(category, value); err == nil {
+		value = norm
+	}
 	state, err := s.ReadRouting()
 	if err != nil {
 		return err

@@ -28,12 +28,14 @@ type Manager interface {
 
 // ClashAPIRunning is the source-of-truth liveness check shared by every
 // implementation: ask the sing-box Clash API whether the core is answering.
-// Returns true on HTTP 200 within 600ms.
+// Returns true on HTTP 200 within 2s — the budget is deliberately loose,
+// since a core that is busy pumping traffic can take a while to answer and
+// a false "not running" is expensive (see health's downStreakThreshold).
 //
 // NOTE: this only tells you the *process* is alive — it does NOT tell you
 // the tunnel is actually carrying traffic. Use the health package for that.
 func ClashAPIRunning() bool {
-	client := http.Client{Timeout: 600 * time.Millisecond}
+	client := http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get("http://127.0.0.1:9090/version")
 	if err != nil {
 		return false

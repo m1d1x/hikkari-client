@@ -2,6 +2,7 @@ package profile
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -109,5 +110,29 @@ func TestParseShadowsocks_Base64Userinfo(t *testing.T) {
 	}
 	if d.Config["method"] != "aes-256-gcm" || d.Config["password"] != "hunter2" {
 		t.Fatalf("got method=%v password=%v", d.Config["method"], d.Config["password"])
+	}
+}
+
+// A fresh install has no profiles.json — the first import must still work
+// and materialise the file (regression: Add used to fail with ENOENT).
+func TestAddOnFreshInstall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "profiles.json")
+	s := New(path)
+
+	if s.Exists() {
+		t.Fatal("profiles.json should not exist yet")
+	}
+	name, err := s.Add("Germany", KindOutbound, map[string]interface{}{
+		"type": "vless", "server": "144.31.104.44", "server_port": 443,
+	})
+	if err != nil {
+		t.Fatalf("Add on empty store: %v", err)
+	}
+	list, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Name != name {
+		t.Fatalf("List = %+v, want the profile just added (%q)", list, name)
 	}
 }
