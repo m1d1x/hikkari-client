@@ -413,7 +413,7 @@ class AppState extends ChangeNotifier {
       // Strip ANSI color codes that sing-box embeds (e.g. \x1b[31mFATAL\x1b[0m).
       final line = raw.replaceAll(RegExp(r'\x1B\[[0-9;]*[A-Za-z]'), '');
       if (line.contains('FATAL') ||
-          line.contains('[singbox.err]') ||
+          (line.contains('[singbox.err]') && !line.contains(' INFO ') && !line.contains(' DEBUG ')) ||
           line.contains('failed to start') ||
           line.contains('Access is denied')) {
         lastErr = line.trim();

@@ -311,7 +311,11 @@ func buildTLS(q url.Values, fallbackSNI string) map[string]interface{} {
 			tls["alpn"] = out
 		}
 	}
-	if fp := q.Get("fp"); fp != "" {
+	fp := q.Get("fp")
+	if fp == "" && security == "reality" {
+		fp = "chrome"
+	}
+	if fp != "" {
 		tls["utls"] = map[string]interface{}{
 			"enabled":     true,
 			"fingerprint": fp,

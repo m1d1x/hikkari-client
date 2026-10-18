@@ -77,7 +77,7 @@ func tunInbound() map[string]interface{} {
 		"address":    []interface{}{"172.19.0.1/30"},
 		"auto_route": true,
 		"stack":      "gvisor",
-		"mtu":        9000,
+		"mtu":        1500,
 	}
 	// strict_route is a Linux/Windows-only knob in sing-box; leaving it in
 	// on macOS just gets the core rejected at startup.

@@ -4,10 +4,12 @@
 package logging
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -87,24 +89,54 @@ func (l *Logger) Tail() string {
 	return string(data)
 }
 
+var (
+	reConnID    = regexp.MustCompile(`\[\d+\s+\d+ms\]`)
+	reTimestamp = regexp.MustCompile(`^\+\d{4}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?\s+`)
+)
+
+func normalizeLogLine(s string) string {
+	s = reTimestamp.ReplaceAllString(s, "")
+	s = reConnID.ReplaceAllString(s, "[id]")
+	return s
+}
+
 // PipeLines reads r line-by-line and logs each non-empty line with the given
-// tag prefix. Used to fan a child process's stdout/stderr into our log.
+// tag prefix. Consecutive identical/repetitive messages are collapsed so the
+// log does not get flooded by thousands of duplicate connection messages.
 func (l *Logger) PipeLines(tag string, r io.ReadCloser) {
 	defer r.Close()
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			for _, ln := range strings.Split(strings.TrimRight(string(buf[:n]), "\n"), "\n") {
-				if ln = strings.TrimSpace(ln); ln != "" {
-					l.Logf("[%s] %s", tag, ln)
-				}
-			}
+	scanner := bufio.NewScanner(r)
+	var lastCore string
+	var count int
+
+	flush := func() {
+		if count > 1 {
+			l.Logf("[%s] ... previous message repeated %d times", tag, count-1)
 		}
-		if err != nil {
-			return
-		}
+		count = 0
 	}
+
+	for scanner.Scan() {
+		ln := strings.TrimSpace(scanner.Text())
+		if ln == "" {
+			continue
+		}
+		core := normalizeLogLine(ln)
+		if core == lastCore && core != "" {
+			count++
+			if count >= 100 {
+				flush()
+				lastCore = core
+				count = 1
+			}
+			continue
+		}
+		flush()
+		lastCore = core
+		count = 1
+		l.Logf("[%s] %s", tag, ln)
+	}
+	flush()
 }
 
 // Close releases the underlying file. Safe to call multiple times.

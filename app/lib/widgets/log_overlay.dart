@@ -23,14 +23,22 @@ class LogOverlay extends StatefulWidget {
 
 class _LogOverlayState extends State<LogOverlay> {
   static final _ansi = RegExp(r'\x1B\[[0-9;]*[A-Za-z]');
+  static final _reConnId = RegExp(r'\[\d+\s+\d+ms\]');
+  static final _reTs = RegExp(r'^\+?\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2}(\.\d+)?\s*');
   static const _errorMarkers = [
     'FATAL',
-    '[singbox.err]',
+    'ERROR',
     'Access is denied',
     'failed to',
     'panic',
-    'error',
   ];
+
+  static String _normalize(String s) {
+    var res = s.replaceAll(_ansi, '');
+    res = res.replaceAll(_reTs, '');
+    res = res.replaceAll(_reConnId, '[id]');
+    return res.trim();
+  }
 
   Timer? _timer;
   final _scroll = ScrollController();
@@ -66,13 +74,35 @@ class _LogOverlayState extends State<LogOverlay> {
   Future<void> _refresh() async {
     final tail = await context.read<AppState>().logTail();
     if (!mounted) return;
-    final lines = tail
+    final rawLines = tail
         .split('\n')
         .map((l) => l.replaceAll(_ansi, '').trimRight())
         .where((l) => l.isNotEmpty)
         .toList();
+
+    final collapsed = <String>[];
+    String? lastNorm;
+    int repeats = 1;
+
+    for (final l in rawLines) {
+      final norm = _normalize(l);
+      if (norm == lastNorm && norm.isNotEmpty) {
+        repeats++;
+      } else {
+        if (lastNorm != null && repeats > 1) {
+          collapsed[collapsed.length - 1] += ' ($repeats×)';
+        }
+        collapsed.add(l);
+        lastNorm = norm;
+        repeats = 1;
+      }
+    }
+    if (lastNorm != null && repeats > 1) {
+      collapsed[collapsed.length - 1] += ' ($repeats×)';
+    }
+
     if (mounted) {
-      setState(() => _lines = lines);
+      setState(() => _lines = collapsed);
       if (_autoscroll) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scroll.hasClients) {
@@ -84,6 +114,9 @@ class _LogOverlayState extends State<LogOverlay> {
   }
 
   bool _isError(String line) {
+    if (line.contains(' INFO ') || line.contains(' DEBUG ') || line.contains(' TRACE ')) {
+      return false;
+    }
     for (final m in _errorMarkers) {
       if (line.contains(m)) return true;
     }
