@@ -194,7 +194,7 @@ func (s *Store) RemoveRouteRule(mode RoutingMode, category, value string) error 
 // outbound tag that represents "via VPN" — typically AutoTag when
 // auto-fastest is on, else SelectorTag. The function:
 //
-//   - preserves any sniff/hijack-dns prelude rules and the ICMP/LAN→direct rules
+//   - preserves any sniff/hijack-dns prelude rules, the ICMP/LAN→direct rules and the QUIC reject
 //   - drops every other rule (they're owned by us)
 //   - inserts one rule per non-empty category (domain_suffix / ip_cidr /
 //     process_name) for the active mode's list, pointed at the right outbound

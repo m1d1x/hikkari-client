@@ -605,16 +605,34 @@ func ensureICMPDirectRule(cfg map[string]interface{}, enable bool) {
 		"ip_is_private": true,
 		"outbound":      "direct",
 	}
-	out := make([]interface{}, 0, len(cleaned)+2)
+	// QUIC (UDP 443) is rejected so browsers fall back to TCP within a
+	// second. Through the xhttp transport UDP rides inside TCP: QUIC's own
+	// retransmits and congestion control stack on top of TCP's, and every
+	// QUIC flow is one more xhttp session sharing the connections voice uses.
+	quicRule := map[string]interface{}{
+		"network": "udp",
+		"port":    443,
+		"action":  "reject",
+	}
+	out := make([]interface{}, 0, len(cleaned)+3)
 	out = append(out, cleaned[:insertAt]...)
-	out = append(out, icmpRule, lanRule)
+	out = append(out, icmpRule, lanRule, quicRule)
 	out = append(out, cleaned[insertAt:]...)
 	route["rules"] = out
 }
 
-// isSystemDirectRule reports whether m is one of the direct rules
-// ensureICMPDirectRule owns (ICMP, LAN). ApplyRouting preserves them.
+// isSystemDirectRule reports whether m is one of the rules
+// ensureICMPDirectRule owns (ICMP/LAN direct, QUIC reject). ApplyRouting
+// preserves them.
 func isSystemDirectRule(m map[string]interface{}) bool {
+	if action, _ := m["action"].(string); action == "reject" {
+		net, _ := m["network"].(string)
+		port, _ := m["port"].(int)
+		if pf, ok := m["port"].(float64); ok {
+			port = int(pf)
+		}
+		return net == "udp" && port == 443
+	}
 	if ob, _ := m["outbound"].(string); ob != "direct" {
 		return false
 	}
