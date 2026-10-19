@@ -70,6 +70,26 @@ func (s *Store) Write(cfg map[string]interface{}) error {
 // Clash API binding, the sniff/hijack-dns prelude). Outbounds, endpoints,
 // route.rules and route.final are left to RebuildActive/ApplyRouting, which
 // overwrite them from profiles.json + routing.json on every change.
+// singboxLogBlock is the log configuration handed to the core.
+//
+// level is "warn", not "info". At info the core narrates every connection,
+// every resolved process path and every tun packet, and all of it is piped
+// into the app's own log file: a four-minute session produced 414 KB, of
+// which 338 KB was this narration — about 100 KB a minute, which rotates the
+// 8 MB log away in under two hours and takes the app's own startup and health
+// lines with it. Per-connection detail for diagnostics comes from core/diag
+// (Clash API /connections), and the patched xhttp transport reports slow
+// uploads at warn level, so nothing needed is lost.
+//
+// No "disable_color": sing-box 1.14 rejects that field and refuses to start.
+// ANSI colour codes are stripped in logging.PipeLines instead.
+func singboxLogBlock() map[string]interface{} {
+	return map[string]interface{}{
+		"level":     "warn",
+		"timestamp": true,
+	}
+}
+
 func tunInbound() map[string]interface{} {
 	stack := "gvisor"
 	if runtime.GOOS == "windows" {
@@ -96,10 +116,7 @@ func tunInbound() map[string]interface{} {
 
 func DefaultConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"log": map[string]interface{}{
-			"level":     "info",
-			"timestamp": true,
-		},
+		"log": singboxLogBlock(),
 		"dns": map[string]interface{}{
 			"servers": []interface{}{
 				map[string]interface{}{
@@ -408,12 +425,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		"path":         "cache.db",
 		"store_fakeip": true,
 	}
-	// Diagnostic build: info level logs every connection with its process,
-	// outbound and rule. PipeLines collapses repeats, so the file stays sane.
-	cfg["log"] = map[string]interface{}{
-		"level":     "info",
-		"timestamp": true,
-	}
+	cfg["log"] = singboxLogBlock()
 	// Always heal tun-in inbound for optimal MTU (1360), mixed stack, and FullCone NAT.
 	cfg["inbounds"] = []interface{}{
 		tunInbound(),

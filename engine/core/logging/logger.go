@@ -90,6 +90,7 @@ func (l *Logger) Tail() string {
 }
 
 var (
+	reANSI      = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	reConnID    = regexp.MustCompile(`\[\d+\s+[^\]]+\]`)
 	reTimestamp = regexp.MustCompile(`^\+\d{4}\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(\.\d+)?\s+`)
 	reIPPort    = regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{4,5}\b`)
@@ -119,7 +120,9 @@ func (l *Logger) PipeLines(tag string, r io.ReadCloser) {
 	}
 
 	for scanner.Scan() {
-		ln := strings.TrimSpace(scanner.Text())
+		// sing-box colours its output even into a pipe; the escape codes
+		// bloat the file and defeat the repeat-collapsing below.
+		ln := strings.TrimSpace(reANSI.ReplaceAllString(scanner.Text(), ""))
 		if ln == "" {
 			continue
 		}
