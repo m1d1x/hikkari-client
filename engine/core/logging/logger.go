@@ -16,7 +16,7 @@ import (
 
 // MaxBytes is the rotation threshold. When the active log grows past this,
 // it gets renamed to <path>.old and a fresh file starts.
-const MaxBytes = 512 * 1024
+const MaxBytes = 8 * 1024 * 1024
 
 // TailBytes is the size of the tail returned by Tail() for in-app debugging.
 const TailBytes = 16 * 1024

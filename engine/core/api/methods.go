@@ -36,9 +36,36 @@ type (
 //  VPN control
 // ============================================================
 
-func (c *Core) StartVPN() error   { return c.vpn.Start() }
-func (c *Core) StopVPN() error    { return c.vpn.Stop() }
-func (c *Core) RestartVPN() error { return c.vpn.Restart() }
+// StartVPN re-applies config healing first: config.json is otherwise only
+// rewritten on profile/routing changes, so fixes shipped in a new build
+// (tun options, dns, log level) would never reach an existing install.
+func (c *Core) StartVPN() error {
+	if err := c.rebuildConfig(); err != nil {
+		c.logger.Logf("vpn.Start: config rebuild failed (starting with existing config): %v", err)
+	}
+	if err := c.vpn.Start(); err != nil {
+		return err
+	}
+	c.diag.AfterStart(c.ctx)
+	return nil
+}
+
+func (c *Core) StopVPN() error {
+	c.diag.Stop()
+	return c.vpn.Stop()
+}
+
+func (c *Core) RestartVPN() error {
+	c.diag.Stop()
+	if err := c.rebuildConfig(); err != nil {
+		c.logger.Logf("vpn.Restart: config rebuild failed (restarting with existing config): %v", err)
+	}
+	if err := c.vpn.Restart(); err != nil {
+		return err
+	}
+	c.diag.AfterStart(c.ctx)
+	return nil
+}
 
 // IsRunning asks the sing-box Clash API whether the core is answering.
 // It does NOT tell you the tunnel is actually carrying traffic — use Health

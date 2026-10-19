@@ -84,7 +84,11 @@ func tunInbound() map[string]interface{} {
 		"mtu":                      1360,
 		"endpoint_independent_nat": true,
 	}
-	if runtime.GOOS == "linux" {
+	// Windows: without strict_route, WebRTC apps (Discord voice) bind UDP
+	// sockets to the physical NIC's IP and Windows sends those packets out
+	// that NIC, bypassing the TUN entirely. strict_route adds WFP rules that
+	// force everything through tun-in (Clash Verge ships the same default).
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
 		in["strict_route"] = true
 	}
 	return in
@@ -93,7 +97,7 @@ func tunInbound() map[string]interface{} {
 func DefaultConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"log": map[string]interface{}{
-			"level":     "warn",
+			"level":     "info",
 			"timestamp": true,
 		},
 		"dns": map[string]interface{}{
@@ -139,6 +143,9 @@ func DefaultConfig() map[string]interface{} {
 			},
 			"final":                 SelectorTag,
 			"auto_detect_interface": true,
+			// Attaches process name/path to every connection (sing-box log
+			// lines and Clash API /connections) — core/diag relies on it.
+			"find_process": true,
 			// Names in outbound configs (a profile's "server", say) resolve
 			// through this server, outside the tunnel. Mandatory since
 			// sing-box 1.14 — a missing one is a hard error.
@@ -324,6 +331,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		if v, _ := route["final"].(string); shouldRewrite(v) || v == "" {
 			route["final"] = head
 		}
+		route["find_process"] = true
 		if _, has := route["default_domain_resolver"]; !has {
 			route["default_domain_resolver"] = map[string]interface{}{
 				"server": "dns-direct",
@@ -383,9 +391,10 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		"path":         "cache.db",
 		"store_fakeip": true,
 	}
-	// Enforce quiet log level (warn) to eliminate packet-level connection spam.
+	// Diagnostic build: info level logs every connection with its process,
+	// outbound and rule. PipeLines collapses repeats, so the file stays sane.
 	cfg["log"] = map[string]interface{}{
-		"level":     "warn",
+		"level":     "info",
 		"timestamp": true,
 	}
 	// Always heal tun-in inbound for optimal MTU (1360), mixed stack, and FullCone NAT.

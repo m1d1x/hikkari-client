@@ -27,6 +27,7 @@ import (
 	"NekkoVPN/core/logging"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/uptime"
+	"NekkoVPN/core/diag"
 	"NekkoVPN/core/vpn"
 )
 
@@ -66,6 +67,7 @@ type Core struct {
 	// (YouTube, Discord, …) measured through the active profile — kept
 	// separate from the per-profile uptime tracker above.
 	serviceUptime *uptime.Tracker
+	diag          *diag.Runner
 
 	customServicesMu   sync.RWMutex
 	customServicesPath string
@@ -109,6 +111,7 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	c.configs = configfile.New(filepath.Join(baseDir, "config.json"))
 	c.profiles = profile.New(filepath.Join(baseDir, "profiles.json"))
 	c.vpn = factory(baseDir, c.logger)
+	c.diag = diag.New(c.logger, filepath.Join(baseDir, "config.json"))
 	c.health = health.New(
 		filepath.Join(baseDir, "direct-ip.txt"),
 		c.logger,
@@ -142,6 +145,7 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	// side of the FFI boundary must never wait on network.
 	go c.health.Run(c.ctx)
 	go c.cleanliness.Run(c.ctx)
+	go c.diag.Baseline()
 
 	c.logger.Logf("=== api.Core init, baseDir=%s ===", baseDir)
 	return nil
