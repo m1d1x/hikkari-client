@@ -113,21 +113,27 @@ func (r *Runner) loop(ctx context.Context) {
 	runCommands(r.log, "post", postCommands())
 	r.probeRound(ctx)
 
-	deadline := time.Now().Add(10 * time.Minute)
+	// Dense for the first 10 minutes, then once a minute for the whole
+	// session: degradations show up after 20+ minutes too, and a log that
+	// stops early cannot show what changed.
+	started := time.Now()
 	tick := 0
-	for time.Now().Before(deadline) {
-		if !sleepCtx(ctx, 20*time.Second) {
+	for {
+		every := 20 * time.Second
+		if time.Since(started) > 10*time.Minute {
+			every = time.Minute
+		}
+		if !sleepCtx(ctx, every) {
 			return
 		}
 		tick++
-		r.log.Logf("[diag] ----- periodic #%d -----", tick)
+		r.log.Logf("[diag] ----- periodic #%d (%s in) -----", tick, time.Since(started).Round(time.Second))
 		r.connections()
 		runCommands(r.log, "periodic", periodicCommands())
-		if tick%3 == 0 {
+		if time.Since(started) <= 10*time.Minute && tick%3 == 0 || tick%5 == 0 {
 			r.probeRound(ctx)
 		}
 	}
-	r.log.Logf("[diag] periodic diagnostics finished (10 min)")
 }
 
 func (r *Runner) probeRound(ctx context.Context) {
