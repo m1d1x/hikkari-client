@@ -81,7 +81,7 @@ func tunInbound() map[string]interface{} {
 		"address":                  []interface{}{"172.19.0.1/30"},
 		"auto_route":               true,
 		"stack":                    stack,
-		"mtu":                      1400,
+		"mtu":                      1360,
 		"endpoint_independent_nat": true,
 	}
 	if runtime.GOOS == "linux" {
@@ -102,12 +102,11 @@ func DefaultConfig() map[string]interface{} {
 					"tag":         "fakeip-dns",
 					"type":        "fakeip",
 					"inet4_range": "198.18.0.0/15",
-					"inet6_range": "fc00::/18",
 				},
 				map[string]interface{}{
 					"tag":    "dns-direct",
-					"type":   "udp",
-					"server": "8.8.8.8",
+					"type":   "local",
+					"detour": "direct",
 				},
 			},
 			"rules": []interface{}{
@@ -117,7 +116,7 @@ func DefaultConfig() map[string]interface{} {
 				},
 			},
 			"final":           "dns-direct",
-			"strategy":        "prefer_ipv4",
+			"strategy":        "ipv4_only",
 			"reverse_mapping": true,
 		},
 		"inbounds": []interface{}{
@@ -129,7 +128,10 @@ func DefaultConfig() map[string]interface{} {
 		"route": map[string]interface{}{
 			// Kept verbatim by ApplyRouting's prelude check.
 			"rules": []interface{}{
-				map[string]interface{}{"action": "sniff"},
+				map[string]interface{}{
+					"action": "sniff",
+					"port":   []interface{}{80, 443, 8080, 8443},
+				},
 				map[string]interface{}{"protocol": "dns", "action": "hijack-dns"},
 			},
 			"final":                 SelectorTag,
@@ -323,21 +325,32 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 				"server": "dns-direct",
 			}
 		}
+		// Ensure sniff does not stall UDP VoIP/game ports (Discord, WebRTC).
+		if rules, ok := route["rules"].([]interface{}); ok {
+			for i, r := range rules {
+				if m, ok := r.(map[string]interface{}); ok {
+					if action, _ := m["action"].(string); action == "sniff" {
+						m["port"] = []interface{}{80, 443, 8080, 8443}
+						rules[i] = m
+					}
+				}
+			}
+			route["rules"] = rules
+		}
 	}
-	// Always enforce canonical FakeIP DNS.
-	// This heals configs created by older versions and eliminates all UDP/XUDP DNS errors.
+	// Always enforce canonical FakeIP DNS (IPv4 only, local direct resolver).
+	// Eliminates UDP 53 foreign drops by TSPU and dual-stack ICE timeouts in Discord.
 	cfg["dns"] = map[string]interface{}{
 		"servers": []interface{}{
 			map[string]interface{}{
 				"tag":         "fakeip-dns",
 				"type":        "fakeip",
 				"inet4_range": "198.18.0.0/15",
-				"inet6_range": "fc00::/18",
 			},
 			map[string]interface{}{
 				"tag":    "dns-direct",
-				"type":   "udp",
-				"server": "8.8.8.8",
+				"type":   "local",
+				"detour": "direct",
 			},
 		},
 		"rules": []interface{}{
@@ -347,7 +360,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 			},
 		},
 		"final":           "dns-direct",
-		"strategy":        "prefer_ipv4",
+		"strategy":        "ipv4_only",
 		"reverse_mapping": true,
 	}
 	if exp, ok := cfg["experimental"].(map[string]interface{}); ok {
@@ -360,7 +373,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		"level":     "warn",
 		"timestamp": true,
 	}
-	// Always heal tun-in inbound for optimal MTU (1400), mixed stack, and FullCone NAT.
+	// Always heal tun-in inbound for optimal MTU (1360), mixed stack, and FullCone NAT.
 	cfg["inbounds"] = []interface{}{
 		tunInbound(),
 	}

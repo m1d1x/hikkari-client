@@ -275,3 +275,80 @@ func TestRebuildActive_FreshInstall(t *testing.T) {
 		}
 	}
 }
+
+func TestRebuildActive_HealsVoipAndDns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "config.json")
+	s := New(path)
+
+	specs := []ProfileSpec{{
+		Tag:  "p-germany",
+		Kind: "outbound",
+		Config: map[string]interface{}{
+			"tag": "p-germany", "type": "vless",
+			"server": "web.zovfy.ru", "server_port": 443,
+		},
+	}}
+	if err := s.RebuildActive(specs, "p-germany", false, nil); err != nil {
+		t.Fatalf("RebuildActive: %v", err)
+	}
+
+	cfg, err := s.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify DNS
+	dns, _ := cfg["dns"].(map[string]interface{})
+	if strat, _ := dns["strategy"].(string); strat != "ipv4_only" {
+		t.Errorf("dns.strategy = %q, want ipv4_only", strat)
+	}
+	servers, _ := dns["servers"].([]interface{})
+	for _, srv := range servers {
+		m, _ := srv.(map[string]interface{})
+		tag, _ := m["tag"].(string)
+		if tag == "fakeip-dns" {
+			if _, hasV6 := m["inet6_range"]; hasV6 {
+				t.Error("fakeip-dns should not have inet6_range (causes dual-stack ICE timeouts)")
+			}
+		}
+		if tag == "dns-direct" {
+			if typ, _ := m["type"].(string); typ != "local" {
+				t.Errorf("dns-direct type = %q, want local", typ)
+			}
+		}
+	}
+
+	// Verify TUN Inbound
+	inbounds, _ := cfg["inbounds"].([]interface{})
+	if len(inbounds) == 0 {
+		t.Fatal("no inbounds found")
+	}
+	in, _ := inbounds[0].(map[string]interface{})
+	var mtu int
+	switch v := in["mtu"].(type) {
+	case float64:
+		mtu = int(v)
+	case int:
+		mtu = v
+	}
+	if mtu != 1360 {
+		t.Errorf("inbound mtu = %v, want 1360", in["mtu"])
+	}
+	if ein, _ := in["endpoint_independent_nat"].(bool); !ein {
+		t.Error("endpoint_independent_nat should be true for VoIP/games")
+	}
+
+	// Verify route.rules sniff port scoping
+	route, _ := cfg["route"].(map[string]interface{})
+	rules, _ := route["rules"].([]interface{})
+	for _, r := range rules {
+		m, _ := r.(map[string]interface{})
+		if action, _ := m["action"].(string); action == "sniff" {
+			ports, _ := m["port"].([]interface{})
+			if len(ports) == 0 {
+				t.Error("sniff rule must be scoped to web ports so UDP VoIP/game packets are not delayed")
+			}
+		}
+	}
+}
+
