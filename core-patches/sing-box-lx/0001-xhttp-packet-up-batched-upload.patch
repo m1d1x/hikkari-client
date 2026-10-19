@@ -1,0 +1,124 @@
+diff --git a/transport/v2rayxhttp/conn.go b/transport/v2rayxhttp/conn.go
+index 3bc5a0e..1f44810 100644
+--- a/transport/v2rayxhttp/conn.go
++++ b/transport/v2rayxhttp/conn.go
+@@ -798,8 +798,21 @@ type packetConn struct {
+ 	// cancel kills the conn-scoped request context (lx: SPEC 072): the pending
+ 	// download RoundTrip and any in-flight upload POST die with the conn.
+ 	cancel context.CancelFunc
++
++	// hikkari: batched upload. Write only appends to upBuf; one uploader
++	// goroutine drains it, so everything written while a POST is in flight
++	// leaves in the next POST (Xray/mihomo behaviour). Without this every
++	// Write costs a full RTT and a 50 pps UDP stream (voice) queues forever.
++	upMu      sync.Mutex
++	upCond    *sync.Cond
++	upBuf     []byte
++	upErr     error
++	upStarted bool
+ }
+ 
++// packetUpMaxBuffered bounds the pending upload bytes; Write blocks above it.
++const packetUpMaxBuffered = 4 << 20
++
+ func newPacketConn(ctx context.Context, client *Client, sessionID string, serverAddr M.Socksaddr, xmux *xmuxRelease) *packetConn {
+ 	conn := &packetConn{
+ 		ctx:        ctx,
+@@ -810,6 +823,7 @@ func newPacketConn(ctx context.Context, client *Client, sessionID string, server
+ 		created:    make(chan struct{}),
+ 		serverAddr: serverAddr,
+ 	}
++	conn.upCond = sync.NewCond(&conn.upMu)
+ 	conn.readDeadline = newReadDeadline(func() {
+ 		conn.breaker.localClosed.Store(true) // lx: SPEC 076 — our teardown, not a remote failure
+ 		select {
+@@ -861,27 +875,72 @@ func (c *packetConn) Read(b []byte) (int, error) {
+ 	return n, c.breaker.outboundErr(hideTransportError(err), c.readDeadline) // lx: SPEC 082, 094, 104 — after noteRead: the breaker classifies the raw error
+ }
+ 
+-// Write delivers a write as one or more sequential upload POSTs. A write larger
+-// than sc_max_each_post_bytes is split into multiple sequenced packets; successive
+-// posts are throttled by sc_min_posts_interval_ms (anti-burst). Each packet carries
+-// the payload per uplink_data_placement.
++// Write queues b for upload and returns immediately (hikkari: batched
++// upload). The uploader goroutine sends the queue as sequential POSTs of at
++// most sc_max_each_post_bytes each; sc_min_posts_interval_ms still throttles
++// them. An upload failure surfaces on the next Write.
+ func (c *packetConn) Write(b []byte) (int, error) {
+-	maxEach := c.client.meta.scMaxEachPostBytes.rand()
+-	if maxEach <= 0 {
+-		maxEach = len(b)
+-	}
+-	written := 0
+-	for written < len(b) {
+-		end := written + maxEach
+-		if end > len(b) {
+-			end = len(b)
++	c.upMu.Lock()
++	defer c.upMu.Unlock()
++	if !c.upStarted {
++		c.upStarted = true
++		go c.uploadLoop()
++		go func() {
++			<-c.ctx.Done()
++			c.upMu.Lock()
++			if c.upErr == nil {
++				c.upErr = net.ErrClosed
++			}
++			c.upMu.Unlock()
++			c.upCond.Broadcast()
++		}()
++	}
++	for c.upErr == nil && len(c.upBuf) > 0 && len(c.upBuf)+len(b) > packetUpMaxBuffered {
++		c.upCond.Wait()
++	}
++	if c.upErr != nil {
++		return 0, c.upErr
++	}
++	c.upBuf = append(c.upBuf, b...)
++	c.upCond.Broadcast()
++	return len(b), nil
++}
++
++func (c *packetConn) uploadLoop() {
++	for {
++		c.upMu.Lock()
++		for c.upErr == nil && len(c.upBuf) == 0 {
++			c.upCond.Wait()
++		}
++		if c.upErr != nil {
++			c.upMu.Unlock()
++			return
++		}
++		maxEach := c.client.meta.scMaxEachPostBytes.rand()
++		n := len(c.upBuf)
++		if maxEach > 0 && n > maxEach {
++			n = maxEach
+ 		}
+-		if err := c.sendPacket(b[written:end]); err != nil {
+-			return written, err
++		chunk := make([]byte, n)
++		copy(chunk, c.upBuf[:n])
++		c.upBuf = append(c.upBuf[:0], c.upBuf[n:]...)
++		c.upCond.Broadcast()
++		c.upMu.Unlock()
++
++		if err := c.sendPacket(chunk); err != nil {
++			c.upMu.Lock()
++			if c.upErr == nil {
++				c.upErr = err
++			}
++			c.upBuf = nil
++			c.upMu.Unlock()
++			c.upCond.Broadcast()
++			if c.cancel != nil {
++				c.cancel()
++			}
++			return
+ 		}
+-		written = end
+ 	}
+-	return written, nil
+ }
+ 
+ // sendPacket posts a single sequenced upload chunk.
