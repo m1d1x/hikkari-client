@@ -22,14 +22,14 @@ type Sample struct {
 
 const (
 	// PingInterval is the *per-profile* window — every profile is probed
-	// once inside it. During development we keep this short (5s) so the
-	// graphs are visibly responsive; for shipped builds it should be bumped
-	// to 30-60s to be polite to the network.
-	PingInterval = 5 * time.Second
+	// once inside it. Each probe is a fresh connection through the tunnel
+	// (Clash API delay), so it competes with user traffic for the same
+	// transport; 30s keeps the graph useful at a sixth of the old load.
+	PingInterval = 30 * time.Second
 	// PingTimeoutMs is the per-probe deadline. Clash API uses this for the
 	// HTTP delay request; the TCP fallback uses the same value.
 	PingTimeoutMs = 2000
-	// HistoryMax is the rolling window length (≈25 min at 5s intervals).
+	// HistoryMax is the rolling window length (≈2.5 h at 30s intervals).
 	HistoryMax = 300
 )
 
@@ -217,21 +217,29 @@ type ServiceProbe interface {
 }
 
 // RunServices is a blocking background loop that probes each service
-// through the active profile's Clash API delay endpoint. The UI never
-// triggers pings — it only reads the history this loop writes.
-const ServicePingInterval = 10 * time.Second
+// through the active profile's Clash API delay endpoint. One round costs a
+// new tunnel connection per service (8 by default), so the background
+// cadence is slow; the UI's explicit ping (Core.PingServices) covers the
+// "check now" case.
+const ServicePingInterval = 5 * time.Minute
+
+// serviceFirstPing is the delay before the first background round, so the
+// history is not empty for the first ServicePingInterval after launch.
+const serviceFirstPing = 30 * time.Second
 
 // ServiceTargetProvider returns the current list of service targets to ping.
 // Called every tick so additions/removals are picked up without restart.
 type ServiceTargetProvider func() []ServiceTarget
 
 func (t *Tracker) RunServices(ctx context.Context, activeTag ActiveTagProvider, targets ServiceTargetProvider, probe ServiceProbe) {
+	wait := serviceFirstPing
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(ServicePingInterval):
+		case <-time.After(wait):
 		}
+		wait = ServicePingInterval
 		tag := activeTag()
 		if tag == "" {
 			continue

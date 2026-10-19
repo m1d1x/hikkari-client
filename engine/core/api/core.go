@@ -127,6 +127,13 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 		func() bool { return c.health.Probe().TunnelOK },
 		readOptionalKey(filepath.Join(baseDir, "ipqs-key.txt")),
 	)
+	c.cleanliness.SetChangeKey(func() string {
+		ip := c.health.Probe().IP
+		if ip == "" {
+			return ""
+		}
+		return ip + "|" + c.activeTagProvider()
+	})
 
 	c.health.LoadDirectIP()
 	c.ensureProfiles()

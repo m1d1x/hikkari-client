@@ -91,6 +91,13 @@ type Checker struct {
 	running func() bool // true when the tunnel is up (from health)
 	ipqsKey string      // optional; empty → fraud-score step skipped
 
+	// changeKey identifies "the same exit" (egress IP + active profile).
+	// A finished report is only redone when it changes: every probe is a
+	// set of HTTPS requests through the tunnel, and an IP's reputation does
+	// not change every 20 seconds. Nil → probe every tick (old behaviour).
+	changeKey  func() string
+	checkedKey string
+
 	// One backoff per source: a quota-exhausted ip-api says nothing about
 	// ipapi.is, and the loop must not keep hammering either one at
 	// RefreshInterval once it starts refusing.
@@ -113,6 +120,13 @@ func New(log Logger, running func() bool, ipqsKey string) *Checker {
 		ipqsBackoff:    newProbeBackoff("ipqs"),
 		cached:         Report{Verdict: "off", FraudScore: -1},
 	}
+}
+
+// SetChangeKey installs the "has the exit changed" key; see Checker.changeKey.
+func (c *Checker) SetChangeKey(key func() string) {
+	c.mu.Lock()
+	c.changeKey = key
+	c.mu.Unlock()
 }
 
 // Report returns the most recent snapshot. Lock-free-ish fast path.
@@ -138,9 +152,26 @@ func (c *Checker) Run(ctx context.Context) {
 }
 
 func (c *Checker) refresh() {
+	c.mu.Lock()
+	keyFn, checkedKey, cached := c.changeKey, c.checkedKey, c.cached
+	c.mu.Unlock()
+	key := ""
+	if keyFn != nil {
+		key = keyFn()
+		// Same exit as the last finished report, tunnel still up: nothing
+		// to learn from another round of requests through it.
+		if key != "" && key == checkedKey && cached.Checked && c.running != nil && c.running() {
+			return
+		}
+	}
 	rep := c.probeOnce()
 	c.mu.Lock()
 	c.cached = rep
+	if rep.Checked {
+		c.checkedKey = key
+	} else {
+		c.checkedKey = ""
+	}
 	c.mu.Unlock()
 }
 

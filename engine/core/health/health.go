@@ -19,8 +19,17 @@ import (
 )
 
 // RefreshInterval is how often the background loop reprobes. Health() —
-// the public read — is now instant; the actual I/O happens here.
+// the public read — is now instant; the actual I/O happens here. Each pass
+// only asks the local Clash API whether the core is alive; the egress IP is
+// fetched far less often (see EgressInterval).
 const RefreshInterval = 2 * time.Second
+
+// EgressInterval is how often the egress IP is re-fetched while nothing
+// changes. Every fetch goes through the tunnel, and at the old 2s cadence
+// this probe alone was ~30 tunnel sessions a minute competing with user
+// traffic (Discord voice) for the same transport. It is also fetched at
+// once whenever the core comes up or goes down, or the last probe failed.
+const EgressInterval = 60 * time.Second
 
 // Consecutive-failure thresholds. A single failed probe means nothing: the
 // Clash API can miss its 2s budget while the core is busy, and one HTTPS
@@ -96,6 +105,9 @@ type Checker struct {
 	resolvedHostsAt time.Time
 
 	cached Info // last full Probe result; served by [Probe]
+
+	lastEgressAt time.Time // when the egress IP was last fetched
+	lastRunning  bool      // core liveness seen by the previous pass
 }
 
 func New(directIPPath string, log Logger, vpnHosts VPNHostProvider) *Checker {
@@ -200,6 +212,25 @@ func (c *Checker) probeOnce() Info {
 		return cached
 	}
 
+	// Core started or stopped since the last pass: connections kept alive
+	// from the other side of that change would report the wrong path (an
+	// ISP-routed connection reused after the tunnel came up keeps answering
+	// with the ISP IP), so drop them and re-fetch right away.
+	c.mu.Lock()
+	flipped := hi.Running != c.lastRunning
+	c.lastRunning = hi.Running
+	due := flipped || time.Since(c.lastEgressAt) >= EgressInterval
+	c.mu.Unlock()
+	if flipped {
+		egressTransport.CloseIdleConnections()
+	}
+	if !due && cached.Status != "" && cached.Status != "connecting" && cached.Running == hi.Running {
+		return cached
+	}
+	c.mu.Lock()
+	c.lastEgressAt = time.Now()
+	c.mu.Unlock()
+
 	if !hi.Running {
 		hi.Status = "off"
 		hi.Message = "ядро не запущено"
@@ -214,6 +245,9 @@ func (c *Checker) probeOnce() Info {
 	ip, err := fetchExternalIP()
 	if err != nil || ip == "" {
 		c.mu.Lock()
+		// Retry on the next pass instead of in EgressInterval: the streak
+		// threshold below counts consecutive failures, not minutes.
+		c.lastEgressAt = time.Time{}
 		c.egressStreak++
 		streak := c.egressStreak
 		c.mu.Unlock()
@@ -372,18 +406,17 @@ func (c *Checker) transition(status, ip, msg string) {
 	}
 }
 
-// freshHTTPClient returns a client whose every request opens a brand-new
-// TCP connection. Critical for the egress probe: if we reused a connection
-// established before sing-box took over routing, ipify would keep replying
-// with the ISP IP forever even though the tunnel is now up.
-func freshHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-			Proxy:             nil,
-		},
-	}
+// egressTransport keeps the egress probe's connections alive between
+// fetches, so a steady tunnel costs no new session per probe. A connection
+// opened before sing-box took over routing would keep reporting the ISP IP,
+// so probeOnce drops idle connections whenever the core starts or stops.
+var egressTransport = &http.Transport{
+	Proxy:           nil,
+	IdleConnTimeout: 3 * EgressInterval,
+}
+
+func egressHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: egressTransport}
 }
 
 // echoServices are the plain-text "what is my IP" endpoints the egress probe
@@ -441,7 +474,7 @@ func fetchExternalIP() (string, error) {
 }
 
 func fetchIPFrom(url string, timeout time.Duration) (string, error) {
-	resp, err := freshHTTPClient(timeout).Get(url)
+	resp, err := egressHTTPClient(timeout).Get(url)
 	if err != nil {
 		return "", err
 	}
