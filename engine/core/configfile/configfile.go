@@ -110,6 +110,10 @@ func DefaultConfig() map[string]interface{} {
 			},
 			"rules": []interface{}{
 				map[string]interface{}{
+					"domain_suffix": []interface{}{"zovfy.ru"},
+					"server":        "dns-direct",
+				},
+				map[string]interface{}{
 					"inbound": []interface{}{"tun-in"},
 					"server":  "fakeip-dns",
 				},
@@ -149,6 +153,7 @@ func DefaultConfig() map[string]interface{} {
 			},
 			"cache_file": map[string]interface{}{
 				"enabled":      true,
+				"path":         "cache.db",
 				"store_fakeip": true,
 			},
 		},
@@ -353,6 +358,10 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		},
 		"rules": []interface{}{
 			map[string]interface{}{
+				"domain_suffix": []interface{}{"zovfy.ru"},
+				"server":        "dns-direct",
+			},
+			map[string]interface{}{
 				"inbound": []interface{}{"tun-in"},
 				"server":  "fakeip-dns",
 			},
@@ -361,10 +370,18 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		"strategy":        "ipv4_only",
 		"reverse_mapping": true,
 	}
-	if exp, ok := cfg["experimental"].(map[string]interface{}); ok {
-		if cache, ok := exp["cache_file"].(map[string]interface{}); ok {
-			cache["store_fakeip"] = true
-		}
+	exp, ok := cfg["experimental"].(map[string]interface{})
+	if !ok {
+		exp = map[string]interface{}{}
+		cfg["experimental"] = exp
+	}
+	exp["clash_api"] = map[string]interface{}{
+		"external_controller": "127.0.0.1:9090",
+	}
+	exp["cache_file"] = map[string]interface{}{
+		"enabled":      true,
+		"path":         "cache.db",
+		"store_fakeip": true,
 	}
 	// Enforce quiet log level (warn) to eliminate packet-level connection spam.
 	cfg["log"] = map[string]interface{}{

@@ -120,6 +120,7 @@ func (m *ProcessManager) Start() error {
 	// escaped (e.g. user manually launched sing-box.exe outside us).
 	m.killStrays()
 	unblockBinary(m.binPath)
+	flushDNS()
 
 	cmd := exec.Command(m.binPath, "run", "-c", m.configPath)
 	cmd.Dir = m.workDir
@@ -199,8 +200,16 @@ func (m *ProcessManager) Stop() error {
 		m.cmd = nil
 	}
 	m.killStrays()
+	flushDNS()
 	m.log.Logf("vpn.Stop: done")
 	return nil
+}
+
+// flushDNS clears the Windows DNS resolver cache to wipe stale FakeIP entries.
+func flushDNS() {
+	cmd := exec.Command("ipconfig", "/flushdns")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	_ = cmd.Run()
 }
 
 func (m *ProcessManager) Restart() error {
