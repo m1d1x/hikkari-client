@@ -104,9 +104,8 @@ func DefaultConfig() map[string]interface{} {
 					"inet4_range": "198.18.0.0/15",
 				},
 				map[string]interface{}{
-					"tag":    "dns-direct",
-					"type":   "local",
-					"detour": "direct",
+					"tag":  "dns-direct",
+					"type": "local",
 				},
 			},
 			"rules": []interface{}{
@@ -348,9 +347,8 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 				"inet4_range": "198.18.0.0/15",
 			},
 			map[string]interface{}{
-				"tag":    "dns-direct",
-				"type":   "local",
-				"detour": "direct",
+				"tag":  "dns-direct",
+				"type": "local",
 			},
 		},
 		"rules": []interface{}{

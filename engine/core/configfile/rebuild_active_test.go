@@ -315,6 +315,9 @@ func TestRebuildActive_HealsVoipAndDns(t *testing.T) {
 			if typ, _ := m["type"].(string); typ != "local" {
 				t.Errorf("dns-direct type = %q, want local", typ)
 			}
+			if detour, _ := m["detour"].(string); detour != "" {
+				t.Errorf("dns-direct must not have detour: %q", detour)
+			}
 		}
 	}
 
