@@ -194,7 +194,7 @@ func (s *Store) RemoveRouteRule(mode RoutingMode, category, value string) error 
 // outbound tag that represents "via VPN" — typically AutoTag when
 // auto-fastest is on, else SelectorTag. The function:
 //
-//   - preserves any sniff/hijack-dns prelude rules and the ICMP→direct rule
+//   - preserves any sniff/hijack-dns prelude rules and the ICMP/LAN→direct rules
 //   - drops every other rule (they're owned by us)
 //   - inserts one rule per non-empty category (domain_suffix / ip_cidr /
 //     process_name) for the active mode's list, pointed at the right outbound
@@ -219,11 +219,9 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 			preserved = append(preserved, m)
 			continue
 		}
-		if net, _ := m["network"].(string); net == "icmp" {
-			if ob, _ := m["outbound"].(string); ob == "direct" {
-				preserved = append(preserved, m)
-				continue
-			}
+		if isSystemDirectRule(m) {
+			preserved = append(preserved, m)
+			continue
 		}
 		// everything else is ours from a previous compile — drop
 	}

@@ -117,6 +117,16 @@ func DefaultConfig() map[string]interface{} {
 					"domain_suffix": []interface{}{"zovfy.ru"},
 					"server":        "dns-direct",
 				},
+				// fakeip only answers A/AAAA; anything else (HTTPS, SVCB,
+				// PTR…) used to come back as an error the OS kept retrying
+				// every second. An empty NOERROR ends the retry loop.
+				map[string]interface{}{
+					"inbound":    []interface{}{"tun-in"},
+					"query_type": []interface{}{"A", "AAAA"},
+					"invert":     true,
+					"action":     "predefined",
+					"rcode":      "NOERROR",
+				},
 				map[string]interface{}{
 					"inbound": []interface{}{"tun-in"},
 					"server":  "fakeip-dns",
@@ -370,6 +380,13 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 				"server":        "dns-direct",
 			},
 			map[string]interface{}{
+				"inbound":    []interface{}{"tun-in"},
+				"query_type": []interface{}{"A", "AAAA"},
+				"invert":     true,
+				"action":     "predefined",
+				"rcode":      "NOERROR",
+			},
+			map[string]interface{}{
 				"inbound": []interface{}{"tun-in"},
 				"server":  "fakeip-dns",
 			},
@@ -541,9 +558,7 @@ func ensureICMPDirectRule(cfg map[string]interface{}, enable bool) {
 			cleaned = append(cleaned, r)
 			continue
 		}
-		net, _ := m["network"].(string)
-		ob, _ := m["outbound"].(string)
-		if net == "icmp" && ob == "direct" {
+		if isSystemDirectRule(m) {
 			continue
 		}
 		cleaned = append(cleaned, m)
@@ -570,11 +585,34 @@ func ensureICMPDirectRule(cfg map[string]interface{}, enable bool) {
 		}
 		break
 	}
-	out := make([]interface{}, 0, len(cleaned)+1)
+	// Private/LAN destinations never go through the tunnel: the exit server
+	// cannot reach the user's home network, and with strict_route on Windows
+	// every printer, NAS, LAN game or Delivery Optimization peer otherwise
+	// ends up dialed from the VPN server.
+	lanRule := map[string]interface{}{
+		"ip_is_private": true,
+		"outbound":      "direct",
+	}
+	out := make([]interface{}, 0, len(cleaned)+2)
 	out = append(out, cleaned[:insertAt]...)
-	out = append(out, icmpRule)
+	out = append(out, icmpRule, lanRule)
 	out = append(out, cleaned[insertAt:]...)
 	route["rules"] = out
+}
+
+// isSystemDirectRule reports whether m is one of the direct rules
+// ensureICMPDirectRule owns (ICMP, LAN). ApplyRouting preserves them.
+func isSystemDirectRule(m map[string]interface{}) bool {
+	if ob, _ := m["outbound"].(string); ob != "direct" {
+		return false
+	}
+	if net, _ := m["network"].(string); net == "icmp" {
+		return true
+	}
+	if lan, _ := m["ip_is_private"].(bool); lan {
+		return true
+	}
+	return false
 }
 
 // upsertTaggedOutbound returns the outbounds list with the entry tagged
