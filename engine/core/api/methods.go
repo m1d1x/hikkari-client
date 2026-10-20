@@ -6,8 +6,11 @@
 package api
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"sync"
+	"time"
 
 	"NekkoVPN/core/applist"
 	"NekkoVPN/core/cleanliness"
@@ -36,13 +39,35 @@ type (
 //  VPN control
 // ============================================================
 
-// StartVPN re-applies config healing first: config.json is otherwise only
+// prepareConfig runs right before the core starts, while the tunnel is
+// down. It re-applies config healing (config.json is otherwise only
 // rewritten on profile/routing changes, so fixes shipped in a new build
-// (tun options, dns, log level) would never reach an existing install.
-func (c *Core) StartVPN() error {
+// would never reach an existing install) and pins every VPN server to an
+// IP resolved now, outside the tunnel — see configfile.PinServerIPs.
+func (c *Core) prepareConfig(stage string) {
 	if err := c.rebuildConfig(); err != nil {
-		c.logger.Logf("vpn.Start: config rebuild failed (starting with existing config): %v", err)
+		c.logger.Logf("%s: config rebuild failed (starting with existing config): %v", stage, err)
 	}
+	vpn.FlushDNS()
+	results, err := c.configs.PinServerIPs(func(host string) ([]net.IP, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	})
+	if err != nil {
+		c.logger.Logf("%s: pin server IPs: %v", stage, err)
+	}
+	for _, r := range results {
+		if r.Err != nil {
+			c.logger.Logf("%s: server %s (%s) not pinned, core will resolve it: %v", stage, r.Host, r.Tag, r.Err)
+		} else {
+			c.logger.Logf("%s: server %s (%s) pinned to %s", stage, r.Host, r.Tag, r.IP)
+		}
+	}
+}
+
+func (c *Core) StartVPN() error {
+	c.prepareConfig("vpn.Start")
 	if err := c.vpn.Start(); err != nil {
 		return err
 	}
@@ -55,12 +80,20 @@ func (c *Core) StopVPN() error {
 	return c.vpn.Stop()
 }
 
+// RestartVPN stops the core before preparing the config, so the server
+// lookup in prepareConfig happens outside the tunnel.
 func (c *Core) RestartVPN() error {
+	c.logger.Logf("vpn.Restart: begin")
 	c.diag.Stop()
-	if err := c.rebuildConfig(); err != nil {
-		c.logger.Logf("vpn.Restart: config rebuild failed (restarting with existing config): %v", err)
+	if err := c.vpn.Stop(); err != nil {
+		c.logger.Logf("vpn.Restart: stop error: %v", err)
+		return err
 	}
-	if err := c.vpn.Restart(); err != nil {
+	time.Sleep(1500 * time.Millisecond)
+	c.prepareConfig("vpn.Restart")
+	err := c.vpn.Start()
+	c.logger.Logf("vpn.Restart: end, err=%v", err)
+	if err != nil {
 		return err
 	}
 	c.diag.AfterStart(c.ctx)

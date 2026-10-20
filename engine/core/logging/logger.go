@@ -15,8 +15,27 @@ import (
 )
 
 // MaxBytes is the rotation threshold. When the active log grows past this,
-// it gets renamed to <path>.old and a fresh file starts.
+// it becomes <path>.1 (older files shift to .2 … .<Keep>) and a fresh file
+// starts.
 const MaxBytes = 8 * 1024 * 1024
+
+// Keep is how many rotated files are kept. 5 × 8 MB covers about a week of
+// a session with diagnostics on, so a field tester can send the whole
+// history of a problem that showed up days ago.
+const Keep = 5
+
+// rotate shifts <path>.N → <path>.N+1 (dropping the oldest) and moves the
+// active file to <path>.1.
+func rotate(path string) {
+	_ = os.Remove(fmt.Sprintf("%s.%d", path, Keep))
+	for i := Keep - 1; i >= 1; i-- {
+		_ = os.Rename(fmt.Sprintf("%s.%d", path, i), fmt.Sprintf("%s.%d", path, i+1))
+	}
+	_ = os.Rename(path, path+".1")
+	// Pre-numbering builds kept a single <path>.old; drop it so testers
+	// do not send a stale file along with the current ones.
+	_ = os.Remove(path + ".old")
+}
 
 // TailBytes is the size of the tail returned by Tail() for in-app debugging.
 const TailBytes = 16 * 1024
@@ -37,7 +56,7 @@ type Logger struct {
 func New(path string) *Logger {
 	l := &Logger{path: path}
 	if fi, err := os.Stat(path); err == nil && fi.Size() > MaxBytes {
-		_ = os.Rename(path, path+".old")
+		rotate(path)
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -67,7 +86,7 @@ func (l *Logger) Logf(format string, args ...interface{}) {
 	l.bytes += int64(len(msg)) + 32
 	if l.file != nil && l.bytes > MaxBytes {
 		_ = l.file.Close()
-		_ = os.Rename(l.path, l.path+".old")
+		rotate(l.path)
 		f, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err == nil {
 			l.file = f

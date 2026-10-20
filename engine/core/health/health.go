@@ -31,6 +31,12 @@ const RefreshInterval = 2 * time.Second
 // once whenever the core comes up or goes down, or the last probe failed.
 const EgressInterval = 60 * time.Second
 
+// startupGrace is how long after the core comes up the egress probe waits:
+// the Clash API answers before sing-box has installed the TUN routes, and a
+// probe in that gap goes out through the ISP. Seen in the field as a false
+// "broken" right after start.
+const startupGrace = 3 * time.Second
+
 // Consecutive-failure thresholds. A single failed probe means nothing: the
 // Clash API can miss its 2s budget while the core is busy, and one HTTPS
 // request through a loaded tunnel times out routinely. Reacting to either
@@ -108,6 +114,7 @@ type Checker struct {
 
 	lastEgressAt time.Time // when the egress IP was last fetched
 	lastRunning  bool      // core liveness seen by the previous pass
+	upSince      time.Time // when the core was last seen coming up
 }
 
 func New(directIPPath string, log Logger, vpnHosts VPNHostProvider) *Checker {
@@ -219,12 +226,27 @@ func (c *Checker) probeOnce() Info {
 	c.mu.Lock()
 	flipped := hi.Running != c.lastRunning
 	c.lastRunning = hi.Running
+	if flipped && hi.Running {
+		c.upSince = time.Now()
+	}
+	upFor := time.Since(c.upSince)
 	due := flipped || time.Since(c.lastEgressAt) >= EgressInterval
 	c.mu.Unlock()
 	if flipped {
 		egressTransport.CloseIdleConnections()
 	}
-	if !due && cached.Status != "" && cached.Status != "connecting" && cached.Running == hi.Running {
+	// The Clash API answers before the TUN routes are in place; an egress
+	// probe in that window leaves through the ISP and reads as a leak.
+	if hi.Running && upFor < startupGrace {
+		hi.Status = "connecting"
+		hi.Message = "поднимаю туннель"
+		return hi
+	}
+	// Only a settled state is held between egress fetches. "broken" and
+	// "connecting" are re-checked every pass, so a wrong reading cannot
+	// stick for a whole EgressInterval.
+	settled := cached.Status == "ok" || cached.Status == "off"
+	if !due && settled && cached.Running == hi.Running {
 		return cached
 	}
 	c.mu.Lock()

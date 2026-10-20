@@ -42,7 +42,9 @@ func preCommands() []command {
 		ps(`Get-Process | Where-Object { $_.Name -match '` + vpnProcRe + `' } | Format-Table -AutoSize Name,Id,Path | Out-String -Width 400`),
 		ps(`Get-Service | Where-Object { $_.Name -match '` + vpnProcRe + `|wintun|tap' -or $_.DisplayName -match '` + vpnProcRe + `' } | Format-Table -AutoSize Name,Status,DisplayName | Out-String -Width 300`),
 		cmdc("netsh winhttp show proxy"),
-		cmdc(`reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyEnable & reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer`),
+		// Via PowerShell: Go's argument quoting and cmd's own parsing of
+		// nested quotes made `cmd /c reg query "..."` fail with "Invalid syntax".
+		ps(`Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' | Format-List ProxyEnable,ProxyServer,ProxyOverride,AutoConfigURL`),
 		cmdc("netsh advfirewall show allprofiles state"),
 		ps(`Get-MpComputerStatus | Format-List AMRunningMode,RealTimeProtectionEnabled`),
 		ps(`Get-NetUDPEndpoint | Where-Object { $_.LocalAddress -ne '::' } | Group-Object OwningProcess | ForEach-Object { $p = Get-Process -Id $_.Name -ErrorAction SilentlyContinue; "{0} pid={1} udp_sockets={2} {3}" -f $p.Name,$_.Name,$_.Count,(($_.Group | Select-Object -First 6 | ForEach-Object { "$($_.LocalAddress):$($_.LocalPort)" }) -join ',') }`),

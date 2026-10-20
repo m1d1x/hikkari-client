@@ -227,3 +227,8 @@ func (m *ProcessManager) Restart() error {
 func (m *ProcessManager) isAlive() bool {
 	return m.cmd != nil && m.cmd.Process != nil && m.cmd.ProcessState == nil
 }
+
+// FlushDNS clears the Windows resolver cache. Exported for the api layer,
+// which resolves the VPN server before the core starts: a cache still
+// holding fake-ip answers from the previous session would defeat that.
+func FlushDNS() { flushDNS() }
