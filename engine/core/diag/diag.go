@@ -329,6 +329,8 @@ func (r *Runner) connections() {
 		r.log.Logf("[diag:conns] error: %v", err)
 		return
 	}
+	listed := r.listedProcesses()
+	seenListed := map[string]bool{}
 	byProc := map[string]int{}
 	udp := 0
 	for _, c := range res.Connections {
@@ -339,14 +341,23 @@ func (r *Runner) connections() {
 		if i := strings.LastIndexAny(proc, `\/`); i >= 0 {
 			proc = proc[i+1:]
 		}
+		if want := listed[strings.ToLower(proc)]; want != "" {
+			seenListed[strings.ToLower(proc)] = true
+			// process_name matches case-sensitively: a rule spelled
+			// differently from the live binary silently never fires.
+			if want != proc {
+				r.log.Logf("[diag:proc] case mismatch: rule %q, process %q — rule will not match", want, proc)
+			}
+		}
 		byProc[proc+"/"+c.Metadata.Network]++
 		if c.Metadata.Network == "udp" {
 			udp++
 		}
-		// Full detail for UDP and anything Discord-related; TCP from other
-		// apps is only counted, otherwise a browser floods the log.
+		// Full detail for UDP, anything Discord-related and every process the
+		// user listed by name; TCP from other apps is only counted, otherwise
+		// a browser floods the log.
 		low := strings.ToLower(proc + c.Metadata.Host)
-		if c.Metadata.Network == "udp" || strings.Contains(low, "discord") {
+		if c.Metadata.Network == "udp" || strings.Contains(low, "discord") || listed[strings.ToLower(proc)] != "" {
 			r.log.Logf("[diag:conn] %s %s:%s → %s:%s host=%q proc=%q chains=%v rule=%q(%s) up=%d down=%d start=%s",
 				c.Metadata.Network, c.Metadata.SourceIP, c.Metadata.SourcePort,
 				c.Metadata.DestIP, c.Metadata.DestPort, c.Metadata.Host, proc,
@@ -362,8 +373,48 @@ func (r *Runner) connections() {
 	for _, k := range keys {
 		parts = append(parts, fmt.Sprintf("%s=%d", k, byProc[k]))
 	}
+	if len(listed) > 0 {
+		names := make([]string, 0, len(listed))
+		for k, v := range listed {
+			mark := "no conns"
+			if seenListed[k] {
+				mark = "active"
+			}
+			names = append(names, v+"="+mark)
+		}
+		sort.Strings(names)
+		r.log.Logf("[diag:proc] listed: %s", strings.Join(names, " "))
+	}
 	r.log.Logf("[diag:conns] total=%d udp=%d up=%d down=%d mem=%d by_proc: %s",
 		len(res.Connections), udp, res.UploadTotal, res.DownloadTotal, res.Memory, strings.Join(parts, " "))
+}
+
+// listedProcesses reads the process_name entries out of the live sing-box
+// config, keyed by lower case, so connections() can log every flow of a
+// process the user routed by name — the first thing to check when "the
+// anti-cheat still goes through the wrong proxy".
+func (r *Runner) listedProcesses() map[string]string {
+	out := map[string]string{}
+	raw, err := os.ReadFile(r.configPath)
+	if err != nil {
+		return out
+	}
+	var cfg struct {
+		Route struct {
+			Rules []struct {
+				ProcessName []string `json:"process_name"`
+			} `json:"rules"`
+		} `json:"route"`
+	}
+	if json.Unmarshal(raw, &cfg) != nil {
+		return out
+	}
+	for _, rule := range cfg.Route.Rules {
+		for _, n := range rule.ProcessName {
+			out[strings.ToLower(n)] = n
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------- stun

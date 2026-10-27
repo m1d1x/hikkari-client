@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -47,6 +48,8 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
   String _query = '';
   final _searchCtl = TextEditingController();
   final _scrollCtl = ScrollController();
+  final _manualCtl = TextEditingController();
+  bool _manualOpen = false;
   Timer? _pollTimer;
 
   @override
@@ -125,7 +128,83 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
     _pollTimer?.cancel();
     _searchCtl.dispose();
     _scrollCtl.dispose();
+    _manualCtl.dispose();
     super.dispose();
+  }
+
+  /// Имя процесса, вписанное руками: для того, чего нет ни в одном списке —
+  /// фоновые службы вроде EasyAntiCheat_EOS.exe, которые стартуют только
+  /// вместе с игрой. Путь обрезается до имени файла (движок делает то же),
+  /// на Windows без расширения дописывается .exe. Регистр берётся у живого
+  /// процесса, если такой найдётся: process_name в sing-box сравнивает
+  /// с учётом регистра.
+  String? _manualValue() {
+    var name = _manualCtl.text.trim().replaceAll('"', '');
+    final slash = name.lastIndexOf(RegExp(r'[\\/]'));
+    if (slash >= 0) name = name.substring(slash + 1);
+    name = name.trim();
+    if (name.isEmpty) return null;
+    if (Platform.isWindows && !name.contains('.')) name = '$name.exe';
+    final lower = name.toLowerCase();
+    for (final a in [..._mainApps, ..._extraApps]) {
+      if (a.exe.toLowerCase() == lower) return a.exe;
+    }
+    return name;
+  }
+
+  void _submitManual() {
+    final v = _manualValue();
+    if (v == null) return;
+    Navigator.of(context).pop(v);
+  }
+
+  Widget _manualFooter(NekkoTokens t) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: t.border)),
+      ),
+      child: _manualOpen
+          ? Row(
+              children: [
+                Expanded(
+                  child: NekkoTextField(
+                    controller: _manualCtl,
+                    autofocus: true,
+                    hint: Platform.isWindows
+                        ? 'EasyAntiCheat_EOS.exe'
+                        : 'имя процесса',
+                    tooltip: 'имя файла процесса — как в диспетчере задач',
+                    onSubmitted: (_) => _submitManual(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _FooterButton(
+                  label: 'добавить',
+                  primary: true,
+                  onTap: _submitManual,
+                ),
+                const SizedBox(width: 4),
+                _FooterButton(
+                  label: 'отмена',
+                  onTap: () => setState(() {
+                    _manualOpen = false;
+                    _manualCtl.clear();
+                  }),
+                ),
+              ],
+            )
+          : Center(
+              child: _FooterButton(
+                label: 'нет в списке? вписать имя процесса',
+                icon: Icons.edit_outlined,
+                onTap: () => setState(() {
+                  _manualOpen = true;
+                  if (_query.isNotEmpty) _manualCtl.text = _query;
+                }),
+              ),
+            ),
+    );
   }
 
   List<_Entry> _filter(List<DiscoveredApp> apps) {
@@ -286,7 +365,77 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
                               _listItem(t, i, mainItems, extraItems),
                         ),
             ),
+            _manualFooter(t),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FooterButton extends StatefulWidget {
+  final String label;
+  final IconData? icon;
+  final bool primary;
+  final VoidCallback onTap;
+  const _FooterButton({
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.primary = false,
+  });
+
+  @override
+  State<_FooterButton> createState() => _FooterButtonState();
+}
+
+class _FooterButtonState extends State<_FooterButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final color = widget.primary
+        ? t.primary
+        : (_hover ? t.text : t.textMuted);
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        // Fade between surface2 and surface2 at zero alpha, not
+        // Colors.transparent: that is transparent *black*, and lerping
+        // through it flashes dark on the way in.
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOut,
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: t.surface2.withValues(alpha: _hover ? 1 : 0),
+            borderRadius: BorderRadius.circular(t.radius),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.icon != null) ...[
+                Icon(widget.icon, size: 14, color: color),
+                const SizedBox(width: 6),
+              ],
+              AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 150),
+                curve: Curves.easeOut,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+                child: Text(widget.label),
+              ),
+            ],
+          ),
         ),
       ),
     );
