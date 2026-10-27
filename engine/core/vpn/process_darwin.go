@@ -79,12 +79,15 @@ func (m *ProcessManager) logFile() string { return filepath.Join(m.workDir, "sin
 func (m *ProcessManager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.followCoreLog()
 
 	bin, err := m.resolveBinary()
 	if err != nil {
 		m.log.Logf("vpn.Start: %v", err)
+		m.Diagnose("start-failed")
 		return err
 	}
+	m.log.Logf("vpn.Start: core=%s config=%s workdir=%s", bin, m.configPath, m.workDir)
 	if _, err := os.Stat(m.configPath); err != nil {
 		return fmt.Errorf("конфиг sing-box не найден: %s", m.configPath)
 	}
@@ -93,6 +96,8 @@ func (m *ProcessManager) Start() error {
 	installed := fileHas(daemonPlist, plist) &&
 		fileHas(supervisorSh, supervisor) &&
 		sameFile(bin, installedBin)
+	m.log.Logf("vpn.Start: daemon installed=%v (plist=%v supervisor=%v core-same=%v)",
+		installed, fileHas(daemonPlist, plist), fileHas(supervisorSh, supervisor), sameFile(bin, installedBin))
 
 	// A running core is only "nothing to do" when it is ours. If the daemon
 	// on disk is a different one — an older layout, a previous install
@@ -122,6 +127,7 @@ func (m *ProcessManager) Start() error {
 	// (never bootstrapped after a reboot, say). Worth one reinstall before
 	// giving up; this is the only path where a routine start can still ask
 	// for a password.
+	m.Diagnose("core-not-up")
 	if installed {
 		m.log.Logf("vpn.Start: daemon did not react, reinstalling")
 		if err := m.installDaemon(plist, supervisor, bin); err != nil {
@@ -133,6 +139,9 @@ func (m *ProcessManager) Start() error {
 		}
 	}
 
+	if installed {
+		m.Diagnose("core-not-up-after-reinstall")
+	}
 	_ = os.Remove(m.runFile())
 	return fmt.Errorf("sing-box не поднялся, смотри %s", m.logFile())
 }
@@ -300,6 +309,11 @@ func (m *ProcessManager) installDaemon(plist, supervisor, srcBin string) error {
 		return fmt.Errorf("не удалось установить служебный процесс: %s", msg)
 	}
 	m.log.Logf("vpn: launchd daemon %s installed", daemonLabel)
+	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if ln != "" {
+			m.log.Logf("vpn: install output: %s", ln)
+		}
+	}
 	return nil
 }
 

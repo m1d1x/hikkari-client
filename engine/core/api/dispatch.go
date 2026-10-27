@@ -14,7 +14,39 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 )
+
+// polledMethods are the calls the UI makes on a timer. Tracing them on every
+// tick would bury everything else, so they are logged only when they fail or
+// run slow.
+var polledMethods = map[string]bool{
+	"IsRunning": true, "Health": true, "ExternalIP": true, "LogTail": true,
+	"Routing": true, "ServerCleanliness": true, "ListApps": true,
+}
+
+// traceCall writes one line per FFI call into the engine log, so a pasted log
+// shows what the user actually clicked and in what order. Args are logged
+// truncated — they can carry a whole subscription link.
+func (c *Core) traceCall(method, argsJSON string, took time.Duration, err error) {
+	if c.logger == nil {
+		return
+	}
+	if polledMethods[method] && err == nil && took < time.Second {
+		return
+	}
+	if strings.Contains(argsJSON, "://") {
+		argsJSON = "<link redacted>"
+	} else if len(argsJSON) > 200 {
+		argsJSON = argsJSON[:200] + "…"
+	}
+	if err != nil {
+		c.logger.Logf("[ffi] %s(%s) took=%s err=%v", method, argsJSON, took.Round(time.Millisecond), err)
+		return
+	}
+	c.logger.Logf("[ffi] %s(%s) took=%s ok", method, argsJSON, took.Round(time.Millisecond))
+}
 
 // Envelope is the universal result wrapper. Exactly one of Data / Error is
 // set, mirrored by Ok.
@@ -29,7 +61,9 @@ type Envelope struct {
 // The return value is always a marshalled Envelope — Call itself never
 // returns an error so callers across the FFI boundary have one code path.
 func (c *Core) Call(method, argsJSON string) string {
+	start := time.Now()
 	data, err := c.dispatch(method, argsJSON)
+	c.traceCall(method, argsJSON, time.Since(start), err)
 	if err != nil {
 		return marshalEnvelope(Envelope{Ok: false, Error: err.Error()})
 	}

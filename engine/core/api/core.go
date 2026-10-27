@@ -155,6 +155,7 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	go c.diag.Baseline()
 
 	c.logger.Logf("=== api.Core init, baseDir=%s ===", baseDir)
+	c.logEnvironment()
 	return nil
 }
 

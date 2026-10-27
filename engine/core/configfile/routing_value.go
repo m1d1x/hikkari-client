@@ -31,7 +31,7 @@ func normalizeRouteValue(category, value string) (string, error) {
 	case "domains":
 		return normalizeDomainValue(value)
 	case "processes":
-		return value, nil
+		return normalizeProcessValue(value)
 	default:
 		return "", fmt.Errorf("неизвестная категория: %s", category)
 	}
@@ -56,6 +56,33 @@ func normalizeIPValue(value string) (string, error) {
 	return "", fmt.Errorf(
 		"%q — не ip и не подсеть; примеры: 1.2.3.4, 192.168.0.0/16, 2001:db8::/32",
 		value)
+}
+
+// normalizeProcessValue reduces whatever the user pasted to the bare binary
+// name, which is the only shape process_name can match: sing-box compares
+// filepath.Base(processPath) against the rule's strings, so a full path in the
+// list would never match anything. Pasting a path is the common case — the
+// name a user can actually find for a windowless process comes from Task
+// Manager's "Open file location" or from the properties dialog — so the
+// directory part is stripped instead of rejected.
+//
+// Case is preserved on purpose: that comparison is case-sensitive, and we
+// have no way to learn the real spelling of a binary that isn't running.
+// Resolving the case against the live process list is the UI's job.
+func normalizeProcessValue(value string) (string, error) {
+	name := strings.Trim(value, `"'`)
+	name = strings.TrimSpace(name)
+	if i := strings.LastIndexAny(name, `\/`); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("%q — не удалось извлечь имя приложения", value)
+	}
+	if strings.ContainsAny(name, `*?<>|"`) {
+		return "", fmt.Errorf("%q — не похоже на имя приложения", value)
+	}
+	return name, nil
 }
 
 // normalizeDomainValue reduces whatever the user pasted to the bare host

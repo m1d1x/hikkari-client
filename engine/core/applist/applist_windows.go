@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -50,8 +51,15 @@ type processEntry32 struct {
 	ExeFile         [maxPath]uint16
 }
 
-// List returns user-visible applications. Running windowed apps come first,
-// then installed apps from Start Menu shortcuts (TODO: phase 2).
+// List returns running applications, deduplicated by executable name.
+//
+// all=false is the short list the picker opens with: processes that own a
+// visible window, minus the system shell and the helper/updater noise. That
+// misses anything headless — a game's anti-cheat service, a launcher's
+// network helper — which is exactly what someone splitting routing per app
+// usually needs to reach. all=true therefore drops both filters and returns
+// every process in the snapshot, windowed or not; Running then tells the two
+// apart so the UI can still show which ones have a window.
 func List(all bool) []AppEntry {
 	windowedPIDs := enumWindowedPIDs()
 	procs := snapshotProcesses()
@@ -64,11 +72,14 @@ func List(all bool) []AppEntry {
 		if seen[exeLower] {
 			continue
 		}
-		if !windowedPIDs[p.pid] {
-			continue
-		}
-		if !all && isSystemProcess(exeLower) {
-			continue
+		windowed := windowedPIDs[p.pid]
+		if !all {
+			if !windowed {
+				continue
+			}
+			if isSystemProcess(exeLower) {
+				continue
+			}
 		}
 
 		fullPath := queryFullPath(p.pid)
@@ -76,7 +87,8 @@ func List(all bool) []AppEntry {
 			fullPath = p.exe
 		}
 
-		name := friendlyName(fullPath)
+		m := metaFor(fullPath)
+		name := m.name
 		if name == "" {
 			name = strings.TrimSuffix(p.exe, filepath.Ext(p.exe))
 		}
@@ -86,8 +98,8 @@ func List(all bool) []AppEntry {
 			Name:    name,
 			Exe:     p.exe,
 			Path:    fullPath,
-			Running: true,
-			Icon:    extractIconBase64(fullPath),
+			Running: windowed,
+			Icon:    m.icon,
 		})
 	}
 
@@ -95,6 +107,42 @@ func List(all bool) []AppEntry {
 		return strings.ToLower(result[i].Name) < strings.ToLower(result[j].Name)
 	})
 	return result
+}
+
+// exeMeta is the per-binary data that costs real work to obtain: the version
+// resource read for the friendly name and the shell icon extraction plus PNG
+// encode. Neither changes while the file sits on disk, and the picker polls
+// every few seconds over a list that with all=true runs to a few hundred
+// processes — so both are cached by path for the lifetime of the process.
+type exeMeta struct {
+	name string
+	icon string
+}
+
+var (
+	metaMu    sync.Mutex
+	metaCache = map[string]exeMeta{}
+)
+
+func metaFor(exePath string) exeMeta {
+	key := strings.ToLower(exePath)
+
+	metaMu.Lock()
+	m, ok := metaCache[key]
+	metaMu.Unlock()
+	if ok {
+		return m
+	}
+
+	m = exeMeta{
+		name: friendlyName(exePath),
+		icon: extractIconBase64(exePath),
+	}
+
+	metaMu.Lock()
+	metaCache[key] = m
+	metaMu.Unlock()
+	return m
 }
 
 type procInfo struct {
