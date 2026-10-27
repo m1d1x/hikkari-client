@@ -626,12 +626,7 @@ func ensureICMPDirectRule(cfg map[string]interface{}, enable bool) {
 // preserves them.
 func isSystemDirectRule(m map[string]interface{}) bool {
 	if action, _ := m["action"].(string); action == "reject" {
-		net, _ := m["network"].(string)
-		port, _ := m["port"].(int)
-		if pf, ok := m["port"].(float64); ok {
-			port = int(pf)
-		}
-		return net == "udp" && port == 443
+		return isQUICReject(m)
 	}
 	if ob, _ := m["outbound"].(string); ob != "direct" {
 		return false
@@ -643,6 +638,21 @@ func isSystemDirectRule(m map[string]interface{}) bool {
 		return true
 	}
 	return false
+}
+
+// isQUICReject reports whether m is the UDP 443 reject ensureICMPDirectRule
+// adds. Port arrives as int when built here and float64 after a JSON round
+// trip.
+func isQUICReject(m map[string]interface{}) bool {
+	if action, _ := m["action"].(string); action != "reject" {
+		return false
+	}
+	net, _ := m["network"].(string)
+	port, _ := m["port"].(int)
+	if pf, ok := m["port"].(float64); ok {
+		port = int(pf)
+	}
+	return net == "udp" && port == 443
 }
 
 // upsertTaggedOutbound returns the outbounds list with the entry tagged

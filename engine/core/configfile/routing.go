@@ -241,17 +241,14 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		}
 	}
 
+	var userRules []interface{}
 	if state.Enabled && ruleOutbound != "" {
 		appendRule := func(key string, vals []string) {
 			if len(vals) == 0 {
 				return
 			}
-			anyVals := make([]interface{}, len(vals))
-			for i, v := range vals {
-				anyVals[i] = v
-			}
-			preserved = append(preserved, map[string]interface{}{
-				key:        anyVals,
+			userRules = append(userRules, map[string]interface{}{
+				key:        toAnySlice(vals),
 				"outbound": ruleOutbound,
 			})
 		}
@@ -260,8 +257,72 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		appendRule("process_name", list.Processes)
 	}
 
-	route["rules"] = preserved
+	// Bypass rules go ahead of the QUIC reject: an app the user sent direct
+	// must see the network exactly as without the VPN. Behind the reject a
+	// bypassed game still lost all UDP 443 — EOS / PlayFab traffic among it.
+	insertAt := len(preserved)
+	if ruleOutbound == "direct" {
+		for i, r := range preserved {
+			if m, ok := r.(map[string]interface{}); ok && isQUICReject(m) {
+				insertAt = i
+				break
+			}
+		}
+	}
+	out := make([]interface{}, 0, len(preserved)+len(userRules))
+	out = append(out, preserved[:insertAt]...)
+	out = append(out, userRules...)
+	out = append(out, preserved[insertAt:]...)
+
+	route["rules"] = out
 	route["final"] = finalTag
+
+	var directProcs []string
+	if ruleOutbound == "direct" {
+		directProcs = list.Processes
+	}
+	applyBypassDNS(cfg, directProcs)
+}
+
+// applyBypassDNS gives bypassed processes real DNS answers instead of fake
+// IPs. A fake 198.18.x.x address is harmless for a browser but not for a
+// game: matchmaking hands server names around, pings QoS beacons by
+// resolved address and compares where replies come from, and none of that
+// survives the core resolving the name a second time on its own. Clash in
+// system-proxy mode — the setup that worked — never touches game DNS at all.
+//
+// The rule is ours whenever it is a process_name → dns-direct rule; it is
+// dropped and re-added on every compile so the function stays idempotent.
+func applyBypassDNS(cfg map[string]interface{}, procs []string) {
+	dns, _ := cfg["dns"].(map[string]interface{})
+	if dns == nil {
+		return
+	}
+	rules, _ := dns["rules"].([]interface{})
+	kept := make([]interface{}, 0, len(rules)+1)
+	if len(procs) > 0 {
+		kept = append(kept, map[string]interface{}{
+			"process_name": toAnySlice(procs),
+			"server":       "dns-direct",
+		})
+	}
+	for _, r := range rules {
+		if m, ok := r.(map[string]interface{}); ok {
+			if _, has := m["process_name"]; has && m["server"] == "dns-direct" {
+				continue
+			}
+		}
+		kept = append(kept, r)
+	}
+	dns["rules"] = kept
+}
+
+func toAnySlice(vals []string) []interface{} {
+	out := make([]interface{}, len(vals))
+	for i, v := range vals {
+		out[i] = v
+	}
+	return out
 }
 
 // applyRoutingToConfig reads config.json, runs ApplyRouting against it,

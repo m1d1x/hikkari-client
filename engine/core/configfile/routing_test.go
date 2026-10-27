@@ -227,3 +227,55 @@ func TestStore_RemoveRule(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A bypassed app must see the network as without the VPN: its route rule sits
+// ahead of the QUIC reject, and its DNS answers are real, not fake IPs.
+func TestApplyRouting_BypassProcessBeatsQUICRejectAndFakeIP(t *testing.T) {
+	cfg := DefaultConfig()
+	ensureICMPDirectRule(cfg, true)
+	state := RoutingState{
+		Enabled: true,
+		Mode:    ModeBypass,
+		Bypass:  RouteList{Processes: []string{"helldivers2.exe"}},
+	}
+	for i := 0; i < 2; i++ { // second pass checks idempotency
+		ApplyRouting(cfg, state, SelectorTag)
+	}
+
+	rules := cfg["route"].(map[string]interface{})["rules"].([]interface{})
+	procAt, rejectAt := -1, -1
+	for i, r := range rules {
+		m := r.(map[string]interface{})
+		if _, ok := m["process_name"]; ok {
+			procAt = i
+		}
+		if isQUICReject(m) {
+			rejectAt = i
+		}
+	}
+	if procAt < 0 || rejectAt < 0 || procAt > rejectAt {
+		t.Fatalf("process rule at %d, QUIC reject at %d: want process first", procAt, rejectAt)
+	}
+
+	dnsRules := cfg["dns"].(map[string]interface{})["rules"].([]interface{})
+	n := 0
+	for _, r := range dnsRules {
+		if m := r.(map[string]interface{}); m["process_name"] != nil && m["server"] == "dns-direct" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want exactly one process dns-direct rule, got %d", n)
+	}
+	if m := dnsRules[0].(map[string]interface{}); m["process_name"] == nil {
+		t.Fatalf("process dns rule must come before the fakeip rule, got %v", m)
+	}
+
+	state.Enabled = false
+	ApplyRouting(cfg, state, SelectorTag)
+	for _, r := range cfg["dns"].(map[string]interface{})["rules"].([]interface{}) {
+		if r.(map[string]interface{})["process_name"] != nil {
+			t.Fatal("process dns rule left behind after routing was disabled")
+		}
+	}
+}
