@@ -277,44 +277,69 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 	route["rules"] = out
 	route["final"] = finalTag
 
-	var directProcs []string
+	var bypass RouteList
 	if ruleOutbound == "direct" {
-		directProcs = list.Processes
+		bypass = list
 	}
-	applyBypassDNS(cfg, directProcs)
+	applyBypassDNS(cfg, bypass)
 }
 
-// applyBypassDNS gives bypassed processes real DNS answers instead of fake
-// IPs. A fake 198.18.x.x address is harmless for a browser but not for a
-// game: matchmaking hands server names around, pings QoS beacons by
-// resolved address and compares where replies come from, and none of that
-// survives the core resolving the name a second time on its own. Clash in
-// system-proxy mode — the setup that worked — never touches game DNS at all.
+// applyBypassDNS gives bypassed traffic real DNS answers instead of fake
+// IPs — our equivalent of Clash's fake-ip-filter. A fake 198.18.x.x address
+// is harmless for a browser but not for a game: matchmaking pings QoS
+// beacons by resolved address and compares where replies come from, and
+// that does not survive the core resolving the name a second time.
 //
-// The rule is ours whenever it is a process_name → dns-direct rule; it is
-// dropped and re-added on every compile so the function stays idempotent.
-func applyBypassDNS(cfg map[string]interface{}, procs []string) {
+// Domains are what actually matters on Windows and macOS: apps there ask
+// the system resolver (svchost / mDNSResponder), so the query reaching the
+// core never carries the game's process name. The process_name rule only
+// helps apps that resolve on their own.
+//
+// Our rules are the ones tagged bypassDNSMarker; they are dropped and
+// re-added on every compile so the function stays idempotent.
+func applyBypassDNS(cfg map[string]interface{}, bypass RouteList) {
 	dns, _ := cfg["dns"].(map[string]interface{})
 	if dns == nil {
 		return
 	}
 	rules, _ := dns["rules"].([]interface{})
-	kept := make([]interface{}, 0, len(rules)+1)
-	if len(procs) > 0 {
+	kept := make([]interface{}, 0, len(rules)+2)
+	if len(bypass.Domains) > 0 {
 		kept = append(kept, map[string]interface{}{
-			"process_name": toAnySlice(procs),
+			"domain_suffix": toAnySlice(bypass.Domains),
+			"server":        "dns-direct",
+		})
+	}
+	if len(bypass.Processes) > 0 {
+		kept = append(kept, map[string]interface{}{
+			"process_name": toAnySlice(bypass.Processes),
 			"server":       "dns-direct",
 		})
 	}
 	for _, r := range rules {
-		if m, ok := r.(map[string]interface{}); ok {
-			if _, has := m["process_name"]; has && m["server"] == "dns-direct" {
-				continue
-			}
+		if m, ok := r.(map[string]interface{}); ok && isBypassDNSRule(m) {
+			continue
 		}
 		kept = append(kept, r)
 	}
 	dns["rules"] = kept
+}
+
+// isBypassDNSRule recognises the rules applyBypassDNS owns: any
+// process_name → dns-direct rule, and a domain_suffix → dns-direct rule
+// other than the fixed one that keeps the VPN servers' own names real.
+func isBypassDNSRule(m map[string]interface{}) bool {
+	if m["server"] != "dns-direct" {
+		return false
+	}
+	if _, has := m["process_name"]; has {
+		return true
+	}
+	suf, has := m["domain_suffix"].([]interface{})
+	if !has {
+		return false
+	}
+	return !(len(suf) == 1 && suf[0] == "zovfy.ru")
 }
 
 func toAnySlice(vals []string) []interface{} {

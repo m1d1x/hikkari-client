@@ -230,13 +230,16 @@ func TestStore_RemoveRule(t *testing.T) {
 
 // A bypassed app must see the network as without the VPN: its route rule sits
 // ahead of the QUIC reject, and its DNS answers are real, not fake IPs.
-func TestApplyRouting_BypassProcessBeatsQUICRejectAndFakeIP(t *testing.T) {
+func TestApplyRouting_BypassBeatsQUICRejectAndFakeIP(t *testing.T) {
 	cfg := DefaultConfig()
 	ensureICMPDirectRule(cfg, true)
 	state := RoutingState{
 		Enabled: true,
 		Mode:    ModeBypass,
-		Bypass:  RouteList{Processes: []string{"helldivers2.exe"}},
+		Bypass: RouteList{
+			Processes: []string{"helldivers2.exe"},
+			Domains:   []string{"playfabapi.com"},
+		},
 	}
 	for i := 0; i < 2; i++ { // second pass checks idempotency
 		ApplyRouting(cfg, state, SelectorTag)
@@ -267,15 +270,24 @@ func TestApplyRouting_BypassProcessBeatsQUICRejectAndFakeIP(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("want exactly one process dns-direct rule, got %d", n)
 	}
-	if m := dnsRules[0].(map[string]interface{}); m["process_name"] == nil {
-		t.Fatalf("process dns rule must come before the fakeip rule, got %v", m)
+	if m := dnsRules[0].(map[string]interface{}); m["domain_suffix"] == nil || m["server"] != "dns-direct" {
+		t.Fatalf("bypassed domains must resolve real, first dns rule is %v", m)
+	}
+	zovfy := 0
+	for _, r := range dnsRules {
+		if suf, ok := r.(map[string]interface{})["domain_suffix"].([]interface{}); ok && len(suf) == 1 && suf[0] == "zovfy.ru" {
+			zovfy++
+		}
+	}
+	if zovfy != 1 {
+		t.Fatalf("the zovfy.ru rule must survive untouched, found %d", zovfy)
 	}
 
 	state.Enabled = false
 	ApplyRouting(cfg, state, SelectorTag)
 	for _, r := range cfg["dns"].(map[string]interface{})["rules"].([]interface{}) {
-		if r.(map[string]interface{})["process_name"] != nil {
-			t.Fatal("process dns rule left behind after routing was disabled")
+		if isBypassDNSRule(r.(map[string]interface{})) {
+			t.Fatalf("bypass dns rule left behind after routing was disabled: %v", r)
 		}
 	}
 }
