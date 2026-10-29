@@ -5,8 +5,8 @@ import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 
-/// Compact "import by link" dialog. Accepts a single server URI (currently
-/// `hysteria2://...`), delegates to AppState.addProfileFromUri, closes
+/// Imports server links or HTTP(S) subscriptions containing multiple servers.
+/// Delegates to AppState.addProfileFromUri and closes
 /// itself on success. Errors are surfaced inline so the user can fix the
 /// link without losing what they pasted.
 class ImportProfileDialog extends StatefulWidget {
@@ -61,9 +61,14 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
       _error = null;
     });
     final state = context.read<AppState>();
+    final countBefore = state.profiles.length;
     final name = await state.addProfileFromUri(uri);
     if (!mounted) return;
     if (name != null) {
+      final added = state.profiles.length - countBefore;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Добавлено серверов: $added')),
+      );
       Navigator.of(context).maybePop();
     } else {
       setState(() {
@@ -135,7 +140,7 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
       );
 
   Widget _hint(NekkoTokens t) => Text(
-        'hysteria2:// · vless:// · trojan:// · ss:// · AmneziaWG .conf',
+        'HTTPS-подписка · vless:// · trojan:// · ss:// · hysteria2:// · AmneziaWG',
         style: TextStyle(
           color: t.textFaint,
           fontSize: 11,
@@ -156,7 +161,7 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
           height: 1.35,
         ),
         decoration: InputDecoration(
-          hintText: 'hysteria2://… или vless://… или ss://…',
+          hintText: 'https://… — добавит все серверы подписки\nМожно вставить несколько ссылок, каждую с новой строки',
           hintStyle: TextStyle(
             color: t.textFaint,
             fontSize: 12,

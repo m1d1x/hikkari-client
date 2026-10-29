@@ -202,7 +202,7 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'вставьте ссылку — vless://, trojan://, ss://,\nhysteria2:// или конфиг AmneziaWG',
+                      'вставьте HTTPS-подписку — каждый сервер добавится отдельно,\nили ссылку vless://, trojan://, ss://, hysteria2://',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: t.textMuted,

@@ -28,7 +28,7 @@ type Draft struct {
 // ParseURI dispatches by scheme. Returns an error for unknown schemes so the
 // UI can show "неподдерживаемая ссылка" rather than silently failing.
 func ParseURI(uri string) (Draft, error) {
-	uri = strings.TrimSpace(uri)
+	uri = normalizeImportLink(uri)
 	if uri == "" {
 		return Draft{}, fmt.Errorf("пустая ссылка")
 	}
@@ -64,15 +64,40 @@ func ParseURI(uri string) (Draft, error) {
 // ParseURIs parses either a single URI, a multi-line string of URIs,
 // or fetches an http/https subscription URL and parses all URIs in it.
 func ParseURIs(input string) ([]Draft, error) {
-	input = strings.TrimSpace(input)
+	return parseImport(input, true)
+}
+
+// normalizeImportLink accepts links copied from chat messages as well as raw
+// clipboard text. Only strip balanced wrappers; URL query/fragment data stays
+// untouched.
+func normalizeImportLink(input string) string {
+	input = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(input), "\ufeff"))
+	if strings.Contains(input, "\n") {
+		return input
+	}
+	for _, pair := range [][2]string{{"\"", "\""}, {"'", "'"}, {"`", "`"}, {"<", ">"}, {"“", "”"}, {"«", "»"}} {
+		if strings.HasPrefix(input, pair[0]) && strings.HasSuffix(input, pair[1]) && len(input) >= len(pair[0])+len(pair[1]) {
+			input = strings.TrimSpace(input[len(pair[0]) : len(input)-len(pair[1])])
+		}
+	}
+	if strings.HasPrefix(input, "[") && strings.HasSuffix(input, ")") {
+		if i := strings.Index(input, "]("); i >= 0 {
+			input = strings.TrimSpace(input[i+2 : len(input)-1])
+		}
+	}
+	return input
+}
+
+func isSubscriptionURL(input string) bool {
+	lower := strings.ToLower(input)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
+}
+
+func parseImport(input string, allowSubscriptions bool) ([]Draft, error) {
+	input = normalizeImportLink(input)
 	if input == "" {
 		return nil, fmt.Errorf("пустая ссылка")
 	}
-
-	if strings.HasPrefix(strings.ToLower(input), "http://") || strings.HasPrefix(strings.ToLower(input), "https://") {
-		return fetchSubscription(input)
-	}
-
 	if looksLikeWireGuardIni(input) {
 		d, err := parseAmneziaWGIni(input)
 		if err != nil {
@@ -80,20 +105,29 @@ func ParseURIs(input string) ([]Draft, error) {
 		}
 		return []Draft{d}, nil
 	}
-
-	if !strings.Contains(input, "://") && !strings.Contains(input, "\n") {
-		if decoded, err := decodeBase64Subscription(input); err == nil && len(decoded) > 0 {
-			input = decoded
-		}
+	// Providers can wrap base64 over several lines, including CRLF.
+	if decoded, err := decodeBase64Subscription(input); err == nil {
+		input = decoded
 	}
 
-	lines := strings.Split(input, "\n")
 	var drafts []Draft
 	var firstErr error
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
+	for _, line := range strings.Split(input, "\n") {
+		line = normalizeImportLink(line)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if isSubscriptionURL(line) {
+			// Expand every subscription in a pasted list. ParseURI only returns
+			// one draft, which used to silently discard the remaining servers.
+			if !allowSubscriptions {
+				return nil, fmt.Errorf("подписка содержит другую HTTP-ссылку вместо серверов")
+			}
+			servers, err := fetchSubscription(line)
+			if err != nil {
+				return nil, err
+			}
+			drafts = append(drafts, servers...)
 			continue
 		}
 		d, err := ParseURI(line)
@@ -105,7 +139,6 @@ func ParseURIs(input string) ([]Draft, error) {
 		}
 		drafts = append(drafts, d)
 	}
-
 	if len(drafts) == 0 && firstErr != nil {
 		return nil, firstErr
 	}
@@ -135,32 +168,19 @@ func fetchSubscription(subURL string) ([]Draft, error) {
 		return nil, fmt.Errorf("подписка вернула HTTP %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	const maxSubscriptionBytes = 2 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSubscriptionBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения подписки: %w", err)
 	}
-
-	content := strings.TrimSpace(string(body))
-	if decoded, err := decodeBase64Subscription(content); err == nil && len(decoded) > 0 {
-		content = decoded
+	if len(body) > maxSubscriptionBytes {
+		return nil, fmt.Errorf("подписка превышает 2 МиБ")
 	}
-
-	lines := strings.Split(content, "\n")
-	var drafts []Draft
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		d, err := ParseURI(line)
-		if err != nil {
-			continue
-		}
-		drafts = append(drafts, d)
-	}
-
-	if len(drafts) == 0 {
-		return nil, fmt.Errorf("подписка не содержит поддерживаемых профилей")
+	// Do not follow URLs inside downloaded content: a subscription must
+	// contain server URIs, otherwise providers could form an infinite cycle.
+	drafts, err := parseImport(string(body), false)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось разобрать подписку: %w", err)
 	}
 	return drafts, nil
 }
