@@ -27,7 +27,7 @@ func TestApplyActive_OutboundRoundtrip(t *testing.T) {
 	activeTags := map[string]bool{"awg-ep": true, "proxy-out": true}
 	hy2 := map[string]interface{}{
 		"type":        "hysteria2",
-		"server":      "92.246.139.199",
+		"server":      "203.0.113.10",
 		"server_port": 443,
 		"password":    "p",
 		"tag":         "proxy-out",

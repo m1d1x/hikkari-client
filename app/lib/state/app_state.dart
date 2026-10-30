@@ -278,7 +278,7 @@ class AppState extends ChangeNotifier {
   static const _dryCleanliness = ServerCleanliness(
     running: true,
     checked: true,
-    ip: '92.246.139.199',
+    ip: '203.0.113.10',
     asn: 'AS210644',
     asname: 'AEZA-AS',
     asnType: 'hosting',

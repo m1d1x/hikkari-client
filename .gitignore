@@ -52,6 +52,11 @@ config.json
 profiles.json
 uptime-history.json
 direct-ip.txt
+subscription-device-id
+routing-presets.json
+xray-transport.json
+xray.json
+xray-runtime.json
 
 # === Env / Secrets (никогда не коммитим) ===
 .env
@@ -60,6 +65,8 @@ direct-ip.txt
 *.pem
 *.key
 ipqs-key.txt
+# Ключ подписи обновлений (nekko-manifest keygen) — только в секретах CI
+release-*.key
 
 # === Backups / Temp ===
 *.bak
@@ -80,3 +87,10 @@ updater/target/
 # Built by CI (cmd/hikkari-setup embeds it; Windows resources)
 engine/cmd/hikkari-setup/payload/*.zip
 engine/cmd/*/*.syso
+
+# === Локальные планы и инструкции агентов (не публикуем) ===
+/plans/
+/CLAUDE.md
+/AGENTS.md
+.claude/
+.omc/

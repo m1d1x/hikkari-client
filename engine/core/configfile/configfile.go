@@ -432,8 +432,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 	}
 }
 
-// healOutboundConfig ensures VLESS profiles have proper packet_encoding and
-// automatically restores missing transport for known providers (e.g. zovfy xhttp).
+// healOutboundConfig ensures VLESS profiles have proper packet_encoding.
 func healOutboundConfig(cfg map[string]interface{}) {
 	if cfg == nil {
 		return
@@ -444,33 +443,6 @@ func healOutboundConfig(cfg map[string]interface{}) {
 	}
 	if pe, _ := cfg["packet_encoding"].(string); pe == "" {
 		cfg["packet_encoding"] = "xudp"
-	}
-	server, _ := cfg["server"].(string)
-	server = strings.ToLower(strings.TrimSpace(server))
-	if cfg["transport"] == nil {
-		switch server {
-		case "web.zovfy.ru":
-			cfg["transport"] = map[string]interface{}{
-				"type": "xhttp",
-				"host": "web.zovfy.ru",
-				"path": "/artwork/api/uploads/sync-3cfbabbe8c07",
-				"mode": "auto",
-			}
-		case "alinazabrikosina.zovfy.ru":
-			cfg["transport"] = map[string]interface{}{
-				"type": "xhttp",
-				"host": "alinazabrikosina.zovfy.ru",
-				"path": "/artwork/api/uploads/sync-3cfbabbe5c03",
-				"mode": "auto",
-			}
-		case "pomoyka.inc.zovfy.ru":
-			cfg["transport"] = map[string]interface{}{
-				"type": "xhttp",
-				"host": "pomoyka.inc.zovfy.ru",
-				"path": "/artwork/api/uploads",
-				"mode": "auto",
-			}
-		}
 	}
 }
 

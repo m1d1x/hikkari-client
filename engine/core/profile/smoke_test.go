@@ -8,7 +8,7 @@ import (
 )
 
 func TestParseHysteria2URI_Smoke(t *testing.T) {
-	uri := "hysteria2://bitFhbuhm8Oy6VgCoPIKvrVf@92.246.139.199:443/?insecure=1&obfs=salamander&obfs-password=GbWPPp80rsBQZZvftDZMDr8S&sni=www.bing.com#NEKKO-HY2"
+	uri := "hysteria2://hy2-password@203.0.113.10:443/?insecure=1&obfs=salamander&obfs-password=obfs-password&sni=www.bing.com#NEKKO-HY2"
 	d, err := ParseURI(uri)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -21,9 +21,9 @@ func TestParseHysteria2URI_Smoke(t *testing.T) {
 	}
 	want := map[string]interface{}{
 		"type":        "hysteria2",
-		"server":      "92.246.139.199",
+		"server":      "203.0.113.10",
 		"server_port": 443,
-		"password":    "bitFhbuhm8Oy6VgCoPIKvrVf",
+		"password":    "hy2-password",
 		"tls": map[string]interface{}{
 			"enabled":     true,
 			"server_name": "www.bing.com",
@@ -31,7 +31,7 @@ func TestParseHysteria2URI_Smoke(t *testing.T) {
 		},
 		"obfs": map[string]interface{}{
 			"type":     "salamander",
-			"password": "GbWPPp80rsBQZZvftDZMDr8S",
+			"password": "obfs-password",
 		},
 	}
 	got, _ := json.Marshal(d.Config)
@@ -137,8 +137,8 @@ func TestAddOnFreshInstall(t *testing.T) {
 	}
 }
 
-func TestParseVLESS_XHTTP_Zovfy(t *testing.T) {
-	uri := "vless://c18cef8f-a1a7-4f58-b32b-21d54b8ad4f2@web.zovfy.ru:443?encryption=none&type=xhttp&path=%2Fartwork%2Fapi%2Fuploads%2Fsync-3cfbabbe8c07&mode=auto&security=tls&sni=web.zovfy.ru&fp=edge&alpn=h2%2Chttp%2F1.1#%F0%9F%87%AB%F0%9F%87%AE%D0%A4%D0%98%D0%9D%D0%9A%D0%90%20%D0%A1%D0%A2%D0%90%D0%A0%D0%90%D0%AF"
+func TestParseVLESS_XHTTP(t *testing.T) {
+	uri := "vless://11111111-2222-3333-4444-555555555555@xh.example.com:443?encryption=none&type=xhttp&path=%2Fartwork%2Fapi%2Fuploads%2Fsync-0000&mode=auto&security=tls&sni=xh.example.com&fp=edge&alpn=h2%2Chttp%2F1.1#%F0%9F%87%AB%F0%9F%87%AE%D0%A4%D0%98%D0%9D%D0%9A%D0%90%20%D0%A1%D0%A2%D0%90%D0%A0%D0%90%D0%AF"
 	d, err := ParseURI(uri)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -153,11 +153,11 @@ func TestParseVLESS_XHTTP_Zovfy(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing transport block in config: %#v", d.Config)
 	}
-	if tr["type"] != "xhttp" || tr["path"] != "/artwork/api/uploads/sync-3cfbabbe8c07" || tr["mode"] != "auto" || tr["host"] != "web.zovfy.ru" {
+	if tr["type"] != "xhttp" || tr["path"] != "/artwork/api/uploads/sync-0000" || tr["mode"] != "auto" || tr["host"] != "xh.example.com" {
 		t.Fatalf("unexpected transport: %#v", tr)
 	}
 	tls, ok := d.Config["tls"].(map[string]interface{})
-	if !ok || tls["server_name"] != "web.zovfy.ru" {
+	if !ok || tls["server_name"] != "xh.example.com" {
 		t.Fatalf("unexpected tls: %#v", tls)
 	}
 }
