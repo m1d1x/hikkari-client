@@ -343,3 +343,27 @@ func TestBundledDefaultsAndUpgradePreserveExplicitChoices(t *testing.T) {
 		t.Fatal("upgrade overwrote remote cache")
 	}
 }
+
+func TestCatalogFoldersReachTheirPlatformOnly(t *testing.T) {
+	data := `{"schemaVersion":1,"version":2,"services":[{"id":"games","name":"Games","icon":"","domains":[],"ips":[],"processes":{},"folders":{"windows":["steamapps/common/"],"darwin":["Discord.app/"]},"defaultModes":["bypass"]}]}`
+	c, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := Document(routing.DefaultRoutingState(), c, Choices{}, "windows")
+	got, err := doc.Resolve("windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Bypass.Folders, []string{"steamapps/common/"}) {
+		t.Fatalf("windows folders = %v", got.Bypass.Folders)
+	}
+	for _, bad := range []string{
+		`{"schemaVersion":1,"version":2,"services":[{"id":"x","name":"X","icon":"","domains":[],"ips":[],"processes":{},"folders":{"windows":["steam"]},"defaultModes":[]}]}`,
+		`{"schemaVersion":1,"version":2,"services":[{"id":"x","name":"X","icon":"","domains":[],"ips":[],"processes":{},"folders":{"android":["a/"]},"defaultModes":[]}]}`,
+	} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Fatalf("accepted invalid folders: %s", bad)
+		}
+	}
+}

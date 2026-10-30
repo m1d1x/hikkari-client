@@ -9,6 +9,8 @@
 		SIDES,
 		RULE_KINDS,
 		ACTIVE_DEVICES,
+		catalogOf,
+		groupProblem,
 		type Group,
 		type Preset,
 		type Rules,
@@ -76,6 +78,23 @@
 
 	const diff = $derived(p ? changes(p) : []);
 	const free = $derived(db.groups.filter((g) => p && !p.bypass.includes(g.id) && !p.proxy.includes(g.id)));
+	/** Groups the engine would refuse; one of them blocks the whole catalog, so the release waits. */
+	const problems = $derived(
+		p
+			? [...p.bypass, ...p.proxy]
+					.map(groupOf)
+					.filter((g): g is Group => !!g)
+					.flatMap((g) => {
+						const why = groupProblem(g);
+						return why ? [`${g.name || g.id}: ${why}`] : [];
+					})
+			: [],
+	);
+	let showJson = $state(false);
+	const json = $derived.by(() => {
+		const v = p?.next ?? p?.current;
+		return v ? JSON.stringify(catalogOf($state.snapshot(v) as typeof v), null, 2) : '';
+	});
 	const worse = $derived(!!p?.next && p.stage > 0 && p.errPct.next > p.errPct.current * 1.5);
 
 	function status(x: Preset): { text: string; cls: string } {
@@ -231,6 +250,8 @@
 						<div class="label">что уйдёт людям в v{(latest(p)?.v ?? 0) + 1}</div>
 						{#if p.next}
 							<span class="dim hint">v{p.next.v} ещё раскатывается: заверши или откати, потом выпускай</span>
+						{:else if problems.length}
+							<span class="bad hint">клиент не примет каталог: {problems.join('; ')}</span>
 						{:else}
 							<button class="btn primary" onclick={release}>выпустить v{(latest(p)?.v ?? 0) + 1}</button>
 						{/if}
@@ -240,6 +261,21 @@
 							<div class:ok={d.kind === 'add'} class:bad={d.kind === 'drop'}>{d.text}</div>
 						{/each}
 					</div>
+				</div>
+			{/if}
+
+			{#if json}
+				<div class="block">
+					<div class="release">
+						<span class="label">каталог v{(p.next ?? p.current)?.v} для клиента</span>
+						<div class="actions">
+							<button class="btn" onclick={() => navigator.clipboard.writeText(json)}>скопировать</button>
+							<button class="btn" onclick={() => (showJson = !showJson)}>{showJson ? 'скрыть' : 'показать'}</button>
+						</div>
+					</div>
+					{#if showJson}
+						<pre class="json mono">{json}</pre>
+					{/if}
 				</div>
 			{/if}
 
@@ -543,5 +579,16 @@
 
 	textarea {
 		resize: vertical;
+	}
+
+	.json {
+		max-height: 320px;
+		overflow: auto;
+		margin: 8px 0 0;
+		padding: 10px;
+		border-radius: 6px;
+		background: var(--surface);
+		font-size: 11px;
+		color: var(--text-2);
 	}
 </style>

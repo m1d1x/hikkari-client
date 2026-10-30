@@ -11,6 +11,9 @@
 //
 // Support tickets, donations and presets are their own tables, not events.
 
+// The engine's bundled catalog seeds the groups: one source for both.
+import bundled from '../../../engine/core/presets/defaults.json';
+
 export type Win = '24h' | '7d' | '30d';
 export const WINDOWS: Win[] = ['24h', '7d', '30d'];
 
@@ -284,33 +287,47 @@ export function donations(w: Win) {
 
 // ---------- groups & presets ----------
 //
-// A group bundles every rule about one thing: steam, discord, banks. Domains
-// and ips hold everywhere; apps and folders are written per OS, in that OS's
-// own form: an exe on windows, the binary inside the .app on macos, a package
-// on android. Every client gets the whole preset and takes the shared rules
-// plus its own OS's, so a preset needs no per-platform targeting.
+// A group bundles every rule about one thing: steam, discord, banks. It is
+// the engine's catalog service (engine/core/presets/catalog.go): domains and
+// ips hold everywhere; apps and folders are written per OS, in that OS's own
+// form: an exe on windows, the binary inside the .app on macos. Every client
+// gets the whole catalog and resolves the shared rules plus its own OS's, so
+// a preset needs no per-platform targeting. The engine knows windows, darwin
+// and linux; android has no client yet, so it has no rules here.
 //
 // A preset is a set of groups, each put on one side: past the vpn or through
-// it, which fills the client's bypass and proxy lists. Presets are what gets
-// rolled out: a release freezes the groups as they are into a version, which
-// goes to testers first, then a growing share, while the rest keep the
-// current one.
+// it, which becomes the service's defaultModes in the catalog the client
+// fetches. Presets are what gets rolled out: a release freezes the groups as
+// they are into a version, which goes to testers first, then a growing
+// share, while the rest keep the current one.
+
+
+/** The engine's platform names, in the order the editor shows them. */
+export const OSES = ['windows', 'darwin', 'linux'] as const;
+export type Os = (typeof OSES)[number];
+export const OS_LABEL: Record<Os, string> = { windows: 'windows', darwin: 'macos', linux: 'linux' };
 
 export interface Rules {
 	domains: string[];
 	ips: string[];
-	/** process names: the exe */
+	/** process names: the exe on windows, the binary in Contents/MacOS on macos */
 	winApps: string[];
 	/** path fragments: every binary under them, wherever installed */
 	winFolders: string[];
-	/** process names: the binary in Contents/MacOS */
 	macApps: string[];
 	macFolders: string[];
-	/** package names */
-	androidApps: string[];
+	linuxApps: string[];
+	linuxFolders: string[];
 }
 
 export type RuleKind = keyof Rules;
+
+/** Where each per-OS list lives in the engine's catalog. */
+const OS_KINDS: Record<Os, { apps: RuleKind; folders: RuleKind }> = {
+	windows: { apps: 'winApps', folders: 'winFolders' },
+	darwin: { apps: 'macApps', folders: 'macFolders' },
+	linux: { apps: 'linuxApps', folders: 'linuxFolders' },
+};
 
 export const RULE_SECTIONS: { label: string; kinds: { key: RuleKind; label: string; hint: string }[] }[] = [
 	{
@@ -320,24 +337,13 @@ export const RULE_SECTIONS: { label: string; kinds: { key: RuleKind; label: stri
 			{ key: 'ips', label: 'ip / подсети', hint: '+ ip или подсеть' },
 		],
 	},
-	{
-		label: 'windows',
+	...OSES.map((os) => ({
+		label: OS_LABEL[os],
 		kinds: [
-			{ key: 'winApps', label: 'приложения', hint: '+ имя exe' },
-			{ key: 'winFolders', label: 'папки', hint: '+ кусок пути' },
+			{ key: OS_KINDS[os].apps, label: 'приложения', hint: os === 'darwin' ? '+ имя бинаря из .app' : '+ имя процесса' },
+			{ key: OS_KINDS[os].folders, label: 'папки', hint: '+ кусок пути со слешем' },
 		],
-	},
-	{
-		label: 'macos',
-		kinds: [
-			{ key: 'macApps', label: 'приложения', hint: '+ имя бинаря из .app' },
-			{ key: 'macFolders', label: 'папки', hint: '+ кусок пути' },
-		],
-	},
-	{
-		label: 'android',
-		kinds: [{ key: 'androidApps', label: 'приложения', hint: '+ пакет' }],
-	},
+	})),
 ];
 
 /** Every rule list, with the OS it belongs to; null for the shared ones. */
@@ -348,6 +354,8 @@ export const RULE_KINDS = RULE_SECTIONS.flatMap((s, i) =>
 export interface Group {
 	id: string;
 	name: string;
+	/** icon id the client knows; empty when it has none */
+	icon: string;
 	rules: Rules;
 }
 
@@ -396,76 +404,131 @@ export const emptyRules = (r: Partial<Rules> = {}): Rules => ({
 	winFolders: [],
 	macApps: [],
 	macFolders: [],
-	androidApps: [],
+	linuxApps: [],
+	linuxFolders: [],
 	...r,
 });
 
+// ---------- engine catalog ----------
+
+/** One service of the engine's catalog, field for field. */
+export interface CatalogService {
+	id: string;
+	name: string;
+	icon: string;
+	domains: string[];
+	ips: string[];
+	processes: Partial<Record<Os, string[]>>;
+	folders?: Partial<Record<Os, string[]>>;
+	defaultModes: Side[];
+}
+
+export interface Catalog {
+	schemaVersion: 1;
+	version: number;
+	services: CatalogService[];
+}
+
+export function groupFromService(s: CatalogService): Group {
+	const rules = emptyRules({ domains: [...s.domains], ips: [...s.ips] });
+	for (const os of OSES) {
+		rules[OS_KINDS[os].apps] = [...(s.processes[os] ?? [])];
+		rules[OS_KINDS[os].folders] = [...(s.folders?.[os] ?? [])];
+	}
+	return { id: s.id, name: s.name, icon: s.icon, rules };
+}
+
+function serviceOf(g: Group, defaultModes: Side[]): CatalogService {
+	const processes: CatalogService['processes'] = {};
+	const folders: NonNullable<CatalogService['folders']> = {};
+	for (const os of OSES) {
+		const apps = g.rules[OS_KINDS[os].apps];
+		const dirs = g.rules[OS_KINDS[os].folders];
+		if (apps.length) processes[os] = [...apps];
+		if (dirs.length) folders[os] = [...dirs];
+	}
+	return {
+		id: g.id,
+		name: g.name,
+		icon: g.icon,
+		domains: [...g.rules.domains],
+		ips: [...g.rules.ips],
+		processes,
+		...(Object.keys(folders).length ? { folders } : {}),
+		defaultModes,
+	};
+}
+
+/** The catalog a client fetches for one released version of a preset. */
+export function catalogOf(v: PresetVersion): Catalog {
+	const sides = new Map<string, { g: Group; modes: Side[] }>();
+	for (const side of ['bypass', 'proxy'] as const) {
+		for (const g of v[side]) {
+			const entry = sides.get(g.id) ?? { g, modes: [] };
+			entry.modes.push(side);
+			sides.set(g.id, entry);
+		}
+	}
+	return { schemaVersion: 1, version: v.v, services: [...sides.values()].map(({ g, modes }) => serviceOf(g, modes)) };
+}
+
+/**
+ * Why the engine would reject this group, or null. Mirrors the engine's
+ * boundary: a catalog with one bad entry is refused whole, so it is caught
+ * here, before a release.
+ */
+export function groupProblem(g: Group): string | null {
+	if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(g.id)) return `id «${g.id}»: латиница, цифры и дефис`;
+	if (!g.name.trim()) return 'нет названия';
+	const n = RULE_KINDS.reduce((k, x) => k + g.rules[x.key].length, 0);
+	if (!n) return 'ни одного правила';
+	for (const os of OSES) {
+		const bad = g.rules[OS_KINDS[os].folders].find((f) => !f.includes('/') || /[*?<>|"\\]/.test(f));
+		if (bad) return `папка «${bad}» (${OS_LABEL[os]}): нужен кусок пути со слешем, без масок`;
+	}
+	return null;
+}
+
+// ---------- seed ----------
+
+/** The groups the engine ships with, then ones only the mock has. */
 export const groups: Group[] = [
-	{
-		id: 'steam',
-		name: 'steam',
-		rules: emptyRules({
-			domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com', 'steamserver.net'],
-			winApps: ['steam.exe', 'steamwebhelper.exe'],
-			winFolders: ['steamapps/common/'],
-			macApps: ['steam_osx'],
-			macFolders: ['steamapps/common/'],
-			androidApps: ['com.valvesoftware.android.steam.community'],
-		}),
-	},
-	{
-		id: 'discord',
-		name: 'discord',
-		rules: emptyRules({
-			domains: ['discord.com', 'discord.gg', 'discordapp.com', 'discordapp.net', 'discord.media'],
-			winApps: ['Discord.exe'],
-			macApps: ['Discord'],
-			macFolders: ['Discord.app/'],
-			androidApps: ['com.discord'],
-		}),
-	},
+	...(bundled as Catalog).services.map(groupFromService),
 	{
 		id: 'banks',
 		name: 'госуслуги и банки',
+		icon: '',
 		rules: emptyRules({
 			domains: ['gosuslugi.ru', 'nalog.gov.ru', 'sberbank.ru', 'tbank.ru', 'vtb.ru', 'alfabank.ru'],
-			androidApps: ['ru.rostel', 'ru.sberbankmobile', 'com.idamob.tinkoff.android'],
 		}),
 	},
 	{
 		id: 'youtube',
 		name: 'youtube',
+		icon: '',
 		rules: emptyRules({
 			domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be', 'ggpht.com'],
-			androidApps: ['com.google.android.youtube'],
-		}),
-	},
-	{
-		id: 'telegram',
-		name: 'telegram',
-		rules: emptyRules({
-			domains: ['telegram.org', 't.me'],
-			ips: ['91.108.4.0/22', '149.154.160.0/20'],
-			winApps: ['Telegram.exe'],
-			macApps: ['Telegram'],
-			androidApps: ['org.telegram.messenger'],
 		}),
 	},
 ];
 
 const freeze = (ids: string[]) => structuredClone(groups.filter((g) => ids.includes(g.id)));
 
-/** steam as it was before steamserver.net, the web helper and the games folder went in */
+/** steam as it was before the web helper and the games folder went in */
 const OLD_STEAM: Group = {
 	id: 'steam',
-	name: 'steam',
+	name: 'Steam',
+	icon: 'steam',
 	rules: emptyRules({
 		domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com'],
 		winApps: ['steam.exe'],
 		macApps: ['steam_osx'],
-		androidApps: ['com.valvesoftware.android.steam.community'],
 	}),
 };
+
+// The games folder is the change the rollout below carries.
+groups[0].rules.winFolders = ['steamapps/common/'];
+groups[0].rules.macFolders = ['steamapps/common/'];
 
 export const presets: Preset[] = [
 	{

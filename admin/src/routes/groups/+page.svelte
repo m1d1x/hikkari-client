@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import RuleList from './RuleList.svelte';
 	import { db } from '$lib/store.svelte';
-	import { RULE_KINDS, RULE_SECTIONS, emptyRules, type Group } from '$lib/mock';
+	import { RULE_KINDS, RULE_SECTIONS, emptyRules, groupProblem, type Group } from '$lib/mock';
 
 	let currentId = $state(page.url.searchParams.get('g') ?? db.groups[0]?.id);
 	let nameEl = $state<HTMLInputElement | null>(null);
@@ -13,7 +13,7 @@
 	const usedIn = (x: Group) => db.presets.filter((p) => p.bypass.includes(x.id) || p.proxy.includes(x.id));
 
 	async function create() {
-		const x: Group = { id: Math.random().toString(36).slice(2, 8), name: '', rules: emptyRules() };
+		const x: Group = { id: `g-${Math.random().toString(36).slice(2, 8)}`, name: '', icon: '', rules: emptyRules() };
 		db.groups.push(x);
 		currentId = x.id;
 		await tick();
@@ -59,6 +59,9 @@
 				<input class="name" placeholder="название группы" bind:this={nameEl} bind:value={g.name} />
 				<button class="btn" onclick={remove}>удалить</button>
 			</div>
+			{#if groupProblem(g)}
+				<div class="bad problem">клиент не примет: {groupProblem(g)}</div>
+			{/if}
 			<div class="dim used">
 				{#if usedIn(g).length}
 					в пресетах:
@@ -78,7 +81,8 @@
 				</div>
 			{/each}
 			<p class="dim note">
-				каждый клиент берёт «везде» и свою ос. папки — кусок пути без диска и имени юзера, ловит все бинари под
+				это сервис каталога движка (<span class="mono">engine/core/presets</span>): каждый клиент берёт «везде» и
+				свою ос. папки — кусок пути без диска и имени юзера, ловит все бинари под
 				ним, где бы ни стояло: игры лаунчеров (<span class="mono">steamapps/common/</span>), хелперы внутри .app
 				(<span class="mono">Discord.app/</span>)
 			</p>
@@ -159,6 +163,11 @@
 
 	.used a:hover {
 		color: var(--text);
+	}
+
+	.problem {
+		margin-top: 6px;
+		font-size: 12px;
 	}
 
 	.note {

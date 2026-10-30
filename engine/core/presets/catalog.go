@@ -27,6 +27,7 @@ type Service struct {
 	Domains      []string              `json:"domains"`
 	IPs          []string              `json:"ips"`
 	Processes    map[string][]string   `json:"processes"`
+	Folders      map[string][]string   `json:"folders,omitempty"`
 	DefaultModes []routing.RoutingMode `json:"defaultModes"`
 }
 
@@ -83,11 +84,27 @@ func Parse(data []byte) (Catalog, error) {
 				return c, fmt.Errorf("%s: %w", s.ID, err)
 			}
 		}
-		if len(s.Domains)+len(s.IPs)+len(s.Processes["windows"])+len(s.Processes["darwin"])+len(s.Processes["linux"]) == 0 {
+		for platform, entries := range s.Folders {
+			if !routing.ValidPlatform(platform) {
+				return c, fmt.Errorf("неизвестная платформа %q", platform)
+			}
+			if s.Folders[platform], err = validateRules("folders", entries); err != nil {
+				return c, fmt.Errorf("%s: %w", s.ID, err)
+			}
+		}
+		if s.empty() {
 			return c, fmt.Errorf("пустой сервис %q", s.ID)
 		}
 	}
 	return c, nil
+}
+
+func (s Service) empty() bool {
+	n := len(s.Domains) + len(s.IPs)
+	for _, platform := range []string{"windows", "darwin", "linux"} {
+		n += len(s.Processes[platform]) + len(s.Folders[platform])
+	}
+	return n == 0
 }
 
 func validateRules(category string, entries []string) ([]string, error) {
@@ -117,7 +134,7 @@ func Document(manual routing.RoutingState, catalog Catalog, choices Choices, pla
 	d := routing.ManualDocument(manual, platform)
 	for _, service := range catalog.Services {
 		source := routing.Source{ID: "catalog-" + service.ID, Kind: routing.SourceCatalog, Name: service.Name}
-		rules := routing.Rules{Domains: service.Domains, IPs: service.IPs, Processes: service.Processes}
+		rules := routing.Rules{Domains: service.Domains, IPs: service.IPs, Processes: service.Processes, Folders: service.Folders}
 		if Selected(catalog, choices, routing.ModeBypass, service.ID) {
 			source.Bypass = rules
 		}
