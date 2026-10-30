@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -161,7 +162,9 @@ func TestAutomaticSyncMetadataRuntimeAndHiddenServers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stat.Mode().Perm()&0077 != 0 {
+	// Windows has no POSIX mode bits; the file is private through the ACL
+	// of the per-user data directory it lives in.
+	if runtime.GOOS != "windows" && stat.Mode().Perm()&0077 != 0 {
 		t.Fatal("credential source file is not private")
 	}
 }

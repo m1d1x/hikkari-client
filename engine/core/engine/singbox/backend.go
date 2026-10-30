@@ -41,7 +41,7 @@ func NewWithProcess(baseDir string, log engine.Logger, process vpn.Manager) *Bac
 	return &Backend{config: configfile.New(filepath.Join(baseDir, "config.json")), process: process, control: clashapi.New(""), diagnostics: diag.New(log, filepath.Join(baseDir, "config.json")), log: log}
 }
 func (b *Backend) Info() engine.Info {
-	return engine.Info{ID: "sing-box", Name: "sing-box", Capabilities: engine.Capabilities{TUN: runtime.GOOS == "darwin" || runtime.GOOS == "windows", DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: runtime.GOOS == "darwin" || runtime.GOOS == "windows", FolderRouting: runtime.GOOS == "darwin" || runtime.GOOS == "windows"}}
+	return engine.Info{ID: "sing-box", Name: "sing-box", Capabilities: engine.Capabilities{TUN: runtime.GOOS == "darwin" || runtime.GOOS == "windows", DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: processRouting, FolderRouting: processRouting}}
 }
 
 func native(p profile.Profile) (profile.Profile, error) {
@@ -213,3 +213,7 @@ func (b *Backend) ServiceScopes(profiles []profile.Profile) map[string]string {
 	}
 	return scopes
 }
+
+// processRouting: sing-box matches process_name and process_path_regex on
+// every desktop OS it finds the owning process on — Linux included.
+const processRouting = runtime.GOOS == "darwin" || runtime.GOOS == "windows" || runtime.GOOS == "linux"

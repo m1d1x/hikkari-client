@@ -89,6 +89,10 @@ jobs:
           lipo -create sing-box-arm64 sing-box-amd64 -output archive/sing-box
           lipo -info archive/sing-box
 
+      # The pinned Xray transport (checksummed) that embed_engine.sh bundles.
+      - name: Fetch pinned Xray (universal)
+        run: python3 bench/fetch_xray.py
+
       # Release builds trust exactly the channel and keys they are built with.
       - name: Build HikkariService and hikkari-updater (universal)
         env:
