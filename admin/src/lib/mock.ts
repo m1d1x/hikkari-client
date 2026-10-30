@@ -282,15 +282,14 @@ export function donations(w: Win) {
 	};
 }
 
-// ---------- presets ----------
+// ---------- groups & presets ----------
 //
-// The client gets routing presets as groups: steam, discord, banks... Each
-// group is a bundle of rules of the client's three kinds. Edits pile up in a draft; a
-// release makes a new version, which goes to testers first, then a growing
-// share, while the rest keep the current one. Errors among those who got
-// it decide whether to go on or roll back.
-
-export type RoutingMode = 'bypass' | 'proxy';
+// A group bundles every rule about one thing: steam, discord, banks. Groups
+// are a library, edited in place, never sent on their own. A preset is a set
+// of groups, each put on one side: past the vpn or through it, which fills
+// the client's bypass and proxy lists. Presets are what gets rolled out: a
+// release freezes the groups as they are into a version, which goes to
+// testers first, then a growing share, while the rest keep the current one.
 
 export interface Rules {
 	domains: string[];
@@ -307,23 +306,36 @@ export const RULE_KINDS: { key: RuleKind; label: string; hint: string }[] = [
 	{ key: 'processes', label: 'приложения', hint: '+ exe или имя .app' },
 ];
 
-export interface GroupVersion {
-	v: number;
-	rules: Rules;
-}
-
 export interface Group {
 	id: string;
 	name: string;
-	/** where the group goes unless the person moves it */
-	mode: RoutingMode;
+	rules: Rules;
+}
+
+export type Side = 'bypass' | 'proxy';
+export const SIDES: { key: Side; label: string }[] = [
+	{ key: 'bypass', label: 'мимо vpn' },
+	{ key: 'proxy', label: 'через vpn' },
+];
+
+/** A released preset: the groups frozen as they were at release. */
+export interface PresetVersion {
+	v: number;
+	bypass: Group[];
+	proxy: Group[];
+}
+
+export interface Preset {
+	id: string;
+	name: string;
+	/** group ids, what is being edited, not on any device yet */
+	bypass: string[];
+	proxy: string[];
 	platforms: Platform[];
-	/** what is being edited, not on any device yet */
-	draft: Rules;
-	/** what everyone has; null for a group never fully rolled out */
-	current: GroupVersion | null;
+	/** what everyone has; null for a preset never fully rolled out */
+	current: PresetVersion | null;
 	/** the version being rolled out; null when nothing is */
-	next: GroupVersion | null;
+	next: PresetVersion | null;
 	/** index into STAGES */
 	stage: number;
 	testers: string[];
@@ -341,105 +353,86 @@ export const ACTIVE_DEVICES = 6800;
 
 const rules = (r: Partial<Rules>): Rules => ({ domains: [], ips: [], processes: [], ...r });
 
-function group(g: Omit<Group, 'draft' | 'stage' | 'testers' | 'paused' | 'received' | 'errPct'> & Partial<Group>): Group {
-	return {
-		stage: g.next ? 0 : STAGES.length - 1,
-		testers: [],
-		paused: false,
-		received: 0,
-		errPct: { next: 0, current: 0 },
-		draft: structuredClone((g.next ?? g.current)?.rules ?? rules({})),
-		...g,
-	};
-}
-
-const STEAM = rules({
-	domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com'],
-	processes: ['steam.exe', 'steam_osx'],
-});
-
 export const groups: Group[] = [
-	group({
+	{
 		id: 'steam',
 		name: 'steam',
-		mode: 'bypass',
-		platforms: ['windows', 'macos'],
-		current: { v: 1, rules: STEAM },
-		next: {
-			v: 2,
-			rules: { ...STEAM, domains: [...STEAM.domains, 'steamserver.net'], processes: [...STEAM.processes, 'steamwebhelper.exe'] },
-		},
-		stage: 2,
-		testers: ['@kirill_v', '7f3a…c1'],
-		received: 1104,
-		errPct: { next: 0.4, current: 0.3 },
-	}),
-	group({
+		rules: rules({
+			domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com', 'steamserver.net'],
+			processes: ['steam.exe', 'steamwebhelper.exe', 'steam_osx'],
+		}),
+	},
+	{
 		id: 'discord',
 		name: 'discord',
-		mode: 'proxy',
-		platforms: ['windows', 'macos', 'android'],
-		current: {
-			v: 2,
-			rules: rules({
-				domains: ['discord.com', 'discord.gg', 'discordapp.com', 'discordapp.net', 'discord.media'],
-				processes: ['Discord.exe', 'Discord', 'Update.exe'],
-			}),
-		},
-		next: null,
-		received: 6512,
-	}),
-	group({
+		rules: rules({
+			domains: ['discord.com', 'discord.gg', 'discordapp.com', 'discordapp.net', 'discord.media'],
+			processes: ['Discord.exe', 'Discord'],
+		}),
+	},
+	{
 		id: 'banks',
 		name: 'госуслуги и банки',
-		mode: 'bypass',
-		platforms: ['windows', 'macos', 'android'],
-		current: {
-			v: 3,
-			rules: rules({ domains: ['gosuslugi.ru', 'nalog.gov.ru', 'sberbank.ru', 'tbank.ru', 'vtb.ru', 'alfabank.ru'] }),
-		},
-		next: null,
-		received: 6380,
-	}),
-	group({
+		rules: rules({ domains: ['gosuslugi.ru', 'nalog.gov.ru', 'sberbank.ru', 'tbank.ru', 'vtb.ru', 'alfabank.ru'] }),
+	},
+	{
 		id: 'youtube',
 		name: 'youtube',
-		mode: 'proxy',
-		platforms: ['windows', 'macos', 'android'],
-		current: { v: 4, rules: rules({ domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be', 'ggpht.com'] }) },
-		next: null,
-		received: 6490,
-	}),
-	group({
+		rules: rules({ domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be', 'ggpht.com'] }),
+	},
+	{
 		id: 'telegram',
 		name: 'telegram',
-		mode: 'proxy',
-		platforms: ['windows', 'macos', 'android'],
-		current: null,
-		next: {
-			v: 1,
-			rules: rules({
-				domains: ['telegram.org', 't.me'],
-				ips: ['91.108.4.0/22', '149.154.160.0/20'],
-				processes: ['Telegram.exe', 'Telegram'],
-			}),
-		},
-		testers: ['7f3a…c1', 'b20e…9d', '@kirill_v'],
-		received: 2,
-	}),
+		rules: rules({
+			domains: ['telegram.org', 't.me'],
+			ips: ['91.108.4.0/22', '149.154.160.0/20'],
+			processes: ['Telegram.exe', 'Telegram'],
+		}),
+	},
 ];
 
-/** A fresh group, nothing in it yet. */
-export function emptyGroup(): Group {
-	return group({
-		id: Math.random().toString(36).slice(2, 8),
-		name: '',
-		mode: 'proxy',
+const freeze = (ids: string[]) => structuredClone(groups.filter((g) => ids.includes(g.id)));
+
+/** steam as it was before steamserver.net and steamwebhelper.exe went in */
+const OLD_STEAM: Group = {
+	id: 'steam',
+	name: 'steam',
+	rules: rules({
+		domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com'],
+		processes: ['steam.exe', 'steam_osx'],
+	}),
+};
+
+export const presets: Preset[] = [
+	{
+		id: 'ru',
+		name: 'россия · стандарт',
+		bypass: ['banks', 'steam'],
+		proxy: ['discord', 'youtube', 'telegram'],
 		platforms: ['windows', 'macos', 'android'],
-		current: null,
+		current: { v: 3, bypass: [...freeze(['banks']), OLD_STEAM], proxy: freeze(['discord', 'youtube']) },
+		next: { v: 4, bypass: freeze(['banks', 'steam']), proxy: freeze(['discord', 'youtube', 'telegram']) },
+		stage: 2,
+		testers: ['@kirill_v', '7f3a…c1'],
+		paused: false,
+		received: 1104,
+		errPct: { next: 0.4, current: 0.3 },
+	},
+	{
+		id: 'gamer',
+		name: 'геймер',
+		bypass: ['steam'],
+		proxy: ['discord'],
+		platforms: ['windows', 'macos'],
+		current: { v: 1, bypass: [OLD_STEAM], proxy: freeze(['discord']) },
 		next: null,
-	});
-}
+		stage: STAGES.length - 1,
+		testers: [],
+		paused: false,
+		received: 2410,
+		errPct: { next: 0, current: 0.2 },
+	},
+];
 
 // ---------- format ----------
 

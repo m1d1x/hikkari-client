@@ -1,29 +1,40 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import RuleList from './RuleList.svelte';
+	import { page } from '$app/state';
+	import { db } from '$lib/store.svelte';
 	import {
-		groups as seed,
-		emptyGroup,
 		num,
 		pct,
 		STAGES,
+		SIDES,
 		RULE_KINDS,
 		ACTIVE_DEVICES,
 		PLATFORMS,
 		PLATFORM_SHARE,
 		type Group,
 		type Platform,
+		type Preset,
 		type Rules,
+		type Side,
 	} from '$lib/mock';
 
-	let list = $state<Group[]>(structuredClone(seed));
-	let currentId = $state(seed[0].id);
-	let testersText = $state(seed[0].testers.join('\n'));
+	let currentId = $state<string | undefined>();
+	// The textarea holds its own text so a trailing newline survives typing;
+	// it is reset only when another preset is picked.
+	let testersText = $state('');
 	let nameEl = $state<HTMLInputElement | null>(null);
-	const g = $derived(list.find((x) => x.id === currentId) ?? list[0]);
+	const p = $derived(db.presets.find((x) => x.id === currentId) ?? db.presets[0]);
+
+	function select(id: string | undefined) {
+		currentId = id;
+		testersText = db.presets.find((x) => x.id === id)?.testers.join('\n') ?? '';
+	}
+
+	select(page.url.searchParams.get('p') ?? db.presets[0]?.id);
 
 	const stageLabel = (i: number) => (i === 0 ? 'тестеры' : i === STAGES.length - 1 ? 'все' : `${STAGES[i]}%`);
-	const latest = (x: Group) => x.next ?? x.current;
+	const latest = (x: Preset) => x.next ?? x.current;
+	const groupOf = (id: string) => db.groups.find((g) => g.id === id);
 	const ruleCount = (r: Rules) => r.domains.length + r.ips.length + r.processes.length;
 
 	function plural(n: number, [one, few, many]: [string, string, string]): string {
@@ -32,87 +43,124 @@
 		return `${n} ${d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many}`;
 	}
 
-	/** Draft against the latest released version: what a release would change. */
-	function changes(x: Group): { kind: keyof Rules; v: string; add: boolean }[] {
-		const base = latest(x)?.rules;
-		return RULE_KINDS.flatMap(({ key }) => {
-			const was = new Set(base?.[key] ?? []);
-			const now = new Set(x.draft[key]);
-			return [
-				...[...now].filter((v) => !was.has(v)).map((v) => ({ kind: key, v, add: true })),
-				...[...was].filter((v) => !now.has(v)).map((v) => ({ kind: key, v, add: false })),
-			];
+	/** Rules added and dropped between two states of one group. */
+	function ruleDiff(was: Rules, now: Rules): string[] {
+		return RULE_KINDS.flatMap(({ key }) => [
+			...now[key].filter((v) => !was[key].includes(v)).map((v) => `+ ${v}`),
+			...was[key].filter((v) => !now[key].includes(v)).map((v) => `− ${v}`),
+		]);
+	}
+
+	/** What a release would change against the latest version: groups in and out, and edits inside groups. */
+	function changes(x: Preset): { text: string; kind: 'add' | 'drop' | 'edit' }[] {
+		const base = latest(x);
+		return SIDES.flatMap(({ key, label }) => {
+			const was = base?.[key] ?? [];
+			const out: { text: string; kind: 'add' | 'drop' | 'edit' }[] = [];
+			for (const id of x[key]) {
+				const g = groupOf(id);
+				const old = was.find((o) => o.id === id);
+				if (!g) continue;
+				if (!old) out.push({ text: `+ ${g.name} → ${label}`, kind: 'add' });
+				else {
+					const d = ruleDiff(old.rules, g.rules);
+					if (d.length) out.push({ text: `${g.name}: ${d.join('  ')}`, kind: 'edit' });
+				}
+			}
+			for (const old of was) {
+				if (!x[key].includes(old.id)) out.push({ text: `− ${old.name} из «${label}»`, kind: 'drop' });
+			}
+			return out;
 		});
 	}
 
-	const diff = $derived(changes(g));
-	const added = $derived(new Set(diff.filter((d) => d.add).map((d) => d.v)));
-	const worse = $derived(g.next !== null && g.stage > 0 && g.errPct.next > g.errPct.current * 1.5);
+	const diff = $derived(p ? changes(p) : []);
+	const free = $derived(db.groups.filter((g) => p && !p.bypass.includes(g.id) && !p.proxy.includes(g.id)));
+	const worse = $derived(!!p?.next && p.stage > 0 && p.errPct.next > p.errPct.current * 1.5);
 
-	function status(x: Group): { text: string; cls: string } {
+	function status(x: Preset): { text: string; cls: string } {
 		if (x.next) return x.paused ? { text: 'пауза', cls: 'warn' } : { text: stageLabel(x.stage), cls: 'on' };
 		if (!x.current) return { text: 'черновик', cls: 'dim' };
-		if (changes(x).length) return { text: 'изменена', cls: 'dim' };
+		if (changes(x).length) return { text: 'изменён', cls: 'dim' };
 		return { text: `v${x.current.v}`, cls: 'dim' };
 	}
 
 	/** Devices the stage is meant to reach: its share of the chosen platforms plus the testers. */
-	function target(x: Group): number {
+	function target(x: Preset): number {
 		const share = x.platforms.reduce((s, y) => s + PLATFORM_SHARE[y], 0);
 		return Math.round((ACTIVE_DEVICES * share * STAGES[x.stage]) / 100) + x.testers.length;
 	}
 
-	function select(x: Group) {
-		currentId = x.id;
-		testersText = x.testers.join('\n');
-	}
-
 	async function create() {
-		const x = emptyGroup();
-		list.push(x);
-		select(x);
+		const x: Preset = {
+			id: Math.random().toString(36).slice(2, 8),
+			name: '',
+			bypass: [],
+			proxy: [],
+			platforms: [...PLATFORMS],
+			current: null,
+			next: null,
+			stage: STAGES.length - 1,
+			testers: [],
+			paused: false,
+			received: 0,
+			errPct: { next: 0, current: 0 },
+		};
+		db.presets.push(x);
+		select(x.id);
 		await tick();
 		nameEl?.focus();
 	}
 
 	function remove() {
-		if (!confirm(`удалить группу «${g.name || 'без названия'}»? у всех она пропадёт`)) return;
-		list = list.filter((x) => x.id !== g.id);
-		if (list.length) select(list[0]);
+		if (!confirm(`удалить пресет «${p.name || 'без названия'}»? у людей он пропадёт`)) return;
+		db.presets = db.presets.filter((x) => x.id !== p.id);
+		select(db.presets[0]?.id);
 	}
 
+	function addGroup(side: Side, id: string) {
+		if (id) p[side] = [...p[side], id];
+	}
+
+	function dropGroup(side: Side, id: string) {
+		p[side] = p[side].filter((x) => x !== id);
+	}
+
+	/** Freezes the groups as they are now into the next version. */
 	function release() {
-		g.next = { v: (latest(g)?.v ?? 0) + 1, rules: $state.snapshot(g.draft) };
-		g.stage = 0;
-		g.received = 0;
-		g.paused = false;
+		const freeze = (ids: string[]) =>
+			ids.map(groupOf).filter((g): g is Group => !!g).map((g) => $state.snapshot(g));
+		p.next = { v: (latest(p)?.v ?? 0) + 1, bypass: freeze(p.bypass), proxy: freeze(p.proxy) };
+		p.stage = 0;
+		p.received = 0;
+		p.paused = false;
 	}
 
 	function advance() {
-		if (!g.next) return;
-		if (g.stage < STAGES.length - 1) {
-			g.stage++;
-			g.received = Math.round(target(g) * 0.1);
+		if (!p.next) return;
+		if (p.stage < STAGES.length - 1) {
+			p.stage++;
+			p.received = Math.round(target(p) * 0.1);
 		} else {
-			g.current = g.next;
-			g.next = null;
+			p.current = p.next;
+			p.next = null;
 		}
-		g.paused = false;
+		p.paused = false;
 	}
 
-	/** Drops the version being rolled out; the draft keeps its rules, so it can be fixed and released again. */
+	/** Drops the version being rolled out; the groups stay as edited, so it can be fixed and released again. */
 	function rollback() {
-		g.next = null;
-		g.stage = STAGES.length - 1;
-		g.paused = false;
+		p.next = null;
+		p.stage = STAGES.length - 1;
+		p.paused = false;
 	}
 
 	function togglePlatform(x: Platform) {
-		g.platforms = g.platforms.includes(x) ? g.platforms.filter((y) => y !== x) : [...g.platforms, x];
+		p.platforms = p.platforms.includes(x) ? p.platforms.filter((y) => y !== x) : [...p.platforms, x];
 	}
 
 	function setTesters(text: string) {
-		g.testers = text
+		p.testers = text
 			.split('\n')
 			.map((s) => s.trim())
 			.filter(Boolean);
@@ -122,96 +170,118 @@
 <div class="head">
 	<div>
 		<h1>пресеты</h1>
-		<div class="dim sub">группы правил маршрутизации, которые клиент забирает с сервера</div>
+		<div class="dim sub">набор групп, который клиент забирает с сервера; раскатывается целиком</div>
 	</div>
 </div>
 
 <div class="presets">
 	<section class="card list">
-		<button class="btn add" onclick={create}>+ группа</button>
-		{#each list as x (x.id)}
+		<button class="btn add" onclick={create}>+ пресет</button>
+		{#each db.presets as x (x.id)}
 			{@const st = status(x)}
-			<button class="item" class:on={x.id === currentId} onclick={() => select(x)}>
+			<button class="item" class:on={x.id === currentId} onclick={() => select(x.id)}>
 				<div class="line">
 					<span class:dim={!x.name}>{x.name || 'без названия'}</span>
 					<span class="st {st.cls}">{st.text}</span>
 				</div>
-				<div class="dim meta">
-					{x.mode === 'bypass' ? 'мимо vpn' : 'через vpn'} · {plural(ruleCount(x.draft), ['правило', 'правила', 'правил'])}
-				</div>
+				<div class="dim meta">{plural(x.bypass.length + x.proxy.length, ['группа', 'группы', 'групп'])}</div>
 			</button>
 		{/each}
 	</section>
 
-	{#if g}
+	{#if p}
 		<section class="card">
 			<div class="top">
-				<input class="name" placeholder="название группы" bind:this={nameEl} bind:value={g.name} />
+				<input class="name" placeholder="название пресета" bind:this={nameEl} bind:value={p.name} />
 				<button class="btn" onclick={remove}>удалить</button>
 			</div>
 
-			<div class="form">
-				<span class="label">по умолчанию</span>
-				<div class="chips">
-					<button class="chip" class:on={g.mode === 'bypass'} onclick={() => (g.mode = 'bypass')}>мимо vpn</button>
-					<button class="chip" class:on={g.mode === 'proxy'} onclick={() => (g.mode = 'proxy')}>через vpn</button>
-				</div>
+			<div class="sides">
+				{#each SIDES as s (s.key)}
+					<div>
+						<div class="label">{s.label}</div>
+						<div class="groups">
+							{#each p[s.key] as id (id)}
+								{@const g = groupOf(id)}
+								{#if g}
+									<span class="g">
+										<a href="/groups?g={g.id}">{g.name || 'без названия'}</a>
+										<small>{ruleCount(g.rules)}</small>
+										<button onclick={() => dropGroup(s.key, id)} title="убрать">×</button>
+									</span>
+								{/if}
+							{/each}
+							{#if free.length}
+								<select
+									class="pick"
+									onchange={(e) => {
+										addGroup(s.key, e.currentTarget.value);
+										e.currentTarget.value = '';
+									}}
+								>
+									<option value="">+ группа</option>
+									{#each free as g (g.id)}
+										<option value={g.id}>{g.name || 'без названия'}</option>
+									{/each}
+								</select>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+
+			<div class="block form">
 				<span class="label">платформы</span>
 				<div class="chips">
 					{#each PLATFORMS as x (x)}
-						<button class="chip" class:on={g.platforms.includes(x)} onclick={() => togglePlatform(x)}>{x}</button>
+						<button class="chip" class:on={p.platforms.includes(x)} onclick={() => togglePlatform(x)}>{x}</button>
 					{/each}
 				</div>
-			</div>
-
-			<div class="block rules">
-				{#each RULE_KINDS as k (k.key)}
-					<RuleList label={k.label} hint={k.hint} bind:items={g.draft[k.key]} {added} />
-				{/each}
 			</div>
 
 			{#if diff.length}
 				<div class="block">
 					<div class="release">
-						<div class="diff">
-							{#each diff as d (d.kind + d.v)}
-								<span class:ok={d.add} class:bad={!d.add}>{d.add ? '+' : '−'} {d.v}</span>
-							{/each}
-						</div>
-						{#if g.next}
-							<span class="dim hint">v{g.next.v} ещё раскатывается: заверши или откати, потом выпускай</span>
+						<div class="label">что уйдёт людям в v{(latest(p)?.v ?? 0) + 1}</div>
+						{#if p.next}
+							<span class="dim hint">v{p.next.v} ещё раскатывается: заверши или откати, потом выпускай</span>
 						{:else}
-							<button class="btn primary" onclick={release}>выпустить v{(latest(g)?.v ?? 0) + 1}</button>
+							<button class="btn primary" onclick={release}>выпустить v{(latest(p)?.v ?? 0) + 1}</button>
 						{/if}
+					</div>
+					<div class="diff">
+						{#each diff as d (d.text)}
+							<div class:ok={d.kind === 'add'} class:bad={d.kind === 'drop'}>{d.text}</div>
+						{/each}
 					</div>
 				</div>
 			{/if}
 
-			{#if g.next}
+			{#if p.next}
 				<div class="block">
-					<div class="rollout-head">
-						<span class="label">раскатка v{g.next.v}</span>
+					<div class="release">
+						<span class="label">раскатка v{p.next.v}</span>
 						<div class="actions">
 							<button class="btn" onclick={rollback}>откатить</button>
-							<button class="btn" onclick={() => (g.paused = !g.paused)}>{g.paused ? 'продолжить' : 'пауза'}</button>
+							<button class="btn" onclick={() => (p.paused = !p.paused)}>{p.paused ? 'продолжить' : 'пауза'}</button>
 							<button class="btn primary" onclick={advance}>
-								{g.stage < STAGES.length - 1 ? `дальше → ${stageLabel(g.stage + 1)}` : 'завершить'}
+								{p.stage < STAGES.length - 1 ? `дальше → ${stageLabel(p.stage + 1)}` : 'завершить'}
 							</button>
 						</div>
 					</div>
 					<div class="stages">
 						{#each STAGES as _, i (i)}
-							<div class="stage" class:done={i < g.stage} class:now={i === g.stage}>
+							<div class="stage" class:done={i < p.stage} class:now={i === p.stage}>
 								<i></i>
 								<span>{stageLabel(i)}</span>
 							</div>
 						{/each}
 					</div>
 					<div class="figures">
-						<span>получили<b>{num(g.received)}</b><span class="dim">&nbsp;из ~{num(target(g))}</span></span>
-						{#if g.stage > 0}
-							<span>ошибки у них<b class:bad={worse}>{pct(g.errPct.next)}</b></span>
-							<span>у остальных<b>{pct(g.errPct.current)}</b></span>
+						<span>получили<b>{num(p.received)}</b><span class="dim">&nbsp;из ~{num(target(p))}</span></span>
+						{#if p.stage > 0}
+							<span>ошибки у них<b class:bad={worse}>{pct(p.errPct.next)}</b></span>
+							<span>у остальных<b>{pct(p.errPct.current)}</b></span>
 						{/if}
 					</div>
 					<div class="form testers">
@@ -225,8 +295,8 @@
 						></textarea>
 					</div>
 				</div>
-			{:else if g.current}
-				<div class="block dim">v{g.current.v} у всех · {num(g.received)} устройств</div>
+			{:else if p.current}
+				<div class="block dim">v{p.current.v} у всех · {num(p.received)} устройств</div>
 			{/if}
 		</section>
 	{/if}
@@ -239,12 +309,12 @@
 
 	.presets {
 		display: grid;
-		grid-template-columns: 260px minmax(0, 1fr);
+		grid-template-columns: 220px minmax(0, 1fr);
 		gap: 16px;
 		align-items: start;
 	}
 
-	/* ---------- group list ---------- */
+	/* ---------- preset list ---------- */
 
 	.list {
 		padding: 6px;
@@ -290,7 +360,7 @@
 		display: flex;
 		align-items: center;
 		gap: 16px;
-		margin-bottom: 14px;
+		margin-bottom: 18px;
 	}
 
 	.name {
@@ -303,16 +373,72 @@
 		color: var(--text-3);
 	}
 
-	.form {
-		display: grid;
-		grid-template-columns: 90px minmax(0, 420px);
-		gap: 10px 16px;
-		align-items: center;
-	}
-
 	.label {
 		font-size: 11px;
 		color: var(--text-3);
+	}
+
+	.sides {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 24px;
+	}
+
+	.sides .label {
+		margin-bottom: 8px;
+	}
+
+	.groups {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.g {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 4px 3px 10px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: var(--inset);
+		font-size: 12px;
+	}
+
+	.g a:hover {
+		color: var(--primary);
+	}
+
+	.g small {
+		font-family: var(--mono);
+		font-size: 10px;
+		color: var(--text-3);
+	}
+
+	.g button {
+		padding: 0 4px;
+		color: var(--text-3);
+	}
+
+	.g button:hover {
+		color: var(--bad);
+	}
+
+	.pick {
+		padding: 3px 8px;
+		border: 1px dashed var(--border);
+		border-radius: 6px;
+		background: none;
+		color: var(--text-2);
+		font: inherit;
+		font-size: 12px;
+		outline: none;
+		cursor: pointer;
+	}
+
+	.pick option {
+		background: var(--surface);
+		color: var(--text);
 	}
 
 	.block {
@@ -321,35 +447,37 @@
 		border-top: 1px solid var(--border-subtle);
 	}
 
-	.rules {
+	.form {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 24px;
+		grid-template-columns: 90px minmax(0, 420px);
+		gap: 10px 16px;
+		align-items: center;
 	}
 
 	.release {
 		display: flex;
 		align-items: center;
 		gap: 16px;
+		margin-bottom: 10px;
 	}
 
-	.diff {
-		flex: 1;
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 16px;
-		font-family: var(--mono);
-		font-size: 12px;
+	.release .btn,
+	.release .hint {
+		margin-left: auto;
 	}
 
 	.hint {
 		font-size: 11px;
 	}
 
-	.rollout-head {
+	.diff {
 		display: flex;
-		align-items: center;
-		margin-bottom: 12px;
+		flex-direction: column;
+		gap: 3px;
+		font-family: var(--mono);
+		font-size: 12px;
+		color: var(--text-2);
+		white-space: pre-wrap;
 	}
 
 	.actions {
@@ -362,6 +490,7 @@
 	.stages {
 		display: flex;
 		max-width: 520px;
+		margin-top: 4px;
 	}
 
 	.stage {

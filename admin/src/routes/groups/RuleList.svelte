@@ -3,11 +3,9 @@
 		label: string;
 		hint: string;
 		items: string[];
-		/** items not in the published version: marked so the edit is visible in place */
-		added: Set<string>;
 	}
 
-	let { label, hint, items = $bindable(), added }: Props = $props();
+	let { label, hint, items = $bindable() }: Props = $props();
 	let input = $state('');
 
 	/** Adds every value in text, split on newlines, commas and spaces, skipping ones already there. */
@@ -32,7 +30,7 @@
 <div class="list">
 	<div class="label">{label} · {items.length}</div>
 	{#each items as x (x)}
-		<div class="item" class:added={added.has(x)}>
+		<div class="item">
 			<span>{x}</span>
 			<button onclick={() => (items = items.filter((y) => y !== x))} title="убрать">×</button>
 		</div>
@@ -72,10 +70,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-
-	.item.added {
-		color: var(--ok);
 	}
 
 	.item button {

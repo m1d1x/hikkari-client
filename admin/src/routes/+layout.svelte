@@ -10,6 +10,7 @@
 		{ href: '/support', label: 'обращения' },
 		{ href: '/donations', label: 'донаты' },
 		{ href: '/presets', label: 'пресеты' },
+		{ href: '/groups', label: 'группы' },
 	];
 
 	const active = (href: string) =>
