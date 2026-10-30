@@ -6,10 +6,19 @@ import '../ui/nekko_segmented.dart';
 import '../theme/tokens.dart';
 import 'route_section.dart';
 import 'service_presets.dart';
+import 'update_banner.dart';
 
-/// Compact top-right action. The old brand/IP header was intentionally removed
-/// so the home screen starts with the product itself, not chrome.
+/// The top row: the settings action on the right and, when an update is
+/// ready, the [UpdateBanner] beside it. The old brand/IP header was
+/// intentionally removed so the home screen starts with the product itself.
 class BrandHeader extends StatelessWidget {
+  /// The settings icon's footprint: 24px glyph + 14px padding each side.
+  static const double _iconBox = 52;
+
+  /// Below this window width the update card starts at the left edge
+  /// instead of being centred.
+  static const double _centredFrom = 420;
+
   final VoidCallback onOpenLogs;
   const BrandHeader({super.key, required this.onOpenLogs});
 
@@ -28,19 +37,27 @@ class BrandHeader extends StatelessWidget {
     ].join('\n');
 
     final baseColor = _statusColor(t, status);
+    final wide = MediaQuery.sizeOf(context).width >= _centredFrom;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 14, 0),
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: _HoverIcon(
-          tooltip: details,
-          onPressed: () => _showSettings(context, state),
-          icon: Icons.settings_outlined,
-          size: 24,
-          color: baseColor,
-          hoverColor: t.primary,
-          padding: const EdgeInsets.all(14),
-        ),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+      child: Row(
+        children: [
+          // The update card shares the top row with the settings icon
+          // instead of pushing the content down; empty when there is none.
+          // A blank as wide as the icon on the left keeps it centred —
+          // unless the window is so narrow that the card needs that room.
+          SizedBox(width: wide ? _iconBox : 0),
+          const Expanded(child: UpdateBanner()),
+          _HoverIcon(
+            tooltip: details,
+            onPressed: () => _showSettings(context, state),
+            icon: Icons.settings_outlined,
+            size: 24,
+            color: baseColor,
+            hoverColor: t.primary,
+            padding: const EdgeInsets.all(14),
+          ),
+        ],
       ),
     );
   }

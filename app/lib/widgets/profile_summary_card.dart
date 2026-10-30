@@ -90,51 +90,51 @@ class ProfileSummaryCard extends StatelessWidget {
       child: Opacity(
         opacity: dead ? 0.45 : 1.0,
         child: Material(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(t.radiusLg),
-        clipBehavior: Clip.antiAlias,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          decoration: BoxDecoration(
-            border: Border.all(color: borderColor),
-            borderRadius: BorderRadius.circular(t.radiusLg),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _adaptiveRow(
-                t: t,
-                textScaler: MediaQuery.textScalerOf(context),
-                leading: leading,
-                title: title,
-                titleFontSize: titleFontSize,
-                titleWeight: titleWeight,
-                rtt: rtt,
-                dead: dead,
-                checking: checking,
-                selected: selected,
-                samples: samples,
-                lineColor: lineColor,
-              ),
-              if (footer != null)
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 180),
-                  curve: AppCurves.fastInSlowOut,
-                  alignment: Alignment.topCenter,
-                  child: footerVisible
-                      ? Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Divider(height: 1, color: borderColor),
-                            footer!,
-                          ],
-                        )
-                      : const SizedBox.shrink(),
+          color: bgColor,
+          borderRadius: BorderRadius.circular(t.radiusLg),
+          clipBehavior: Clip.antiAlias,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            decoration: BoxDecoration(
+              border: Border.all(color: borderColor),
+              borderRadius: BorderRadius.circular(t.radiusLg),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _adaptiveRow(
+                  t: t,
+                  textScaler: MediaQuery.textScalerOf(context),
+                  leading: leading,
+                  title: title,
+                  titleFontSize: titleFontSize,
+                  titleWeight: titleWeight,
+                  rtt: rtt,
+                  dead: dead,
+                  checking: checking,
+                  selected: selected,
+                  samples: samples,
+                  lineColor: lineColor,
                 ),
-            ],
+                if (footer != null)
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 180),
+                    curve: AppCurves.fastInSlowOut,
+                    alignment: Alignment.topCenter,
+                    child: footerVisible
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Divider(height: 1, color: borderColor),
+                              footer!,
+                            ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -183,8 +183,8 @@ class ProfileSummaryCard extends StatelessWidget {
       text: dead
           ? 'down'
           : checking
-              ? '…'
-              : '$rtt',
+          ? '…'
+          : '$rtt',
       children: dead || checking
           ? null
           : [
@@ -229,7 +229,8 @@ class ProfileSummaryCard extends StatelessWidget {
         const gapT = 6.0; // rtt → trailing
         final trailingW = trailing == null ? 0.0 : trailingWidth;
         final leadingW = leading == null ? 0.0 : leadingWidth;
-        final gapsTotal = gapL +
+        final gapsTotal =
+            gapL +
             gapR +
             (trailing == null ? 0 : gapT) +
             (leading == null ? 0 : gapLead);
@@ -279,7 +280,10 @@ class ProfileSummaryCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             if (leading != null) ...[
-              SizedBox(width: leadingW, child: Center(child: leading)),
+              SizedBox(
+                width: leadingW,
+                child: Center(child: leading),
+              ),
               const SizedBox(width: gapLead),
             ],
             SizedBox(
@@ -309,10 +313,7 @@ class ProfileSummaryCard extends StatelessWidget {
                 textHeightBehavior: trimmedHeight,
               ),
             ),
-            if (trailing != null) ...[
-              const SizedBox(width: gapT),
-              trailing!,
-            ],
+            if (trailing != null) ...[const SizedBox(width: gapT), trailing!],
           ],
         );
 
@@ -322,7 +323,8 @@ class ProfileSummaryCard extends StatelessWidget {
         // уходит на [onTrailingTap], иначе — обычное [onTap]. Так вся
         // правая часть карточки, а не только 34px-иконка, разворачивает
         // подробности — это удобнее пальцем на телефоне.
-        final splitX = resolvedPadding.left +
+        final splitX =
+            resolvedPadding.left +
             leadingW +
             (leading == null ? 0 : gapLead) +
             titleW +
@@ -347,8 +349,9 @@ class ProfileSummaryCard extends StatelessWidget {
             mouseCursor: hasAnyTap
                 ? SystemMouseCursors.click
                 : SystemMouseCursors.basic,
-            hoverColor:
-                hasAnyTap ? t.primary.withValues(alpha: 0.06) : Colors.transparent,
+            hoverColor: hasAnyTap
+                ? t.primary.withValues(alpha: 0.06)
+                : Colors.transparent,
             child: Padding(padding: resolvedPadding, child: row),
           ),
         );

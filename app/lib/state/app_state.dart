@@ -157,6 +157,14 @@ class AppState extends ChangeNotifier {
   // ----- getters -----
   HealthInfo? get health => _health;
   UpdateStatus get updateStatus => _update;
+
+  /// Sets the update state directly — widget tests of the update card.
+  @visibleForTesting
+  void debugSetUpdate(UpdateStatus next) {
+    _update = next;
+    notifyListeners();
+  }
+
   List<ProfileInfo> get profiles => _profiles;
   Map<String, String> get profileCountries => _profileCountries;
 

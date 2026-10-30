@@ -62,21 +62,26 @@ class ProfileShareSheet extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               profile.label,
-              style:
-                  TextStyle(color: t.textMuted, fontSize: NekkoTokens.sizeBody),
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: NekkoTokens.sizeBody,
+              ),
             ),
             const SizedBox(height: 18),
             FutureBuilder<String?>(
               future: context.read<AppState>().exportProfileUri(profile.name),
               builder: (ctx, snap) {
                 if (snap.connectionState != ConnectionState.done) {
-                  return _frame(t, const Center(
-                    child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                  return _frame(
+                    t,
+                    const Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                     ),
-                  ));
+                  );
                 }
                 final uri = snap.data;
                 if (uri == null || uri.isEmpty) return _unavailable(t);
@@ -152,10 +157,7 @@ class ProfileShareSheet extends StatelessWidget {
                 // Свой quiet-zone у QR выключаем — рамку даёт контейнер.
                 padding: EdgeInsets.zero,
                 backgroundColor: Colors.transparent,
-                eyeStyle: QrEyeStyle(
-                  eyeShape: QrEyeShape.circle,
-                  color: t.bg,
-                ),
+                eyeStyle: QrEyeStyle(eyeShape: QrEyeShape.circle, color: t.bg),
                 dataModuleStyle: QrDataModuleStyle(
                   dataModuleShape: QrDataModuleShape.square,
                   color: t.bg,
@@ -182,7 +184,10 @@ class ProfileShareSheet extends StatelessWidget {
               'движок не смог экспортировать ссылку',
               textAlign: TextAlign.center,
               style: TextStyle(
-                  color: t.textMuted, fontSize: NekkoTokens.sizeBody, height: 1.35),
+                color: t.textMuted,
+                fontSize: NekkoTokens.sizeBody,
+                height: 1.35,
+              ),
             ),
           ),
         ],

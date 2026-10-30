@@ -96,7 +96,11 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
   }
 
   Widget _collapsedRow(
-      NekkoTokens t, ServerCleanliness c, Color color, bool checking) {
+    NekkoTokens t,
+    ServerCleanliness c,
+    Color color,
+    bool checking,
+  ) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
       child: Row(
@@ -129,9 +133,7 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  checking
-                      ? 'смотрю, как выглядит выход…'
-                      : _summaryLine(c),
+                  checking ? 'смотрю, как выглядит выход…' : _summaryLine(c),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
@@ -211,11 +213,14 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
           // --- ПОЧЕМУ фродит: список конкретных причин с фиксами ---
           if (c.reasons.isNotEmpty) ...[
             const SizedBox(height: 14),
-            Text('почему так',
-                style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600)),
+            Text(
+              'почему так',
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 8),
             for (final r in c.reasons) _reasonTile(t, r),
           ],
@@ -223,17 +228,23 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
           const SizedBox(height: 14),
           Divider(color: t.border, height: 1),
           const SizedBox(height: 12),
-          Text('детали',
-              style: TextStyle(
-                  color: t.textMuted,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600)),
+          Text(
+            'детали',
+            style: TextStyle(
+              color: t.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
           const SizedBox(height: 6),
           _kv(t, 'IP', c.ip.isEmpty ? '—' : c.ip),
           _kv(t, 'ASN', asnLine),
           _kv(t, 'ISP', c.isp.isEmpty ? '—' : c.isp),
-          _kv(t, 'локация',
-              [c.country, c.city].where((s) => s.isNotEmpty).join(' · ')),
+          _kv(
+            t,
+            'локация',
+            [c.country, c.city].where((s) => s.isNotEmpty).join(' · '),
+          ),
           _kvFlag(t, 'хостинг / датацентр', c.isHosting),
           _kvFlag(t, 'proxy / vpn / tor', c.isProxy || c.isVpn || c.isTor),
           _kvFlag(t, 'в базах злоупотреблений', c.isAbuser),
@@ -291,23 +302,26 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(r.title,
-                    style: TextStyle(
-                        color: t.text, fontSize: 11.5, height: 1.35)),
+                Text(
+                  r.title,
+                  style: TextStyle(color: t.text, fontSize: 11.5, height: 1.35),
+                ),
                 if (r.fix.isNotEmpty) ...[
                   const SizedBox(height: 3),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.arrow_right_alt,
-                          size: 14, color: t.textMuted),
+                      Icon(Icons.arrow_right_alt, size: 14, color: t.textMuted),
                       const SizedBox(width: 4),
                       Expanded(
-                        child: Text(r.fix,
-                            style: TextStyle(
-                                color: t.textMuted,
-                                fontSize: 10.5,
-                                height: 1.35)),
+                        child: Text(
+                          r.fix,
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 10.5,
+                            height: 1.35,
+                          ),
+                        ),
                       ),
                     ],
                   ),
@@ -328,15 +342,20 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
       children: [
         Row(
           children: [
-            Text('индекс чистоты',
-                style: TextStyle(color: t.textMuted, fontSize: 11)),
+            Text(
+              'индекс чистоты',
+              style: TextStyle(color: t.textMuted, fontSize: 11),
+            ),
             const Spacer(),
-            Text('${c.score}/100',
-                style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: t.monoFamily)),
+            Text(
+              '${c.score}/100',
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                fontFamily: t.monoFamily,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 6),
@@ -354,46 +373,47 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
   }
 
   Widget _kv(NekkoTokens t, String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 130,
-              child: Text(k,
-                  style: TextStyle(color: t.textMuted, fontSize: 11.5)),
-            ),
-            Expanded(
-              child: Text(
-                v.isEmpty ? '—' : v,
-                style: TextStyle(
-                  color: t.text,
-                  fontSize: 11.5,
-                  fontFamily: t.monoFamily,
-                ),
-              ),
-            ),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 130,
+          child: Text(k, style: TextStyle(color: t.textMuted, fontSize: 11.5)),
         ),
-      );
+        Expanded(
+          child: Text(
+            v.isEmpty ? '—' : v,
+            style: TextStyle(
+              color: t.text,
+              fontSize: 11.5,
+              fontFamily: t.monoFamily,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _kvFlag(NekkoTokens t, String k, bool on) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 130,
-              child: Text(k,
-                  style: TextStyle(color: t.textMuted, fontSize: 11.5)),
-            ),
-            Icon(on ? Icons.check_circle : Icons.remove_circle_outline,
-                size: 14, color: on ? t.warn : t.textFaint),
-            const SizedBox(width: 6),
-            Text(on ? 'да' : 'нет',
-                style: TextStyle(
-                    color: on ? t.warn : t.textMuted, fontSize: 11.5)),
-          ],
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 130,
+          child: Text(k, style: TextStyle(color: t.textMuted, fontSize: 11.5)),
         ),
-      );
-
+        Icon(
+          on ? Icons.check_circle : Icons.remove_circle_outline,
+          size: 14,
+          color: on ? t.warn : t.textFaint,
+        ),
+        const SizedBox(width: 6),
+        Text(
+          on ? 'да' : 'нет',
+          style: TextStyle(color: on ? t.warn : t.textMuted, fontSize: 11.5),
+        ),
+      ],
+    ),
+  );
 }

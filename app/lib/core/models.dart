@@ -495,12 +495,12 @@ class UpdateStatus {
   bool get isDownloading => state == 'downloading';
 
   factory UpdateStatus.fromJson(Map<String, dynamic> j) => UpdateStatus(
-        state: j['state'] as String? ?? 'unavailable',
-        installed: j['installed'] as String? ?? '',
-        version: j['version'] as String? ?? '',
-        mandatory: j['mandatory'] as bool? ?? false,
-        bytesDone: (j['bytesDone'] as num?)?.toInt() ?? 0,
-        bytesTotal: (j['bytesTotal'] as num?)?.toInt() ?? 0,
-        error: j['error'] as String? ?? '',
-      );
+    state: j['state'] as String? ?? 'unavailable',
+    installed: j['installed'] as String? ?? '',
+    version: j['version'] as String? ?? '',
+    mandatory: j['mandatory'] as bool? ?? false,
+    bytesDone: (j['bytesDone'] as num?)?.toInt() ?? 0,
+    bytesTotal: (j['bytesTotal'] as num?)?.toInt() ?? 0,
+    error: j['error'] as String? ?? '',
+  );
 }
