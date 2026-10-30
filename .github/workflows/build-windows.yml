@@ -569,16 +569,20 @@ jobs:
           KEY_ID: ${{ vars.HIKKARI_RELEASE_KEY_ID }}
           UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
           UPDATE_KEYS: ${{ vars.HIKKARI_UPDATE_KEYS }}
+          # Optional: installs below it get the blocking «нужно обновиться» screen.
+          MINIMUM_VERSION: ${{ vars.HIKKARI_MINIMUM_VERSION }}
         run: |
           $ErrorActionPreference = "Stop"
           $version = Get-Content -Raw bundle/Hikkari/app/VERSION
+          $minimum = @()
+          if ($env:MINIMUM_VERSION) { $minimum = @("--minimum-version", $env:MINIMUM_VERSION.Trim()) }
           $manifestBin = "updater/target/release/nekko-manifest.exe"
           if (-not (Test-Path $manifestBin)) { throw "nekko-manifest was not built" }
           $key = Join-Path $env:RUNNER_TEMP "release.key"
           Set-Content -NoNewline -Encoding ascii -Path $key -Value $env:RELEASE_KEY.Trim()
           try {
             & $manifestBin publish --dir bundle/Hikkari/app --version $version --platform windows `
-                --base-url $env:UPDATE_URL.TrimEnd('/') --key $key --key-id $env:KEY_ID --out update-channel
+                --base-url $env:UPDATE_URL.TrimEnd('/') --key $key --key-id $env:KEY_ID --out update-channel @minimum
             if ($LASTEXITCODE -ne 0) { throw "publish failed" }
           } finally {
             Remove-Item -Force $key -ErrorAction SilentlyContinue

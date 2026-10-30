@@ -494,6 +494,12 @@ class UpdateStatus {
   bool get isReady => state == 'ready';
   bool get isDownloading => state == 'downloading';
 
+  /// The installed version is below the channel's minimum: the app gives
+  /// way to the mandatory-update screen until the new one is in.
+  bool get blocks =>
+      mandatory &&
+      (state == 'downloading' || state == 'ready' || state == 'error');
+
   factory UpdateStatus.fromJson(Map<String, dynamic> j) => UpdateStatus(
     state: j['state'] as String? ?? 'unavailable',
     installed: j['installed'] as String? ?? '',

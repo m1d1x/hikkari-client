@@ -24,8 +24,9 @@ const bool kRoutingDryRun = kDebugMode;
 const bool kEngineDryRun = kDebugMode;
 
 /// What the update banner shows in dry-run, to work on its design without a
-/// staged release: `flutter run --dart-define=DRY_UPDATE=mandatory` (or
-/// `none`). Default: an ordinary update is ready.
+/// staged release: `flutter run --dart-define=DRY_UPDATE=mandatory` (staged;
+/// `mandatory-downloading` mid-download; `none`). Default: an ordinary update
+/// is ready.
 const String kDryUpdate = String.fromEnvironment(
   'DRY_UPDATE',
   defaultValue: 'ready',
@@ -304,6 +305,7 @@ class AppState extends ChangeNotifier {
       final next = await _core.updateStatus();
       if (next.state != _update.state ||
           next.version != _update.version ||
+          next.mandatory != _update.mandatory ||
           next.bytesDone != _update.bytesDone) {
         _update = next;
         notifyListeners();
@@ -482,6 +484,14 @@ class AppState extends ChangeNotifier {
       installed: '1.0.3',
       version: '1.1.0',
       mandatory: true,
+    ),
+    'mandatory-downloading' => const UpdateStatus(
+      state: 'downloading',
+      installed: '1.0.3',
+      version: '1.1.0',
+      mandatory: true,
+      bytesDone: 5767168,
+      bytesTotal: 14680064,
     ),
     _ => const UpdateStatus(
       state: 'ready',

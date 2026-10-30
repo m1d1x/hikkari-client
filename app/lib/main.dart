@@ -12,6 +12,7 @@ import 'package:window_manager/window_manager.dart';
 import 'core/nekkobox_core.dart';
 import 'core/nekkobox_ffi.dart';
 import 'screens/home_screen.dart';
+import 'screens/mandatory_update_screen.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
@@ -186,8 +187,20 @@ class _BootGateState extends State<_BootGate>
     if (s == null) return const _BootSplash();
     return ChangeNotifierProvider<AppState>.value(
       value: s,
-      child: const HomeScreen(),
+      child: const _Root(),
     );
+  }
+}
+
+/// The app, or — while the installed version is below the channel's
+/// minimum — the mandatory-update screen in its place.
+class _Root extends StatelessWidget {
+  const _Root();
+
+  @override
+  Widget build(BuildContext context) {
+    final blocked = context.select<AppState, bool>((s) => s.update.blocks);
+    return blocked ? const MandatoryUpdateScreen() : const HomeScreen();
   }
 }
 

@@ -318,15 +318,19 @@ jobs:
           KEY_ID: ${{ vars.HIKKARI_RELEASE_KEY_ID }}
           UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
           UPDATE_KEYS: ${{ vars.HIKKARI_UPDATE_KEYS }}
+          # Optional: installs below it get the blocking «нужно обновиться» screen.
+          MINIMUM_VERSION: ${{ vars.HIKKARI_MINIMUM_VERSION }}
         run: |
           set -euo pipefail
           m=updater/target/release/nekko-manifest
+          minimum=()
+          [[ -z "${MINIMUM_VERSION// /}" ]] || minimum=(--minimum-version "${MINIMUM_VERSION// /}")
           key="$RUNNER_TEMP/release.key"
           umask 077
           printf '%s' "$RELEASE_KEY" | tr -d '[:space:]' > "$key"
           trap 'rm -f "$key"' EXIT
           "$m" publish --dir dist/Hikkari.app --version "$VERSION" --platform macos \
-            --base-url "${UPDATE_URL%/}" --key "$key" --key-id "$KEY_ID" --out update-channel
+            --base-url "${UPDATE_URL%/}" --key "$key" --key-id "$KEY_ID" --out update-channel ${minimum[@]+"${minimum[@]}"}
           pub=$(tr ',' '\n' <<< "$UPDATE_KEYS" | sed -n "s/^$KEY_ID://p" | head -1)
           "$m" verify --manifest update-channel/stable/macos/manifest.json \
             --public-key "$pub" --key-id "$KEY_ID" --platform macos
