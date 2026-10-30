@@ -8,11 +8,11 @@
 	let { label, hint, items = $bindable() }: Props = $props();
 	let input = $state('');
 
-	/** Adds every value in text, split on newlines, commas and spaces, skipping ones already there. */
+	/** Adds every value in text, split on newlines and commas (paths and app names hold spaces), skipping ones already there. */
 	function add(text: string) {
 		const have = new Set(items.map((x) => x.toLowerCase()));
 		const fresh = text
-			.split(/[\s,]+/)
+			.split(/[\n,]+/)
 			.map((x) => x.trim())
 			.filter((x) => x && !have.has(x.toLowerCase()) && have.add(x.toLowerCase()));
 		if (fresh.length) items = [...items, ...fresh];

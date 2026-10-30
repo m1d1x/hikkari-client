@@ -20,11 +20,18 @@ const (
 	ModeProxy  RoutingMode = "proxy"
 )
 
-// RouteList holds the three category lists the UI exposes per mode.
+// RouteList holds the category lists per mode.
+//
+// Folders are path fragments ("steamapps/common/") matching every binary
+// whose path contains them. They cover what a process name cannot: the
+// children a launcher starts under names of their own, and helpers living
+// in one .app bundle. A fragment, unlike a full path, holds on every
+// machine, wherever the app was installed.
 type RouteList struct {
 	Domains   []string `json:"domains"`
 	IPs       []string `json:"ips"`
 	Processes []string `json:"processes"`
+	Folders   []string `json:"folders"`
 }
 
 // RoutingState is the authoritative split-routing config. Persisted to
@@ -44,8 +51,8 @@ func DefaultRoutingState() RoutingState {
 	return RoutingState{
 		Enabled: true,
 		Mode:    ModeBypass,
-		Bypass:  RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}},
-		Proxy:   RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}},
+		Bypass:  RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}, Folders: []string{}},
+		Proxy:   RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}, Folders: []string{}},
 	}
 }
 
@@ -64,6 +71,7 @@ func sanitizeList(l RouteList) RouteList {
 	l.Domains = keepValid("domains", l.Domains)
 	l.IPs = keepValid("ips", l.IPs)
 	l.Processes = keepValid("processes", l.Processes)
+	l.Folders = keepValid("folders", l.Folders)
 	return l
 }
 
@@ -197,7 +205,8 @@ func (s *Store) RemoveRouteRule(mode RoutingMode, category, value string) error 
 //   - preserves any sniff/hijack-dns prelude rules, the ICMP/LAN→direct rules and the QUIC reject
 //   - drops every other rule (they're owned by us)
 //   - inserts one rule per non-empty category (domain_suffix / ip_cidr /
-//     process_name) for the active mode's list, pointed at the right outbound
+//     process_name / process_path_regex) for the active mode's list, pointed
+//     at the right outbound
 //   - sets route.final to "direct" (proxy mode + enabled) or head (otherwise)
 func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 	state = state.sanitize()
@@ -255,6 +264,7 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		appendRule("domain_suffix", list.Domains)
 		appendRule("ip_cidr", list.IPs)
 		appendRule("process_name", list.Processes)
+		appendRule("process_path_regex", folderRegexes(list.Folders))
 	}
 
 	// Bypass rules go ahead of the QUIC reject: an app the user sent direct
@@ -316,6 +326,12 @@ func applyBypassDNS(cfg map[string]interface{}, bypass RouteList) {
 			"server":       "dns-direct",
 		})
 	}
+	if len(bypass.Folders) > 0 {
+		kept = append(kept, map[string]interface{}{
+			"process_path_regex": toAnySlice(folderRegexes(bypass.Folders)),
+			"server":             "dns-direct",
+		})
+	}
 	for _, r := range rules {
 		if m, ok := r.(map[string]interface{}); ok && isBypassDNSRule(m) {
 			continue
@@ -325,14 +341,17 @@ func applyBypassDNS(cfg map[string]interface{}, bypass RouteList) {
 	dns["rules"] = kept
 }
 
-// isBypassDNSRule recognises the rules applyBypassDNS owns: any
-// process_name → dns-direct rule, and a domain_suffix → dns-direct rule
+// isBypassDNSRule recognises the rules applyBypassDNS owns: any process_name
+// or process_path_regex → dns-direct rule, and a domain_suffix → dns-direct rule
 // other than the fixed one that keeps the VPN servers' own names real.
 func isBypassDNSRule(m map[string]interface{}) bool {
 	if m["server"] != "dns-direct" {
 		return false
 	}
 	if _, has := m["process_name"]; has {
+		return true
+	}
+	if _, has := m["process_path_regex"]; has {
 		return true
 	}
 	suf, has := m["domain_suffix"].([]interface{})
@@ -408,6 +427,10 @@ func addToList(list *RouteList, category, value string) error {
 		if !containsCI(list.Processes, value) {
 			list.Processes = append(list.Processes, value)
 		}
+	case "folders":
+		if !containsCI(list.Folders, value) {
+			list.Folders = append(list.Folders, value)
+		}
 	default:
 		return fmt.Errorf("неизвестная категория: %s", category)
 	}
@@ -431,6 +454,8 @@ func removeFromList(list *RouteList, category, value string) error {
 		list.IPs = drop(list.IPs)
 	case "processes":
 		list.Processes = drop(list.Processes)
+	case "folders":
+		list.Folders = drop(list.Folders)
 	default:
 		return fmt.Errorf("неизвестная категория: %s", category)
 	}

@@ -296,6 +296,8 @@ export interface Rules {
 	ips: string[];
 	/** the client's "приложения": exe name on windows, process name of the .app on macos */
 	processes: string[];
+	/** path fragments: every binary under them, wherever installed — a launcher's games, an .app's helpers */
+	folders: string[];
 }
 
 export type RuleKind = keyof Rules;
@@ -304,6 +306,7 @@ export const RULE_KINDS: { key: RuleKind; label: string; hint: string }[] = [
 	{ key: 'domains', label: 'домены', hint: '+ домен' },
 	{ key: 'ips', label: 'ip / подсети', hint: '+ ip или подсеть' },
 	{ key: 'processes', label: 'приложения', hint: '+ exe или имя .app' },
+	{ key: 'folders', label: 'папки', hint: '+ кусок пути' },
 ];
 
 export interface Group {
@@ -351,7 +354,7 @@ export const STAGES = [0, 5, 25, 50, 100];
 /** Active devices: what a percent of the audience is measured against. */
 export const ACTIVE_DEVICES = 6800;
 
-const rules = (r: Partial<Rules>): Rules => ({ domains: [], ips: [], processes: [], ...r });
+const rules = (r: Partial<Rules>): Rules => ({ domains: [], ips: [], processes: [], folders: [], ...r });
 
 export const groups: Group[] = [
 	{
@@ -360,6 +363,7 @@ export const groups: Group[] = [
 		rules: rules({
 			domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com', 'steamserver.net'],
 			processes: ['steam.exe', 'steamwebhelper.exe', 'steam_osx'],
+			folders: ['steamapps/common/'],
 		}),
 	},
 	{
@@ -368,6 +372,7 @@ export const groups: Group[] = [
 		rules: rules({
 			domains: ['discord.com', 'discord.gg', 'discordapp.com', 'discordapp.net', 'discord.media'],
 			processes: ['Discord.exe', 'Discord'],
+			folders: ['Discord.app/'],
 		}),
 	},
 	{

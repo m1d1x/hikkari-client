@@ -9,11 +9,11 @@
 	let nameEl = $state<HTMLInputElement | null>(null);
 	const g = $derived(db.groups.find((x) => x.id === currentId) ?? db.groups[0]);
 
-	const count = (x: Group) => x.rules.domains.length + x.rules.ips.length + x.rules.processes.length;
+	const count = (x: Group) => RULE_KINDS.reduce((n, k) => n + x.rules[k.key].length, 0);
 	const usedIn = (x: Group) => db.presets.filter((p) => p.bypass.includes(x.id) || p.proxy.includes(x.id));
 
 	async function create() {
-		const x: Group = { id: Math.random().toString(36).slice(2, 8), name: '', rules: { domains: [], ips: [], processes: [] } };
+		const x: Group = { id: Math.random().toString(36).slice(2, 8), name: '', rules: { domains: [], ips: [], processes: [], folders: [] } };
 		db.groups.push(x);
 		currentId = x.id;
 		await tick();
@@ -74,6 +74,11 @@
 					<RuleList label={k.label} hint={k.hint} bind:items={g.rules[k.key]} />
 				{/each}
 			</div>
+			<p class="dim note">
+				папки — кусок пути, без диска и имени юзера: ловит все exe под ним, где бы ни стояло. так покрываются
+				игры лаунчеров (<span class="mono">steamapps/common/</span>) и хелперы внутри .app
+				(<span class="mono">Discord.app/</span>)
+			</p>
 		</section>
 	{/if}
 </div>
@@ -153,9 +158,14 @@
 		color: var(--text);
 	}
 
+	.note {
+		margin-top: 16px;
+		font-size: 11px;
+	}
+
 	.rules {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(4, minmax(0, 1fr));
 		gap: 24px;
 		margin-top: 18px;
 		padding-top: 14px;

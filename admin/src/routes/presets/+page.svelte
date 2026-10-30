@@ -35,7 +35,7 @@
 	const stageLabel = (i: number) => (i === 0 ? 'тестеры' : i === STAGES.length - 1 ? 'все' : `${STAGES[i]}%`);
 	const latest = (x: Preset) => x.next ?? x.current;
 	const groupOf = (id: string) => db.groups.find((g) => g.id === id);
-	const ruleCount = (r: Rules) => r.domains.length + r.ips.length + r.processes.length;
+	const ruleCount = (r: Rules) => RULE_KINDS.reduce((n, k) => n + r[k.key].length, 0);
 
 	function plural(n: number, [one, few, many]: [string, string, string]): string {
 		const d = n % 10;
