@@ -1,0 +1,40 @@
+name: Engine
+
+# go vet + go test for the Go engine on every branch. Windows matters most:
+# the service, the pipe client and the core manager only compile there.
+on:
+  workflow_dispatch:
+  push:
+    paths: [ 'engine/**', '.github/workflows/engine.yml' ]
+  pull_request:
+    paths: [ 'engine/**', '.github/workflows/engine.yml' ]
+
+jobs:
+  test:
+    name: go test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
+    runs-on: ${{ matrix.os }}
+    # The FFI DLL is the one cgo package and is built by build-windows.yml;
+    # without a C toolchain here it is vetted as plain Go.
+    env:
+      CGO_ENABLED: '0'
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: engine/go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Vet (darwin)
+        run: go vet ./...
+        env:
+          GOOS: darwin
+      - name: Test
+        run: go test ./...

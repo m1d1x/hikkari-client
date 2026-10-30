@@ -57,16 +57,44 @@ class _BootGate extends StatefulWidget {
   State<_BootGate> createState() => _BootGateState();
 }
 
-class _BootGateState extends State<_BootGate> with WidgetsBindingObserver {
+class _BootGateState extends State<_BootGate>
+    with WidgetsBindingObserver, WindowListener {
   NekkoboxCore? _core;
   AppState? _state;
   String? _bootError;
+  bool _shutDown = false;
+
+  static bool get _desktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (_desktop) {
+      // Closing the window must go through [onWindowClose]: on Windows the
+      // core lives in HikkariService, not in this process, so nothing stops
+      // the tunnel when we exit unless we do it ourselves — and State.dispose
+      // is not guaranteed to run when the window is torn down.
+      windowManager.addListener(this);
+      windowManager.setPreventClose(true);
+    }
     _boot();
+  }
+
+  @override
+  Future<void> onWindowClose() async {
+    _shutdown();
+    await windowManager.destroy();
+  }
+
+  /// Stops the engine (and with it the tunnel) exactly once.
+  void _shutdown() {
+    if (_shutDown) return;
+    _shutDown = true;
+    // AppState's own dispose cancels the health timer.
+    _state?.dispose();
+    _core?.shutdown();
   }
 
   Future<void> _boot() async {
@@ -108,10 +136,12 @@ class _BootGateState extends State<_BootGate> with WidgetsBindingObserver {
   /// Base directory for the engine — everything it reads and writes
   /// (config.json, profiles.json, logs, caches) lives here.
   ///
-  /// On Windows that is simply the folder containing the running executable,
-  /// next to sing-box.exe, wintun.dll and nekkobox.dll. On macOS the
-  /// executable sits inside a signed .app bundle that must stay read-only, so
-  /// the engine's state goes to the usual per-user location instead.
+  /// Never the executable's folder: on Windows that is Program Files, which
+  /// an unelevated GUI cannot write (the core runs in HikkariService, which
+  /// gets the config over its pipe), and on macOS a signed, read-only .app
+  /// bundle. Both use the per-user location instead. On Windows the
+  /// installer (HikkariService.exe install) migrates a portable install's
+  /// files into it.
   String _baseDir() {
     // Isolate real-engine desktop checks from the user's saved profiles.
     const override = String.fromEnvironment('NEKKOBOX_DATA_DIR');
@@ -119,13 +149,21 @@ class _BootGateState extends State<_BootGate> with WidgetsBindingObserver {
       final dir = Directory(override)..createSync(recursive: true);
       return dir.path;
     }
+    final Directory dir;
     if (Platform.isMacOS) {
       final home = Platform.environment['HOME'] ?? '';
-      final dir = Directory('$home/Library/Application Support/nekkobox');
-      dir.createSync(recursive: true);
-      return dir.path;
+      dir = Directory('$home/Library/Application Support/nekkobox');
+    } else if (Platform.isWindows) {
+      final local = Platform.environment['LOCALAPPDATA'];
+      if (local == null || local.isEmpty) {
+        throw StateError('LOCALAPPDATA is not set');
+      }
+      dir = Directory('$local\\Hikkari');
+    } else {
+      return File(Platform.resolvedExecutable).parent.path;
     }
-    return File(Platform.resolvedExecutable).parent.path;
+    dir.createSync(recursive: true);
+    return dir.path;
   }
 
   @override
@@ -136,9 +174,8 @@ class _BootGateState extends State<_BootGate> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    // AppState's own dispose cancels the health timer.
-    _state?.dispose();
-    _core?.shutdown();
+    if (_desktop) windowManager.removeListener(this);
+    _shutdown();
     super.dispose();
   }
 

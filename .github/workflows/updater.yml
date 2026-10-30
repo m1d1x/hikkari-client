@@ -1,0 +1,32 @@
+name: Updater
+
+# The swap is filesystem work whose Windows behaviour (locked files, rename
+# semantics) cannot be judged from a Linux box, so the crate's tests run on
+# both. Triggered on every branch, not just main: this is where a Windows
+# regression has to show up before it ships.
+on:
+  workflow_dispatch:
+  push:
+    paths: [ 'updater/**', '.github/workflows/updater.yml' ]
+  pull_request:
+    paths: [ 'updater/**', '.github/workflows/updater.yml' ]
+
+jobs:
+  test:
+    name: cargo test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: updater
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup toolchain install stable --profile minimal --component rustfmt && rustup default stable
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Test
+        run: cargo test --locked

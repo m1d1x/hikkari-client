@@ -467,3 +467,40 @@ class EngineInfo {
     );
   }
 }
+
+/// Dart projection of Go's `svcproto.UpdateState` — what HikkariService
+/// knows about updates. See contract.md, *Updates*.
+class UpdateStatus {
+  final String state; // idle | downloading | ready | error | unavailable
+  final String installed;
+  final String version; // staged / downloading release
+  final bool mandatory;
+  final int bytesDone;
+  final int bytesTotal;
+  final String error;
+
+  const UpdateStatus({
+    required this.state,
+    this.installed = '',
+    this.version = '',
+    this.mandatory = false,
+    this.bytesDone = 0,
+    this.bytesTotal = 0,
+    this.error = '',
+  });
+
+  static const unavailable = UpdateStatus(state: 'unavailable');
+
+  bool get isReady => state == 'ready';
+  bool get isDownloading => state == 'downloading';
+
+  factory UpdateStatus.fromJson(Map<String, dynamic> j) => UpdateStatus(
+        state: j['state'] as String? ?? 'unavailable',
+        installed: j['installed'] as String? ?? '',
+        version: j['version'] as String? ?? '',
+        mandatory: j['mandatory'] as bool? ?? false,
+        bytesDone: (j['bytesDone'] as num?)?.toInt() ?? 0,
+        bytesTotal: (j['bytesTotal'] as num?)?.toInt() ?? 0,
+        error: j['error'] as String? ?? '',
+      );
+}

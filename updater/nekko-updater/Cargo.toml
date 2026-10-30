@@ -1,0 +1,59 @@
+# nekko-updater — the update manifest: its format, its signature, and the
+# decision it leads to (roadmap 38.2). Download, staging and the swap are
+# 38.4/38.5 and land in this same crate later; the format comes first because
+# everything else is written against it.
+#
+# The generator lives here too, as `src/bin/nekko-manifest.rs`, and that is a
+# deliberate choice over a separate tool in another language: a manifest is
+# trusted only if the bytes the signer signed are the bytes the verifier
+# checks, and one implementation cannot disagree with itself. The alternative
+# would need cross-language fixtures to stay honest, the way
+# internal/blobcrypto and nekko-crypto-core do.
+[package]
+name = "nekko-updater"
+version.workspace = true
+edition = "2021"
+
+[lib]
+# rlib only: consumed by nekko-core (and the generator binary beside it). Never
+# faces Dart directly.
+crate-type = ["rlib"]
+
+[dependencies]
+# Error plumbing — shared style with the rest of client-core.
+thiserror = "1"
+
+# The update path's own account of itself (plan 38 §3.6): without "updated X→Y"
+# and "gave up at step Z" in the client's log channel, "did it reach people"
+# is answered by guessing. The `log` facade costs nothing where no logger is
+# installed, which is the case in `nekko-manifest`.
+#
+# ⚠️ Nothing here logs an absolute path: the spool leaves the machine, and a
+# path carries the account name. Versions, counts and manifest-relative paths
+# only.
+log = "0.4"
+
+# The manifest is JSON because it is read by a human as often as by the client
+# during a botched release, and because a static file on a CDN is the delivery
+# channel (38.3).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# File digests. Same version the audio and crypto crates already pin.
+sha2 = "0.10"
+
+# Release signatures. ed25519 rather than the P-256 of nekko-device-key: that
+# curve was chosen because Go's crypto/ecdsa verifies it on the wire, a
+# constraint absent here — nothing but this crate ever checks these signatures.
+# `verify_strict` is what we call: it rejects small-order public keys, which
+# plain `verify` accepts.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+
+# OS entropy for keygen. Workspace convention (see nekko-crypto-core/rng.rs):
+# never rand::thread_rng() for key material.
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+# The envelope carries the signature and the signed payload as base64 so the
+# manifest stays one plain JSON file.
+base64 = "0.22"
+hex = "0.4"

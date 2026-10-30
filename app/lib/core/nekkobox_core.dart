@@ -84,6 +84,16 @@ abstract class NekkoboxCore {
   Future<void> validateConfiguration() =>
       _callAsync('ValidateConfiguration').then((_) {});
 
+  // ----- updates (Windows; see contract.md) -----
+
+  Future<UpdateStatus> updateStatus() async => UpdateStatus.fromJson(
+    await _callAsync('UpdateStatus') as Map<String, dynamic>,
+  );
+  Future<void> checkUpdate() => _callAsync('CheckUpdate');
+
+  /// Hands over to the launcher; the app must exit right after this returns.
+  Future<void> restartToUpdate() => _callAsync('RestartToUpdate');
+
   // ----- health -----
 
   Future<HealthInfo> health() async =>

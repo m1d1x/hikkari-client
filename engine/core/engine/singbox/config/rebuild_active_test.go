@@ -34,7 +34,7 @@ func TestRebuildActive_LayoutAndIdempotency(t *testing.T) {
 			Kind: "outbound",
 			Config: map[string]interface{}{
 				"tag": "p-hy2", "type": "hysteria2",
-				"server": "92.246.139.199", "server_port": 443,
+				"server": "203.0.113.10", "server_port": 443,
 			},
 		},
 	}
@@ -285,7 +285,7 @@ func TestRebuildActive_HealsVoipAndDns(t *testing.T) {
 		Kind: "outbound",
 		Config: map[string]interface{}{
 			"tag": "p-germany", "type": "vless",
-			"server": "web.zovfy.ru", "server_port": 443,
+			"server": "xh.example.com", "server_port": 443,
 		},
 	}}
 	if err := s.RebuildActive(specs, "p-germany", false, nil); err != nil {

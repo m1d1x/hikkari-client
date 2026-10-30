@@ -61,6 +61,8 @@ subscription-device-id
 *.pem
 *.key
 ipqs-key.txt
+# Ключ подписи обновлений (nekko-manifest keygen) — только в секретах CI
+release-*.key
 
 # === Backups / Temp ===
 *.bak
@@ -75,14 +77,21 @@ ipqs-key.txt
 .omc/state/
 .omc/logs/
 
-# === Локальные планы проекта ===
+# Rust (updater/)
+updater/target/
+
+# Built by CI (cmd/hikkari-setup embeds it; Windows resources)
+engine/cmd/hikkari-setup/payload/*.zip
+engine/cmd/*/*.syso
+
+# === Локальные планы и инструкции агентов (не публикуем) ===
 /plans/
+/CLAUDE.md
+/AGENTS.md
+.claude/
+.omc/
 routing-presets.json
-
-# Xray private runtime configuration
 xray-transport.json
-
-# Standalone Xray runtime state
 xray.json
 xray-runtime.json
 .cursor/

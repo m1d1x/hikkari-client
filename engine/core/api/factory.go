@@ -8,7 +8,6 @@ import (
 	vpn "NekkoVPN/core/engine/singbox/process"
 	"NekkoVPN/core/engine/xray"
 	"fmt"
-	"path/filepath"
 )
 
 var DefaultEngineFactory engine.Factory = singbox.New
@@ -17,8 +16,10 @@ var DefaultEngineFactory engine.Factory = singbox.New
 // New integrations should inject a full adapter with InitWithEngine instead.
 type VPNFactory func(string, vpn.LineLogger) vpn.Manager
 
+// DefaultVPNFactory is the desktop factory: a service client on Windows, a
+// ProcessManager elsewhere (see factory_*.go).
 func DefaultVPNFactory(baseDir string, log vpn.LineLogger) vpn.Manager {
-	return vpn.NewProcessManager(filepath.Join(baseDir, vpn.BinaryName), filepath.Join(baseDir, "config.json"), baseDir, log)
+	return newDesktopVPN(baseDir, log)
 }
 func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	if factory == nil {

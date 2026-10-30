@@ -53,6 +53,11 @@ class AppState extends ChangeNotifier {
   String? get presetError => _presetError;
 
   HealthInfo? _health;
+  // Polled every [_updatePollTicks] health ticks — it changes on the scale of
+  // minutes, and each read is a round trip to the service.
+  UpdateStatus _update = UpdateStatus.unavailable;
+  int _tickCount = 0;
+  static const _updatePollTicks = 5;
   List<ProfileInfo> _profiles = const [];
   // Lowercase ISO country code per profile name, for the flag badge next to
   // each profile's title. Populated in the background by
@@ -143,6 +148,7 @@ class AppState extends ChangeNotifier {
 
   // ----- getters -----
   HealthInfo? get health => _health;
+  UpdateStatus get updateStatus => _update;
   List<ProfileInfo> get profiles => _profiles;
   Map<String, String> get profileCountries => _profileCountries;
 
@@ -264,6 +270,45 @@ class AppState extends ChangeNotifier {
       const Duration(seconds: 1),
       (_) => refreshPresetState(),
     );
+    if (_disposed) return;
+    if (!kEngineDryRun) {
+      // Every launch is a reason to look: the service throttles repeats.
+      unawaited(
+        _core.checkUpdate().catchError((Object e) {
+          _elog('checkUpdate failed: $e');
+        }),
+      );
+      unawaited(_refreshUpdate());
+    }
+  }
+
+  Future<void> _refreshUpdate() async {
+    try {
+      final next = await _core.updateStatus();
+      if (next.state != _update.state ||
+          next.version != _update.version ||
+          next.bytesDone != _update.bytesDone) {
+        _update = next;
+        notifyListeners();
+      }
+    } catch (e) {
+      _elog('updateStatus failed: $e');
+    }
+  }
+
+  /// «Перезапустить»: the launcher takes over and the app exits. Returns
+  /// false (with [lastError] set) if the hand-over could not start.
+  Future<bool> restartToUpdate() async {
+    try {
+      await _core.restartToUpdate();
+      return true;
+    } on NekkoboxError catch (e) {
+      _lastError = e.message;
+    } catch (e) {
+      _lastError = '$e';
+    }
+    notifyListeners();
+    return false;
   }
 
   /// Refresh silently after focus/resume; no sync errors enter lastError.
@@ -402,7 +447,7 @@ class AppState extends ChangeNotifier {
   static const _dryCleanliness = ServerCleanliness(
     running: true,
     checked: true,
-    ip: '92.246.139.199',
+    ip: '203.0.113.10',
     asn: 'AS210644',
     asname: 'AEZA-AS',
     asnType: 'hosting',
@@ -853,6 +898,7 @@ class AppState extends ChangeNotifier {
   Future<void> _tick() async {
     if (_ticking || _disposed || _switchingEngine) return;
     _ticking = true;
+    if (++_tickCount % _updatePollTicks == 0) unawaited(_refreshUpdate());
     try {
       await refreshRoutingState();
       if (_disposed) return;
