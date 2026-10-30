@@ -373,6 +373,35 @@ func (u *updates) pendingSince() time.Time {
 	return at
 }
 
+// settle hands over to Config.SyncBinaries once no version is on trial: a
+// version on trial may still be rolled back, and the binaries outside the
+// tree must not run ahead of it. Runs at start and after a confirmation or
+// rollback; with nothing to bring in line it costs two file hashes.
+func (u *updates) settle() {
+	sync := u.srv.cfg.SyncBinaries
+	if sync == nil {
+		return
+	}
+	u.opMu.Lock()
+	onTrial := false
+	if err := u.run("status", func(ev map[string]interface{}) {
+		_, onTrial = ev["pending"].(map[string]interface{})
+	}); err != nil {
+		u.opMu.Unlock()
+		u.srv.log.Logf("updates: not syncing binaries, status failed: %v", err)
+		return
+	}
+	if onTrial {
+		u.opMu.Unlock()
+		return
+	}
+	restart := sync()
+	u.opMu.Unlock()
+	if restart {
+		u.srv.requestRestart()
+	}
+}
+
 // updaterError is a failed hikkari-updater command, with its error code.
 type updaterError struct {
 	code, msg string

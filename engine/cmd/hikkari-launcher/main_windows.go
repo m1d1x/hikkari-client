@@ -37,12 +37,16 @@ import (
 // user who closes the app right away is not mistaken for a crash for long.
 const trialWindow = 20 * time.Second
 
+// version is stamped at build time (-ldflags -X main.version=…).
+var version = "dev"
+
 var log *logging.Logger
 
 func main() {
 	root := exeDir()
 	log = logging.New(filepath.Join(userDataDir(), "launcher.log"))
 	defer log.Close()
+	log.Logf("launcher %s: %v", version, os.Args[1:])
 
 	apply, reconnect, waitPid := parseArgs(os.Args[1:])
 	if apply {

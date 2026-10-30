@@ -75,6 +75,14 @@ type Config struct {
 	// itself. On Windows the launcher supervises a fresh version; macOS has
 	// no launcher. Zero disables it.
 	TrialDeadline time.Duration
+
+	// SyncBinaries brings the binaries that live outside the replaced tree
+	// up to date with their copies inside it (Windows: the launcher, the
+	// updater and this service beside app\). Called with no version on
+	// trial and no updater running. restart: the service's own binary was
+	// replaced and the platform has arranged for the new one to start once
+	// this one exits — Serve then returns ErrRestart. Optional.
+	SyncBinaries func() (restart bool)
 }
 
 // ErrRestart: Serve returned because an update replaced the service.
@@ -131,6 +139,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.resume()
 	}
 	go s.updates.watchTrial(ctx)
+	go s.updates.settle()
 
 	var restarting atomic.Bool
 	go func() {
@@ -156,9 +165,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	if restarting.Load() {
-		// The swap already stopped the core; keep the run marker so the
-		// new service brings it back.
+		// Keep the run marker: the new service brings the core back. (After
+		// a swap the core is already down.)
 		s.log.Logf("service: restarting into the updated version")
+		_ = s.core.Stop()
 	} else {
 		s.log.Logf("service: stopping, taking the core down")
 		_ = s.core.Stop()
@@ -183,11 +193,25 @@ func (s *Server) handle(conn net.Conn) {
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Minute))
 	resp := s.dispatch(req)
 	_ = svcproto.WriteMessage(conn, resp)
-	if req.Op == svcproto.OpApplyUpdate && resp.OK && s.cfg.RestartAfterApply {
-		select {
-		case s.restart <- struct{}{}:
-		default:
-		}
+	if !resp.OK {
+		return
+	}
+	switch {
+	case req.Op == svcproto.OpApplyUpdate && s.cfg.RestartAfterApply:
+		s.requestRestart()
+	case req.Op == svcproto.OpConfirmUpdate, req.Op == svcproto.OpRollbackUpdate:
+		// The installed version is settled: bring the binaries outside
+		// it in line — after the answer is out, since that may restart
+		// the service.
+		go s.updates.settle()
+	}
+}
+
+// requestRestart makes Serve return ErrRestart.
+func (s *Server) requestRestart() {
+	select {
+	case s.restart <- struct{}{}:
+	default:
 	}
 }
 
@@ -313,6 +337,8 @@ func (s *Server) status() svcproto.Response {
 		CoreLog: s.log.Path(),
 		Version: Version,
 		Update:  s.updates.snapshot(),
+
+		SyncsBinaries: s.cfg.SyncBinaries != nil,
 	}
 }
 

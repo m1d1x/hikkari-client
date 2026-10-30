@@ -71,6 +71,12 @@ type Response struct {
 	Version string `json:"version,omitempty"`
 
 	Update *UpdateState `json:"update,omitempty"`
+	// SyncsBinaries: this service keeps the binaries outside the replaced
+	// tree up to date itself (Windows: Hikkari.exe, HikkariService.exe,
+	// hikkari-updater.exe beside app\). A service from before that (1.0.x)
+	// leaves it to the GUI, which has one elevated run of the new service
+	// binary adopt them.
+	SyncsBinaries bool `json:"syncsBinaries,omitempty"`
 	// Recovery, for OpRecoverUpdate: nothing | repaired | on_trial | rolled_back.
 	Recovery string `json:"recovery,omitempty"`
 	// From / To: the versions an apply, recovery or rollback moved between.

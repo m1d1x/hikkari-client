@@ -37,7 +37,8 @@ const createNoWindow = 0x08000000
 // NewServer is the service for the installation at root.
 func NewServer(root string) (*service.Server, error) {
 	appDir := filepath.Join(root, "app")
-	return service.NewServer(service.Config{
+	bins := &binaries{root: root}
+	srv, err := service.NewServer(service.Config{
 		CoreDir: filepath.Join(root, "core"),
 		// The core runs from app\ (wintun.dll and libcronet.dll sit beside
 		// it). app\ is replaced whole by an update, which is fine: the core
@@ -60,5 +61,16 @@ func NewServer(root string) (*service.Server, error) {
 		},
 		Endpoint:  svcproto.PipeName,
 		OnVersion: setDisplayVersion,
+		// The binaries beside app\ follow the copies an update brings
+		// inside it; replacing this one restarts the service (see
+		// selfupdate_windows.go), and the tunnel comes back from the run
+		// marker — as it does after a crash or a reboot with it up.
+		SyncBinaries: bins.sync,
+		ResumeCore:   true,
 	})
+	if err != nil {
+		return nil, err
+	}
+	bins.log = srv.Log()
+	return srv, nil
 }

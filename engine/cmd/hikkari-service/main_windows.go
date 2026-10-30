@@ -7,6 +7,10 @@
 //	HikkariService.exe install [--import DIR] [--quiet]   install from an unpacked build (development;
 //	                                                      users run HikkariSetup.exe)
 //	HikkariService.exe debug                              serve in the foreground (elevated shell)
+//	HikkariService.exe adopt                              (from app\, elevated) put this release's binaries
+//	                                                      beside app\ for a service that predates self-update
+//	HikkariService.exe restart-service                    (internal) start the service just put in place,
+//	                                                      put the previous one back if it does not come up
 //
 // Started by the SCM it takes no arguments. install and uninstall re-launch
 // themselves elevated (one UAC prompt) when needed.
@@ -66,6 +70,15 @@ func main() {
 			return
 		}
 		winsvc.Report(true, "Hikkari установлен.\n\nЗапуск: "+launcher)
+	case "adopt":
+		if err := winsvc.Adopt(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "restart-service":
+		if err := winsvc.RestartService(); err != nil {
+			os.Exit(1)
+		}
 	case "debug":
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

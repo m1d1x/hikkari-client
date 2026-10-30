@@ -166,7 +166,7 @@ jobs:
           go build -trimpath -ldflags "-s -w -X NekkoVPN/core/service.Version=$version" -o ../HikkariService.exe ./cmd/hikkari-service
           # The launcher is what the shortcuts point at: give it the app icon.
           go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico ../app/windows/runner/resources/app_icon.ico -o cmd/hikkari-launcher/rsrc_windows_amd64.syso
-          go build -trimpath -ldflags "-s -w -H windowsgui" -o ../Hikkari.exe ./cmd/hikkari-launcher
+          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$version" -o ../Hikkari.exe ./cmd/hikkari-launcher
           cd ..
           if (-not (Test-Path "HikkariService.exe")) { throw "HikkariService.exe was not generated!" }
           if (-not (Test-Path "Hikkari.exe")) { throw "Hikkari.exe was not generated!" }
@@ -202,6 +202,8 @@ jobs:
       #   Hikkari\HikkariService.exe     install / service
       #   Hikkari\hikkari-updater.exe
       #   Hikkari\app\                   GUI, engine, core, VERSION — what updates replace
+      # app\ also carries a copy of the three binaries above: an update brings
+      # them in under the signed manifest and the service puts them in place.
       # Unpack and run HikkariService.exe: one UAC prompt, it copies itself to
       # Program Files\Hikkari and starts the service.
       - name: Assemble Release Bundle
@@ -228,9 +230,10 @@ jobs:
           $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
           Set-Content -NoNewline -Encoding ascii -Path "$bundle/app/VERSION" -Value $version
 
-          Copy-Item -Force "HikkariService.exe" -Destination "$bundle/"
-          Copy-Item -Force "hikkari-updater.exe" -Destination "$bundle/"
-          Copy-Item -Force "Hikkari.exe" -Destination "$bundle/"
+          foreach ($exe in "HikkariService.exe", "hikkari-updater.exe", "Hikkari.exe") {
+            Copy-Item -Force $exe -Destination "$bundle/"
+            Copy-Item -Force $exe -Destination "$bundle/app/"
+          }
 
           Write-Host "Bundle ($version):"
           Get-ChildItem -Recurse -Path "bundle" | Select-Object FullName
@@ -345,8 +348,16 @@ jobs:
       # A real update through the service, on Windows, with the core running
       # (so sing-box.exe holds app\ open until the service stops it): an
       # updater built against a local channel and a throwaway key, a release
-      # one patch above the installed version published from the installed tree, check → stage → apply with
-      # reconnect → trial → confirm.
+      # one patch above the installed version published from the installed
+      # tree, check → stage → apply with reconnect → trial → confirm.
+      #
+      # That release also brings new HikkariService.exe, Hikkari.exe and
+      # hikkari-updater.exe inside app\ (built with its version, so their
+      # hashes differ): after the confirmation the service must put all three
+      # beside app\, restart into the new service and bring the tunnel back.
+      # Then a release two patches above whose service binary cannot run as a
+      # service: the service must try it, put the previous one back, refuse
+      # that build and still have the tunnel up.
       - name: Update smoke test
         shell: pwsh
         run: |
@@ -355,30 +366,52 @@ jobs:
           $tmp = $env:RUNNER_TEMP
           $port = 8731
 
-          Push-Location updater
-          cargo build --release --locked -p nekko-updater --bin nekko-manifest
-          $keygen = & target/release/nekko-manifest.exe keygen --out "$tmp\ci.key"
-          $pub = ([regex]::Match(($keygen -join "`n"), 'public key: ([0-9a-f]{64})')).Groups[1].Value
-          if (-not $pub) { throw "no public key in: $keygen" }
-          $env:HIKKARI_UPDATE_URL = "http://127.0.0.1:$port"
-          $env:HIKKARI_UPDATE_KEYS = "ci-1:$pub"
-          cargo build --release --locked -p hikkari-updater --target-dir target-ci
-          Remove-Item Env:HIKKARI_UPDATE_URL, Env:HIKKARI_UPDATE_KEYS
-          Pop-Location
-
-          Stop-Service HikkariService
-          Copy-Item -Force updater/target-ci/release/hikkari-updater.exe "$root\"
-          Start-Service HikkariService
-
           $from = Get-Content -Raw "$root\app\VERSION"
           $v = [version]$from
           $to = "$($v.Major).$($v.Minor).$($v.Build + 1)"
+          $to2 = "$($v.Major).$($v.Minor).$($v.Build + 2)"
+
+          Push-Location updater
+          cargo build --release --locked -p nekko-updater --bin nekko-manifest
+          $pubs = foreach ($k in "ci", "ci2") {
+            $keygen = & target/release/nekko-manifest.exe keygen --out "$tmp\$k.key"
+            $p = ([regex]::Match(($keygen -join "`n"), 'public key: ([0-9a-f]{64})')).Groups[1].Value
+            if (-not $p) { throw "no public key in: $keygen" }
+            $p
+          }
+          # The installed updater trusts ci-1; the one release $to brings
+          # trusts ci-1 and ci-2 — the same channel, a different binary.
+          $env:HIKKARI_UPDATE_URL = "http://127.0.0.1:$port"
+          $env:HIKKARI_UPDATE_KEYS = "ci-1:$($pubs[0])"
+          cargo build --release --locked -p hikkari-updater --target-dir target-ci
+          $env:HIKKARI_UPDATE_KEYS = "ci-1:$($pubs[0]),ci-2:$($pubs[1])"
+          cargo build --release --locked -p hikkari-updater --target-dir target-ci2
+          Remove-Item Env:HIKKARI_UPDATE_URL, Env:HIKKARI_UPDATE_KEYS
+          Pop-Location
+
+          # The installed tree's copy too, or the service would put the
+          # channel-less updater back beside app\ at its next start.
+          Stop-Service HikkariService
+          Copy-Item -Force updater/target-ci/release/hikkari-updater.exe "$root\"
+          Copy-Item -Force updater/target-ci/release/hikkari-updater.exe "$root\app\"
+          Start-Service HikkariService
+
           $rel = "$tmp\release-$to"
           Copy-Item -Recurse "$root\app" $rel
           Set-Content -NoNewline -Encoding ascii -Path "$rel\VERSION" -Value $to
-          & updater/target/release/nekko-manifest.exe publish --dir $rel --version $to --platform windows `
-              --base-url "http://127.0.0.1:$port" --key "$tmp\ci.key" --key-id ci-1 --out "$tmp\channel"
-          if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+          Push-Location engine
+          $env:CGO_ENABLED = "0"
+          go build -trimpath -ldflags "-s -w -X NekkoVPN/core/service.Version=$to" -o "$rel\HikkariService.exe" ./cmd/hikkari-service
+          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$to" -o "$rel\Hikkari.exe" ./cmd/hikkari-launcher
+          Pop-Location
+          Copy-Item -Force updater/target-ci2/release/hikkari-updater.exe "$rel\"
+
+          function Publish([string]$dir, [string]$version) {
+            & updater/target/release/nekko-manifest.exe publish --dir $dir --version $version --platform windows `
+                --base-url "http://127.0.0.1:$port" --key "$tmp\ci.key" --key-id ci-1 --out "$tmp\channel"
+            if ($LASTEXITCODE -ne 0) { throw "publish $version failed" }
+          }
+          Publish $rel $to
           $server = Start-Process python -ArgumentList "-m","http.server","$port","--bind","127.0.0.1","--directory","$tmp\channel" -PassThru -WindowStyle Hidden
           # Start-Process returns before the server listens: wait for the
           # channel to answer instead of racing it.
@@ -401,33 +434,101 @@ jobs:
             return $line | ConvertFrom-Json
           }
 
-          try {
-            $cfg = '{"log":{"level":"info"},"dns":{"servers":[{"tag":"local","type":"local"}]},"inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"auto_route":false,"stack":"mixed"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","default_domain_resolver":{"server":"local"}},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"},"cache_file":{"enabled":true,"path":"cache.db"}}}'
-            $st = Invoke-Hikkari ('{"op":"start","config":' + $cfg + '}')
-            if (-not $st.running) { throw "the core did not start" }
+          # The status of a service that answers, or $null while it restarts.
+          function Get-Status {
+            try { return Invoke-Hikkari '{"op":"status"}' } catch { return $null }
+          }
 
+          function Hash([string]$path) { (Get-FileHash -Algorithm SHA256 $path).Hash }
+
+          # check → stage → apply with reconnect → trial → confirm.
+          function Update-To([string]$version, [string]$previous) {
             $st = Invoke-Hikkari '{"op":"check_update"}'
             for ($i = 0; $i -lt 120 -and $st.update.state -ne "ready"; $i++) {
               if ($st.update.state -eq "error" -or $st.update.state -eq "unavailable") { throw "update state $($st.update.state): $($st.update.error)" }
               Start-Sleep -Milliseconds 500
               $st = Invoke-Hikkari '{"op":"status"}'
             }
-            if ($st.update.state -ne "ready" -or $st.update.version -ne $to) { throw "$to was not staged" }
-            if ((Get-Content -Raw "$root\app\VERSION") -ne $from) { throw "staging touched the installation" }
+            if ($st.update.state -ne "ready" -or $st.update.version -ne $version) { throw "$version was not staged" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne $previous) { throw "staging touched the installation" }
 
             $ap = Invoke-Hikkari '{"op":"apply_update","reconnect":true}'
-            if (-not $ap.ok -or $ap.from -ne $from -or $ap.to -ne $to) { throw "apply failed" }
+            if (-not $ap.ok -or $ap.from -ne $previous -or $ap.to -ne $version) { throw "apply failed" }
             if (-not $ap.running) { throw "the core did not come back after the swap" }
-            if ((Get-Content -Raw "$root\app\VERSION") -ne $to) { throw "app\ is not $to" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne $version) { throw "app\ is not $version" }
             if (-not (Test-Path "$root\app.old\nekkobox.exe")) { throw "the previous version was not kept" }
-            $v = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari").DisplayVersion
-            if ($v -ne $to) { throw "Apps & features still says $v after the update" }
+            $dv = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari").DisplayVersion
+            if ($dv -ne $version) { throw "Apps & features still says $dv after the update" }
 
             $rec = Invoke-Hikkari '{"op":"recover_update"}'
             if ($rec.recovery -ne "on_trial") { throw "expected a trial, got $($rec.recovery)" }
             if ($rec.pid -ne $ap.pid) { throw "counting a trial start restarted the core" }
             $null = Invoke-Hikkari '{"op":"confirm_update"}'
             if (Test-Path "$root\app.old") { throw "app.old survived the confirmation" }
+          }
+
+          # Waits for the service to have settled on `$version` with the
+          # tunnel up: binaries in place, service restarted, core resumed.
+          function Wait-Settled([string]$version, [hashtable]$want) {
+            $ok = $false
+            for ($i = 0; $i -lt 360 -and -not $ok; $i++) {
+              Start-Sleep -Milliseconds 500
+              $same = $true
+              foreach ($name in $want.Keys) {
+                if (-not (Test-Path "$root\$name") -or (Hash "$root\$name") -ne $want[$name]) { $same = $false }
+              }
+              if (-not $same) { continue }
+              $st = Get-Status
+              $ok = $st -and $st.ok -and $st.version -eq $version -and $st.running -and $st.syncsBinaries -and
+                    (Get-Service HikkariService).Status -eq 'Running'
+            }
+            if (-not $ok) {
+              foreach ($name in $want.Keys) { Write-Host "$name : $(Hash "$root\$name") want $($want[$name])" }
+              throw "the service did not settle on $version with the tunnel up"
+            }
+            $up = $false
+            for ($i = 0; $i -lt 20 -and -not $up; $i++) {
+              try { $null = Invoke-RestMethod -TimeoutSec 2 http://127.0.0.1:9090/version; $up = $true } catch { Start-Sleep -Milliseconds 500 }
+            }
+            if (-not $up) { throw "the tunnel is not up after the service restarted" }
+          }
+
+          try {
+            $cfg = '{"log":{"level":"info"},"dns":{"servers":[{"tag":"local","type":"local"}]},"inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"auto_route":false,"stack":"mixed"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","default_domain_resolver":{"server":"local"}},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"},"cache_file":{"enabled":true,"path":"cache.db"}}}'
+            $st = Invoke-Hikkari ('{"op":"start","config":' + $cfg + '}')
+            if (-not $st.running) { throw "the core did not start" }
+
+            # 1. The binaries beside app\ follow the update.
+            $new = @{}
+            foreach ($name in "HikkariService.exe", "Hikkari.exe", "hikkari-updater.exe") {
+              $new[$name] = Hash "$rel\$name"
+              if ($new[$name] -eq (Hash "$root\$name")) { throw "$name of $to is the installed one: nothing to test" }
+            }
+            Update-To $to $from
+            Wait-Settled $to $new
+            Write-Host "binaries beside app\ are $to's, the service restarted into $to, the tunnel is up"
+
+            # 2. A service binary that does not come up is put back.
+            $rel2 = "$tmp\release-$to2"
+            Copy-Item -Recurse "$root\app" $rel2
+            Set-Content -NoNewline -Encoding ascii -Path "$rel2\VERSION" -Value $to2
+            Copy-Item -Force "$rel2\hikkari-updater.exe" "$rel2\HikkariService.exe"
+            $broken = Hash "$rel2\HikkariService.exe"
+            Publish $rel2 $to2
+            Update-To $to2 $to
+            $refused = $null
+            for ($i = 0; $i -lt 360 -and -not $refused; $i++) {
+              Start-Sleep -Milliseconds 500
+              try { $refused = (Get-Content -Raw "$root\core\binaries.json" | ConvertFrom-Json).'HikkariService.exe' } catch {}
+            }
+            if ($refused -ne $broken) { throw "the broken service binary was not refused (got '$refused')" }
+            Wait-Settled $to $new
+            if ((Get-Content -Raw "$root\app\VERSION") -ne $to2) { throw "app\ is not $to2" }
+            Write-Host "the broken service of $to2 was put back and refused; $to's service runs with the tunnel up"
+
+            # Restarting must not retry the refused build.
+            Restart-Service HikkariService
+            Wait-Settled $to $new
             $null = Invoke-Hikkari '{"op":"stop"}'
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
