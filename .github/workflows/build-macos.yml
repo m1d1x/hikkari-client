@@ -241,6 +241,9 @@ jobs:
             cargo build --release --locked -p hikkari-updater --target-dir target-ci
           cd ..
           sudo install -o root -g wheel -m 755 updater/target-ci/release/hikkari-updater "$app/Contents/MacOS/hikkari-updater"
+          # The daemon learns whether its updater has a channel when it starts.
+          sudo launchctl kickstart -k system/net.hikkari.service
+          for i in $(seq 1 40); do python3 svc.py '{"op":"status"}' >/dev/null 2>&1 && break; sleep 0.25; done
 
           from=$(cat "$app/Contents/Resources/VERSION")
           IFS=. read -r ma mi pa <<< "$from"
