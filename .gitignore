@@ -73,3 +73,6 @@ ipqs-key.txt
 .claude/settings.local.json
 .omc/state/
 .omc/logs/
+
+# Rust (updater/)
+updater/target/
