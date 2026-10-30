@@ -157,6 +157,15 @@ func (c *Checker) ExternalIP() string {
 	return ip
 }
 
+// DirectIP returns the ISP baseline — the IP last seen while the VPN was
+// provably off — or "" if none was captured yet. The downdetector resolves
+// it to a provider (ASN) locally; the IP itself never leaves the device.
+func (c *Checker) DirectIP() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.directIP
+}
+
 // Probe returns the most recent cached health snapshot. Lock-free fast
 // path — safe to call at arbitrary frequency from the FFI boundary. The
 // actual work is done in [Run] on a background goroutine.

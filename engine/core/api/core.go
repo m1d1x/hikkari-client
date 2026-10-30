@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,9 +23,11 @@ import (
 	"NekkoVPN/core/clashapi"
 	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/configfile"
+	"NekkoVPN/core/downdetector"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/logging"
+	"NekkoVPN/core/netinfo"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/uptime"
 	"NekkoVPN/core/diag"
@@ -67,6 +70,9 @@ type Core struct {
 	// (YouTube, Discord, …) measured through the active profile — kept
 	// separate from the per-profile uptime tracker above.
 	serviceUptime *uptime.Tracker
+	// downdetector turns uptime samples into anonymous reports for the
+	// shared downdetector (queued locally only, for now).
+	downdetector *downdetector.Agent
 	diag          *diag.Runner
 
 	customServicesMu   sync.RWMutex
@@ -119,6 +125,15 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	)
 	c.uptime = uptime.New(filepath.Join(baseDir, "uptime-history.json"))
 	c.serviceUptime = uptime.New(filepath.Join(baseDir, "service-uptime-history.json"))
+	c.downdetector = downdetector.New(
+		filepath.Join(baseDir, "downdetector.json"),
+		filepath.Join(baseDir, "downdetector-outbox.json"),
+		downdetector.Deps{
+			Servers: c.downdetectorServers,
+			History: c.uptime.Snapshot,
+			Net:     c.downdetectorNet,
+		},
+	)
 	// Server-cleanliness scoring. Gated on TunnelOK so we never score the
 	// bare ISP IP. IPQS key is optional — dropped as plain text in
 	// baseDir/ipqs-key.txt; absent → fraud-score step is simply skipped.
@@ -140,6 +155,7 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	c.ensureSelectorConfig()
 	c.uptime.Load()
 	c.serviceUptime.Load()
+	c.downdetector.Load()
 	c.customServicesPath = filepath.Join(baseDir, "custom-services.json")
 	c.loadCustomServices()
 	geoip.Load(filepath.Join(baseDir, "geoip-cache.json"))
@@ -147,6 +163,7 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 	probe := uptime.NewLiveProbe(cl)
 	go c.uptime.Run(c.ctx, c.uptimeHosts, probe)
 	go c.serviceUptime.RunServices(c.ctx, c.activeTagProvider, c.allServiceTargets, cl)
+	go c.downdetector.Run(c.ctx)
 	// Health probing is the slow path (HTTPS to api.ipify.org). Running it
 	// in the background keeps FFI calls instant — UI threads on the other
 	// side of the FFI boundary must never wait on network.
@@ -253,6 +270,44 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 		})
 	}
 	return out
+}
+
+// downdetectorServers lists every profile as a reportable server. They are
+// all private for now: there are no Nekko nodes yet and profiles don't
+// remember whether they came from a subscription, so nothing is shared
+// unless the user opts in.
+func (c *Core) downdetectorServers() []downdetector.Server {
+	pf, err := c.profiles.Read()
+	if err != nil {
+		return nil
+	}
+	out := make([]downdetector.Server, 0, len(pf.Profiles))
+	for _, p := range pf.Profiles {
+		host, port := profile.PeerHostPort(p)
+		if host == "" {
+			continue
+		}
+		proto := profile.ProtoSlug(p)
+		out = append(out, downdetector.Server{
+			Profile: p.Name,
+			ID:      downdetector.ServerID(host, port, proto),
+			Proto:   proto,
+			Private: true,
+		})
+	}
+	return out
+}
+
+// downdetectorNet resolves the ISP baseline IP to provider + area, locally.
+// The IP itself stays here.
+func (c *Core) downdetectorNet() downdetector.Net {
+	ip := net.ParseIP(c.health.DirectIP())
+	if ip == nil {
+		return downdetector.Net{}
+	}
+	country, _ := geoip.LookupIP(ip)
+	ni := netinfo.Lookup(ip)
+	return downdetector.Net{ASN: ni.ASN, Country: country, Region: ni.Area}
 }
 
 func (c *Core) activeTagProvider() string {

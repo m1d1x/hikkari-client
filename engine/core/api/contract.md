@@ -202,7 +202,45 @@ Keys are profile names. Each profile gets a rolling window of ~300 samples
 {
   "ts":     1727550000,   // unix seconds
   "ok":     true,
-  "rtt_ms": 42            // 0 if !ok
+  "rtt_ms": 42,           // 0 if !ok
+  "src":    "tunnel"      // how it was measured: "tunnel" | "tcp" | "icmp";
+                          // on failure, the last method tried; absent on old samples
+}
+```
+
+Only `tunnel` proves traffic passes through the proxy. `tcp` means the port
+accepts a handshake (DPI may still kill the protocol), `icmp` only that the
+host answers pings.
+
+### Downdetector
+
+Anonymous reports for the shared downdetector (docs/DOWNDETECTOR.md). Phase 0:
+reports are built every 5 minutes and queued in `downdetector-outbox.json`;
+nothing is sent yet.
+
+| method                    | args                                        | data             |
+|---------------------------|---------------------------------------------|------------------|
+| `DowndetectorSettings`    | —                                           | `Settings`       |
+| `SetDowndetectorSettings` | `{"enabled":bool,"share_private":bool}`     | —                |
+| `DowndetectorLastReport`  | —                                           | `Report \| null` |
+
+`Settings`: `enabled` (default `true`), `share_private` (default `false`;
+every profile counts as private for now, so nothing is reported until it is
+on). Turning `enabled` off also drops the queued reports.
+
+`Report` — the complete list of what a report carries:
+
+```jsonc
+{
+  "install": "r-…",            // random, rotated weekly
+  "asn":     12389,            // provider, 0 = unknown
+  "country": "ru",             // "" = unknown
+  "region":  "moscow",         // big city or region, "" = unknown
+  "window":  [1761800100, 1761800400],
+  "servers": [
+    {"id": "s:…", "proto": "vless-reality", "src": "tunnel",
+     "ok": 9, "fail": 1, "rtt_p50": 74}
+  ]
 }
 ```
 

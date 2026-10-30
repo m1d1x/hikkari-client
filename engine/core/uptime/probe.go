@@ -21,10 +21,9 @@ import (
 // a TCP-connect probe when the engine isn't up (weak signal: is the host
 // reachable at all).
 //
-// The two signals are conflated in the returned RttMs because the UI only
-// has one sparkline per profile. In a future pass we could tag samples
-// with their source so the UI can colour them differently, but that's a
-// scope for later.
+// The UI still draws one sparkline per profile, but every sample is tagged
+// with the Source that produced it, so consumers that care about signal
+// strength (the downdetector) can tell them apart.
 type LiveProbe struct {
 	Clash *clashapi.Client
 
@@ -44,7 +43,7 @@ func NewLiveProbe(c *clashapi.Client) *LiveProbe { return &LiveProbe{Clash: c} }
 // the TCP fallback, and as a last resort falls back to ICMP echo so
 // UDP-only services (WireGuard, Hysteria2) still show "alive" on the
 // uptime graph for inactive profiles.
-func (p *LiveProbe) Run(ctx context.Context, h HostEntry) (bool, int) {
+func (p *LiveProbe) Run(ctx context.Context, h HostEntry) (bool, int, Source) {
 	if p.Clash != nil && p.Clash.IsAlive() && h.Tag != "" {
 		// Once the engine is up, every dial from this process is
 		// captured by sing-box's TUN. TCP/ICMP fallbacks then measure
@@ -54,14 +53,15 @@ func (p *LiveProbe) Run(ctx context.Context, h HostEntry) (bool, int) {
 		// to that profile isn't usable, so we honestly report "down".
 		ms, err := p.Clash.Delay(h.Tag, "", PingTimeoutMs)
 		if err != nil {
-			return false, 0
+			return false, 0, SrcTunnel
 		}
-		return true, ms
+		return true, ms, SrcTunnel
 	}
 	if ok, ms := tcpProbe(ctx, h.Host, h.Port); ok {
-		return true, ms
+		return true, ms, SrcTCP
 	}
-	return p.icmpProbe(ctx, h.Host)
+	ok, ms := p.icmpProbe(ctx, h.Host)
+	return ok, ms, SrcICMP
 }
 
 // tcpProbe opens a TCP socket to host:port with a tight deadline and

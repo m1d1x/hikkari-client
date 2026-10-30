@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"NekkoVPN/core/downdetector"
 )
 
 // polledMethods are the calls the UI makes on a timer. Tracing them on every
@@ -219,6 +221,18 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 	// ----- uptime -----
 	case "UptimeHistory":
 		return c.UptimeHistory(), nil
+
+	// ----- downdetector -----
+	case "DowndetectorSettings":
+		return c.DowndetectorSettings(), nil
+	case "SetDowndetectorSettings":
+		var a downdetector.Settings
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetDowndetectorSettings(a)
+	case "DowndetectorLastReport":
+		return c.DowndetectorLastReport(), nil
 
 	// ----- service uptime -----
 	case "PingServices":

@@ -466,6 +466,30 @@ func endpointPeerString(ep map[string]interface{}) string {
 	}
 }
 
+// ProtoSlug is a stable machine name for the profile's protocol stack,
+// e.g. "vless-reality-xhttp" or "hysteria2". Blocks hit protocols, not
+// just hosts, so the downdetector keeps them apart.
+func ProtoSlug(p Profile) string {
+	t, _ := p.Config["type"].(string)
+	if t == "" {
+		return ""
+	}
+	parts := []string{strings.ToLower(t)}
+	if tls, ok := p.Config["tls"].(map[string]interface{}); ok {
+		if r, ok := tls["reality"].(map[string]interface{}); ok {
+			if on, _ := r["enabled"].(bool); on {
+				parts = append(parts, "reality")
+			}
+		}
+	}
+	if tr, ok := p.Config["transport"].(map[string]interface{}); ok {
+		if tt, _ := tr["type"].(string); tt != "" {
+			parts = append(parts, strings.ToLower(tt))
+		}
+	}
+	return strings.Join(parts, "-")
+}
+
 func prettyProtocol(p Profile) string {
 	if p.Config == nil {
 		return "—"
