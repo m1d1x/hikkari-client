@@ -35,7 +35,7 @@ func RunConsole(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("HikkariService (console) root=%s, log=%s\n", root, srv.log.Path())
+	fmt.Printf("HikkariService (console) root=%s, log=%s\n", root, srv.Log().Path())
 	return srv.Serve(ctx)
 }
 

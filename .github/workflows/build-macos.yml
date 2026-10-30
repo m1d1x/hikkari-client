@@ -1,0 +1,374 @@
+name: Build macOS Client
+
+on:
+  workflow_dispatch:
+  push:
+    # Same triggers as the Windows build: every branch build is smoke-tested
+    # on a real Mac before it merges; a tag v* is also a release.
+    branches: [ main, 'claude/**' ]
+    tags: [ 'v*' ]
+
+env:
+  SING_BOX_LX_TAG: v1.14.3-lx.21
+  # docs/AUTOUPDATE-ROADMAP.md, Phase 6/7: a tag stamps the version, bakes the
+  # update channel into hikkari-updater, signs Hikkari.app into stable/macos.
+  RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  build:
+    name: Build macOS (universal)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Release version and configuration
+        if: env.RELEASE == 'true'
+        env:
+          UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          UPDATE_KEYS: ${{ vars.HIKKARI_UPDATE_KEYS }}
+          KEY_ID: ${{ vars.HIKKARI_RELEASE_KEY_ID }}
+          HAS_KEY: ${{ secrets.HIKKARI_RELEASE_KEY != '' }}
+        run: |
+          missing=()
+          [[ -n "$UPDATE_URL" ]] || missing+=("variable HIKKARI_UPDATE_URL")
+          [[ -n "$UPDATE_KEYS" ]] || missing+=("variable HIKKARI_UPDATE_KEYS")
+          [[ -n "$KEY_ID" ]] || missing+=("variable HIKKARI_RELEASE_KEY_ID")
+          [[ "$HAS_KEY" == true ]] || missing+=("secret HIKKARI_RELEASE_KEY")
+          if (( ${#missing[@]} )); then
+            printf '::error::release %s is missing %s\n' "$GITHUB_REF_NAME" "${missing[*]}"
+            exit 1
+          fi
+          [[ "$UPDATE_URL" == https://* ]] || { echo "::error::HIKKARI_UPDATE_URL must be https://"; exit 1; }
+          [[ ",$UPDATE_KEYS" == *",$KEY_ID:"* ]] ||
+            { echo "::error::HIKKARI_RELEASE_KEY_ID '$KEY_ID' is not in HIKKARI_UPDATE_KEYS"; exit 1; }
+          bash scripts/set-version.sh "${GITHUB_REF_NAME#v}" "$GITHUB_RUN_NUMBER"
+
+      - name: Version
+        run: |
+          v=$(sed -n 's/^version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' app/pubspec.yaml | head -1)
+          [[ -n "$v" ]] || { echo "::error::no version in app/pubspec.yaml"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "version $v"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: engine/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin
+          rustup default stable
+
+      # sing-box-lx with our patches (core-patches/sing-box-lx), one slice per
+      # architecture, lipo'd into one universal binary.
+      - name: Build patched sing-box (universal)
+        run: |
+          git clone --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/Leadaxe/sing-box-lx sbx
+          cd sbx
+          git submodule update --init --depth 1 submodules/gvisor submodules/sing-tun submodules/utls submodules/wireguard-go
+          for p in ../core-patches/sing-box-lx/*.patch; do git apply "$p"; done
+          TAGS=$(make -s -f Makefile.lx lx-print-tags)
+          VERSION_SB="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG##*-}-hikkari"
+          for arch in arm64 amd64; do
+            GOOS=darwin GOARCH=$arch CGO_ENABLED=1 go build -trimpath -tags "$TAGS" \
+              -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$VERSION_SB' -checklinkname=0 -s -w -buildid=" \
+              -o ../sing-box-$arch ./cmd/sing-box
+          done
+          cd ..
+          mkdir -p archive
+          lipo -create sing-box-arm64 sing-box-amd64 -output archive/sing-box
+          lipo -info archive/sing-box
+
+      # Release builds trust exactly the channel and keys they are built with.
+      - name: Build HikkariService and hikkari-updater (universal)
+        env:
+          UPDATE_URL: ${{ env.RELEASE == 'true' && vars.HIKKARI_UPDATE_URL || '' }}
+          UPDATE_KEYS: ${{ env.RELEASE == 'true' && vars.HIKKARI_UPDATE_KEYS || '' }}
+        run: |
+          mkdir -p bin
+          cd engine
+          for arch in arm64 amd64; do
+            GOOS=darwin GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X NekkoVPN/core/service.Version=$VERSION" \
+              -o ../bin/HikkariService-$arch ./cmd/hikkari-service
+          done
+          cd ../updater
+          # An empty variable is still "set" for option_env!: only export real ones.
+          [[ -n "$UPDATE_URL" ]] && export HIKKARI_UPDATE_URL="$UPDATE_URL"
+          [[ -n "$UPDATE_KEYS" ]] && export HIKKARI_UPDATE_KEYS="$UPDATE_KEYS"
+          for t in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release --locked -p hikkari-updater --target $t
+          done
+          cd ..
+          lipo -create bin/HikkariService-arm64 bin/HikkariService-amd64 -output bin/HikkariService
+          lipo -create updater/target/aarch64-apple-darwin/release/hikkari-updater \
+                       updater/target/x86_64-apple-darwin/release/hikkari-updater -output bin/hikkari-updater
+          lipo -info bin/HikkariService bin/hikkari-updater
+
+      # embed_engine.sh (an Xcode build phase) builds libnekkobox.dylib for
+      # every arch and copies archive/sing-box into Resources.
+      - name: Build Flutter macOS app
+        run: |
+          cd app
+          flutter pub get
+          flutter build macos --release
+
+      # Layout of the installed client (docs/AUTOUPDATE-ROADMAP.md, Phase 7):
+      # the whole bundle is what an update replaces, the service and the
+      # updater included.
+      - name: Assemble Hikkari.app
+        run: |
+          src=app/build/macos/Build/Products/Release/nekkobox.app
+          [[ -d "$src" ]] || { echo "::error::no $src"; exit 1; }
+          mkdir -p dist
+          rm -rf dist/Hikkari.app
+          ditto "$src" dist/Hikkari.app
+          app=dist/Hikkari.app
+          [[ -x "$app/Contents/Resources/sing-box" ]] || { echo "::error::sing-box was not embedded"; exit 1; }
+          install -m 755 bin/HikkariService "$app/Contents/MacOS/HikkariService"
+          install -m 755 bin/hikkari-updater "$app/Contents/MacOS/hikkari-updater"
+          printf '%s' "$VERSION" > "$app/Contents/Resources/VERSION"
+          # Nested code first, then the bundle: ad-hoc (no Developer ID yet).
+          for f in "$app/Contents/MacOS/HikkariService" "$app/Contents/MacOS/hikkari-updater" "$app/Contents/Resources/sing-box"; do
+            codesign --force --timestamp=none --sign - "$f"
+          done
+          codesign --force --timestamp=none --sign - --entitlements app/macos/Runner/Release.entitlements "$app"
+          codesign --verify --strict --verbose=2 "$app"
+          du -sh "$app"
+
+      # The one file users download. pkgbuild installs the bundle root:wheel
+      # (which the service requires) and runs postinstall → HikkariService
+      # install. Not relocatable: the installer must not "update" some other
+      # copy of the bundle it finds elsewhere on disk.
+      - name: Build Hikkari.pkg
+        run: |
+          rm -rf pkgroot && mkdir -p pkgroot/Applications
+          ditto dist/Hikkari.app pkgroot/Applications/Hikkari.app
+          pkgbuild --analyze --root pkgroot component.plist
+          plutil -replace 0.BundleIsRelocatable -bool NO component.plist
+          plutil -replace 0.BundleOverwriteAction -string upgrade component.plist
+          pkgbuild --root pkgroot --component-plist component.plist \
+            --identifier net.hikkari.pkg --version "$VERSION" \
+            --scripts app/macos/pkg/scripts --ownership recommended \
+            --install-location / "Hikkari-$VERSION.pkg"
+          ls -la Hikkari-*.pkg
+
+      # The runner has passwordless sudo: install the package the way users
+      # do and exercise the privileged half for real — the daemon, the socket,
+      # the sanitiser, a utun through the service. auto_route stays off so
+      # the runner's own traffic is never rerouted.
+      - name: Service smoke test
+        run: |
+          set -euo pipefail
+          sudo installer -pkg "Hikkari-$VERSION.pkg" -target /
+          app=/Applications/Hikkari.app
+          stat -f '%Su:%Sg %Sp %N' "$app" "$app/Contents/MacOS/HikkariService" "$app/Contents/Resources/sing-box"
+          [[ "$(stat -f %Su "$app/Contents/Resources/sing-box")" == root ]] || { echo "the bundle is not root-owned"; exit 1; }
+          [[ "$(cat "$app/Contents/Resources/VERSION")" == "$VERSION" ]]
+          sudo launchctl print system/net.hikkari.service | grep -E 'state|pid' | head -3
+
+          cat > svc.py <<'PY'
+          import json, socket, sys
+          s = socket.socket(socket.AF_UNIX)
+          s.settimeout(120)
+          s.connect("/var/run/hikkari-service.sock")
+          s.sendall((sys.argv[1] + "\n").encode())
+          print(s.makefile().readline().strip())
+          PY
+          call() { python3 svc.py "$1" | tee /dev/stderr; }
+          field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
+
+          # The GUI's account reaches the socket without sudo.
+          [[ "$(call '{"op":"status"}' | field 'd["ok"] and not d.get("running")')" == True ]]
+          [[ "$(call '{"op":"start","config":{"inbounds":[],"services":[]}}' | field 'd.get("ok", False)')" == False ]]
+          [[ "$(call '{"op":"start","config":{"inbounds":[],"outbounds":[{"type":"direct","tag":"d","tls":{"certificate_path":"/etc/master.passwd"}}]}}' | field 'd.get("ok", False)')" == False ]]
+
+          cfg='{"log":{"level":"info","timestamp":true},"dns":{"servers":[{"tag":"local","type":"local"}]},"inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"auto_route":false,"stack":"mixed"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","default_domain_resolver":{"server":"local"}},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"},"cache_file":{"enabled":true,"path":"cache.db"}}}'
+          echo "{\"op\":\"start\",\"config\":$cfg}" > start.json
+          [[ "$(call "$(cat start.json)" | field 'd["ok"] and d.get("running", False)')" == True ]]
+          up=0
+          for i in $(seq 1 40); do curl -sf --max-time 2 http://127.0.0.1:9090/version && { up=1; break; }; sleep 0.5; done
+          [[ $up == 1 ]] || { echo "the core never answered on the Clash API"; sudo cat /var/db/hikkari/service.log; exit 1; }
+          sudo test -f /var/db/hikkari/cache.db || { echo "cache.db is not in the service's directory"; exit 1; }
+          [[ "$(call '{"op":"stop"}' | field 'd.get("running", False)')" == False ]]
+
+          # No channel in a branch build: updates are unavailable, and
+          # nothing pending means recovery touches nothing.
+          [[ "$(call '{"op":"recover_update"}' | field 'd["recovery"]')" == nothing ]]
+          # A check settles within seconds: "unavailable" without a channel,
+          # anything but that (the channel may not answer from here) with one.
+          call '{"op":"check_update"}' >/dev/null
+          for i in $(seq 1 40); do
+            sleep 0.5
+            st=$(call '{"op":"status"}' | field 'd["update"]["state"] if d["update"].get("checkedAt") or d["update"]["state"] == "unavailable" else ""')
+            [[ -n "$st" && "$st" != downloading ]] && break
+          done
+          if [[ "$RELEASE" == true ]]; then
+            [[ -n "$st" && "$st" != unavailable ]] || { echo "the release build has no update channel ($st)"; exit 1; }
+          else
+            [[ "$st" == unavailable ]] || { echo "update state: $st"; exit 1; }
+          fi
+          [[ "$(call '{"op":"apply_update"}' | field 'd.get("ok", False)')" == False ]]
+          sudo cat /var/db/hikkari/service.log
+
+      # A real update on a Mac, with the core running: an updater built
+      # against a local channel and a throwaway key, a release one patch up
+      # published from the installed bundle, check → stage → apply. The swap
+      # replaces the daemon's own binary, so the daemon exits, launchd starts
+      # the new one and it brings the core back; then trial → confirm.
+      - name: Update smoke test
+        run: |
+          set -euo pipefail
+          app=/Applications/Hikkari.app
+          port=8731
+          call() { python3 svc.py "$1" | tee /dev/stderr; }
+          field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
+
+          cd updater
+          cargo build --release --locked -p nekko-updater --bin nekko-manifest
+          pub=$(target/release/nekko-manifest keygen --out "$RUNNER_TEMP/ci.key" | sed -n 's/^public key: //p')
+          HIKKARI_UPDATE_URL="http://127.0.0.1:$port" HIKKARI_UPDATE_KEYS="ci-1:$pub" \
+            cargo build --release --locked -p hikkari-updater --target-dir target-ci
+          cd ..
+          sudo install -o root -g wheel -m 755 updater/target-ci/release/hikkari-updater "$app/Contents/MacOS/hikkari-updater"
+
+          from=$(cat "$app/Contents/Resources/VERSION")
+          IFS=. read -r ma mi pa <<< "$from"
+          to="$ma.$mi.$((pa + 1))"
+          rel="$RUNNER_TEMP/release/Hikkari.app"
+          mkdir -p "$(dirname "$rel")"
+          ditto "$app" "$rel"
+          printf '%s' "$to" > "$rel/Contents/Resources/VERSION"
+          updater/target/release/nekko-manifest publish --dir "$rel" --version "$to" --platform macos \
+            --base-url "http://127.0.0.1:$port" --key "$RUNNER_TEMP/ci.key" --key-id ci-1 --out "$RUNNER_TEMP/channel"
+          python3 -m http.server $port --bind 127.0.0.1 --directory "$RUNNER_TEMP/channel" >/dev/null 2>&1 &
+          server=$!
+          trap 'kill $server 2>/dev/null; sudo cat /var/db/hikkari/service.log' EXIT
+          for i in $(seq 1 60); do curl -sf "http://127.0.0.1:$port/stable/macos/latest.json" >/dev/null && break; sleep 0.25; done
+
+          [[ "$(call "$(cat start.json)" | field 'd.get("running", False)')" == True ]]
+          st=$(call '{"op":"check_update"}')
+          for i in $(seq 1 240); do
+            s=$(echo "$st" | field 'd["update"]["state"]')
+            [[ "$s" == ready ]] && break
+            [[ "$s" == error || "$s" == unavailable ]] && { echo "update state $s"; exit 1; }
+            sleep 0.5; st=$(call '{"op":"status"}')
+          done
+          [[ "$(echo "$st" | field 'd["update"]["version"]')" == "$to" ]] || { echo "$to was not staged"; exit 1; }
+          [[ "$(cat "$app/Contents/Resources/VERSION")" == "$from" ]] || { echo "staging touched the installation"; exit 1; }
+          old_pid=$(sudo launchctl print system/net.hikkari.service | sed -n 's/^[[:space:]]*pid = //p')
+
+          ap=$(call '{"op":"apply_update","reconnect":true}')
+          [[ "$(echo "$ap" | field 'd.get("ok", False)')" == True ]] || { echo "apply failed"; exit 1; }
+          [[ "$(echo "$ap" | field 'd["from"] + "->" + d["to"]')" == "$from->$to" ]] || { echo "applied the wrong versions"; exit 1; }
+          [[ "$(cat "$app/Contents/Resources/VERSION")" == "$to" ]] || { echo "the bundle is not $to"; exit 1; }
+          [[ -d "$app.old" ]] || { echo "the previous version was not kept"; exit 1; }
+
+          # The daemon replaced itself: wait for the new one and its core.
+          back=0
+          for i in $(seq 1 60); do
+            sleep 0.5
+            st=$(python3 svc.py '{"op":"status"}' 2>/dev/null) || continue
+            [[ "$(echo "$st" | field 'd.get("running", False)')" == True ]] && { back=1; break; }
+          done
+          [[ $back == 1 ]] || { echo "the core did not come back after the swap"; exit 1; }
+          new_pid=$(sudo launchctl print system/net.hikkari.service | sed -n 's/^[[:space:]]*pid = //p')
+          [[ "$new_pid" != "$old_pid" ]] || { echo "the daemon was not restarted into the new version"; exit 1; }
+          curl -sf --max-time 5 http://127.0.0.1:9090/version
+
+          [[ "$(call '{"op":"recover_update"}' | field 'd["recovery"]')" == on_trial ]]
+          call '{"op":"confirm_update"}' >/dev/null
+          [[ ! -e "$app.old" ]] || { echo "Hikkari.app.old survived the confirmation"; exit 1; }
+          [[ "$(stat -f %Su "$app/Contents/MacOS/HikkariService")" == root ]] || { echo "the updated bundle is not root-owned"; exit 1; }
+          call '{"op":"stop"}' >/dev/null
+
+      - name: Uninstall
+        if: always()
+        run: |
+          set -euo pipefail
+          sudo /Applications/Hikkari.app/Contents/MacOS/HikkariService uninstall
+          ! sudo launchctl print system/net.hikkari.service >/dev/null 2>&1 || { echo "the daemon is still loaded"; exit 1; }
+          for p in /Applications/Hikkari.app /Applications/Hikkari.app.old /Applications/.Hikkari.staging \
+                   /Library/LaunchDaemons/net.hikkari.service.plist /var/db/hikkari /var/run/hikkari-service.sock; do
+            [[ ! -e "$p" ]] || { echo "$p is still there"; exit 1; }
+          done
+          echo "nothing left"
+
+      - name: Sign update channel
+        if: env.RELEASE == 'true'
+        env:
+          RELEASE_KEY: ${{ secrets.HIKKARI_RELEASE_KEY }}
+          KEY_ID: ${{ vars.HIKKARI_RELEASE_KEY_ID }}
+          UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          UPDATE_KEYS: ${{ vars.HIKKARI_UPDATE_KEYS }}
+        run: |
+          set -euo pipefail
+          m=updater/target/release/nekko-manifest
+          key="$RUNNER_TEMP/release.key"
+          umask 077
+          printf '%s' "$RELEASE_KEY" | tr -d '[:space:]' > "$key"
+          trap 'rm -f "$key"' EXIT
+          "$m" publish --dir dist/Hikkari.app --version "$VERSION" --platform macos \
+            --base-url "${UPDATE_URL%/}" --key "$key" --key-id "$KEY_ID" --out update-channel
+          pub=$(tr ',' '\n' <<< "$UPDATE_KEYS" | sed -n "s/^$KEY_ID://p" | head -1)
+          "$m" verify --manifest update-channel/stable/macos/manifest.json \
+            --public-key "$pub" --key-id "$KEY_ID" --platform macos
+
+      - name: Upload update channel
+        if: env.RELEASE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-channel-macos
+          path: update-channel
+          retention-days: 30
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: HikkariMac
+          path: Hikkari-*.pkg
+          retention-days: 14
+
+  publish-channel:
+    name: Publish macOS update channel
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: update-channel-macos
+          path: update-channel
+
+      - name: SSH
+        env:
+          SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HIKKARI_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [[ -n "$SSH_KEY" && -n "$KNOWN_HOSTS" ]] || { echo "::error::deploy secrets are missing"; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$SSH_KEY" | ssh-add -
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Publish
+        env:
+          HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
+        run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}" macos

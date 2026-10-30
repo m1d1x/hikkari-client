@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package api
 
@@ -8,8 +8,8 @@ import (
 	vpn "NekkoVPN/core/engine/singbox/process"
 )
 
-// newDesktopVPN: the engine manages the core itself (on macOS through its
-// LaunchDaemon).
+// newDesktopVPN: no service on this platform; the process manager here is a
+// stub that fails loudly (see vpn.ProcessManager).
 func newDesktopVPN(baseDir string, log vpn.LineLogger) vpn.Manager {
 	return vpn.NewProcessManager(
 		filepath.Join(baseDir, vpn.BinaryName),

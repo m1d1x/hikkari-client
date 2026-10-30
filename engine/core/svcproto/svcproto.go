@@ -1,7 +1,8 @@
 // Package svcproto is the contract between the unprivileged GUI engine and
-// the Hikkari Windows service that owns the sing-box core.
+// the Hikkari service that owns the sing-box core (core/service: a Windows
+// service behind a named pipe, a macOS LaunchDaemon behind a unix socket).
 //
-// One request per pipe connection, one JSON line each way:
+// One request per connection, one JSON line each way:
 //
 //	GUI ──{"op":"start","config":{…}}──▶ service      sanitise, write, run core
 //	GUI ──{"op":"stop"}─────────────────▶ service      stop core
@@ -24,8 +25,11 @@ import (
 	"io"
 )
 
-// PipeName is the service's control pipe.
+// PipeName is the service's control pipe on Windows.
 const PipeName = `\\.\pipe\hikkari-service`
+
+// SocketPath is the service's control socket on macOS.
+const SocketPath = "/var/run/hikkari-service.sock"
 
 // ServiceName is the SCM name of the service.
 const ServiceName = "HikkariService"

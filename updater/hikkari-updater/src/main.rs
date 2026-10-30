@@ -1,23 +1,29 @@
-//! `hikkari-updater` — run by the Hikkari service, as SYSTEM, to keep the
-//! installation current. One command per invocation; every outcome is one
-//! JSON object per line on stdout, diagnostics go to stderr.
+//! `hikkari-updater` — run by the Hikkari service (SYSTEM on Windows, root on
+//! macOS) to keep the installation current. One command per invocation; every
+//! outcome is one JSON object per line on stdout, diagnostics go to stderr.
 //!
 //! ```text
-//!   <root>\                         Program Files\Hikkari
+//!   Windows: <root> = Program Files\Hikkari
 //!       hikkari-updater.exe         this binary — lives OUTSIDE app\
 //!       app\                        the installation; app\VERSION names it
 //!       app.old\                    previous version while the new one is on trial
 //!       .staging\                   tree\, parts\, READY / PENDING / REFUSED, cache
+//!
+//!   macOS: <root> = /Applications
+//!       Hikkari.app/                the installation, this binary inside it;
+//!                                   Contents/Resources/VERSION names it
+//!       Hikkari.app.old/            previous version while the new one is on trial
+//!       .Hikkari.staging/           same as .staging\ (one volume with the bundle)
 //! ```
 //!
 //! ```text
 //!   status     installed version, staged version, version on trial
 //!   check      ask the channel; nothing is downloaded
 //!   update     check, then stage the new version beside the installation
-//!   apply      swap the staged version in        (nothing inside app\ may run)
+//!   apply      swap the staged version in        (Windows: nothing inside app\ may run)
 //!   recover    first thing at every start: repair / count the trial / roll back
-//!   confirm    the new version works: drop app.old
-//!   rollback   the new version did not come up at all: put app.old back now
+//!   confirm    the new version works: drop the .old copy
+//!   rollback   the new version did not come up at all: put the .old copy back now
 //! ```
 //!
 //! The caller (the service) serialises invocations: two of these running at
@@ -41,23 +47,51 @@ use nekko_updater::swap::{self, Recovery};
 use nekko_updater::TrustedKey;
 use serde_json::{json, Value};
 
-/// The installation directory, relative to the root.
-const APP_DIR: &str = "app";
-/// The staging directory — a sibling of `app\`, never inside it.
-const STAGING_DIR: &str = ".staging";
-/// Plain-text version of the installed tree, shipped inside it (and therefore
-/// covered by the manifest like every other file). Read from the tree rather
-/// than compiled into this binary: the updater lives outside `app\` and is
-/// replaced far less often than what it updates.
-const VERSION_FILE: &str = "VERSION";
+/// Where one platform's installation lives under the root.
+#[derive(Clone, Copy)]
+struct Placement {
+    /// The installation directory, relative to the root.
+    app_dir: &'static str,
+    /// The staging directory — a sibling of the installation, never inside it.
+    staging_dir: &'static str,
+    /// Plain-text version of the installed tree, relative to the installation
+    /// and shipped inside it (so covered by the manifest like every other
+    /// file). Read from the tree rather than compiled into this binary: on
+    /// Windows the updater lives outside `app\` and is replaced far less
+    /// often than what it updates.
+    version_file: &'static str,
+    /// The manifests this installation takes.
+    platform: Platform,
+}
+
+const WINDOWS: Placement = Placement {
+    app_dir: "app",
+    staging_dir: ".staging",
+    version_file: "VERSION",
+    platform: Platform::Windows,
+};
+
+/// The bundle is replaced whole. VERSION sits in Resources: a file in the
+/// bundle root would break its code signature.
+const MACOS: Placement = Placement {
+    app_dir: "Hikkari.app",
+    staging_dir: ".Hikkari.staging",
+    version_file: "Contents/Resources/VERSION",
+    platform: Platform::Macos,
+};
+
+/// What this build manages unless `--layout` says otherwise (the tests run
+/// either layout on any host).
+const NATIVE: Placement = if cfg!(target_os = "macos") {
+    MACOS
+} else {
+    WINDOWS
+};
+
 /// The last verified manifest envelope and its ETag, so an unchanged channel
 /// answers 304 instead of resending ~300 KB.
 const CACHE_ENVELOPE: &str = "manifest.envelope";
 const CACHE_ETAG: &str = "manifest.etag";
-
-/// Every Hikkari manifest is a Windows manifest — also when the tests run this
-/// binary on Linux.
-const PLATFORM: Platform = Platform::Windows;
 
 /// Channel root and trusted keys are fixed at build time:
 ///
@@ -73,10 +107,11 @@ const BUILT_KEYS: Option<&str> = option_env!("HIKKARI_UPDATE_KEYS");
 const NO_CHANNEL: &str = "no_channel";
 
 const USAGE: &str = "usage: hikkari-updater <status|check|update|apply|recover|confirm|rollback> \
-                     [--root DIR] [--channel stable|beta] [--proxy URL]";
+                     [--root DIR] [--layout windows|macos] [--channel stable|beta] [--proxy URL]";
 
 struct Options {
     root: PathBuf,
+    placement: Placement,
     channel: Channel,
     proxy: Option<String>,
     base_url: Option<String>,
@@ -85,7 +120,10 @@ struct Options {
 
 impl Options {
     fn layout(&self) -> Layout {
-        Layout::new(self.root.join(APP_DIR), self.root.join(STAGING_DIR))
+        Layout::new(
+            self.root.join(self.placement.app_dir),
+            self.root.join(self.placement.staging_dir),
+        )
     }
 
     fn channel_config(&self) -> Result<ChannelConfig, String> {
@@ -99,7 +137,7 @@ impl Options {
         }
         Ok(ChannelConfig {
             base_url,
-            platform: PLATFORM,
+            platform: self.placement.platform,
             channel: self.channel,
             trusted: self.trusted.clone(),
         })
@@ -155,6 +193,7 @@ fn main() -> ExitCode {
 fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut opts = Options {
         root: default_root()?,
+        placement: NATIVE,
         channel: Channel::Stable,
         proxy: None,
         base_url: BUILT_URL.map(str::to_owned),
@@ -172,6 +211,13 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         };
         match flag.as_str() {
             "--root" => opts.root = PathBuf::from(value()?),
+            "--layout" => {
+                opts.placement = match value()?.as_str() {
+                    "windows" => WINDOWS,
+                    "macos" => MACOS,
+                    other => return Err(format!("unknown layout {other}")),
+                }
+            }
             "--proxy" => opts.proxy = Some(value()?),
             "--channel" => {
                 opts.channel = match value()?.as_str() {
@@ -193,12 +239,16 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(opts)
 }
 
-/// The directory holding this executable: the updater ships beside `app\`.
+/// The root when `--root` is not given. On Windows the updater ships beside
+/// `app\`; on macOS it ships inside the bundle, three levels below the
+/// directory holding `Hikkari.app` (`Hikkari.app/Contents/MacOS/`).
 fn default_root() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("finding this executable: {e}"))?;
-    exe.parent()
+    let up = if cfg!(target_os = "macos") { 4 } else { 1 };
+    exe.ancestors()
+        .nth(up)
         .map(Path::to_path_buf)
-        .ok_or_else(|| "this executable has no parent directory".to_owned())
+        .ok_or_else(|| format!("{} has no root above it", exe.display()))
 }
 
 /// `id:hex[,id:hex]`.
@@ -214,8 +264,8 @@ fn parse_keys(spec: &str) -> Result<Vec<TrustedKey>, String> {
         .collect()
 }
 
-fn installed_version(layout: &Layout) -> Result<Version, String> {
-    let path = layout.install().join(VERSION_FILE);
+fn installed_version(opts: &Options, layout: &Layout) -> Result<Version, String> {
+    let path = layout.install().join(opts.placement.version_file);
     let text = fs::read_to_string(&path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     Version::parse(text.trim()).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -235,7 +285,7 @@ fn status(opts: &Options) -> Result<(), String> {
         .is_some_and(|p| p.attempts + 1 > swap::MAX_ATTEMPTS);
     emit(json!({
         "event": "status",
-        "installed": installed_version(&layout)?.to_string(),
+        "installed": installed_version(opts, &layout)?.to_string(),
         "ready": stage::read_ready(&layout).map(|r| r.version.to_string()),
         "pending": pending,
         "recover_moves": recover_moves,
@@ -251,7 +301,7 @@ struct Found {
 
 fn check(opts: &Options) -> Result<Option<Found>, String> {
     let layout = opts.layout();
-    let installed = installed_version(&layout)?;
+    let installed = installed_version(opts, &layout)?;
     let cfg = opts.channel_config()?;
     let transport = http::HttpChannel::new(opts.proxy.as_deref())?;
     let cached = read_cache(&layout);
@@ -335,7 +385,7 @@ fn update(opts: &Options) -> Result<(), String> {
 
 fn apply(opts: &Options) -> Result<(), String> {
     let layout = opts.layout();
-    let installed = installed_version(&layout)?;
+    let installed = installed_version(opts, &layout)?;
     let applied = swap::apply(&layout, installed).map_err(|e| e.to_string())?;
     emit(json!({
         "event": "applied",

@@ -23,3 +23,4 @@ func (m *ProcessManager) Start() error {
 
 func (m *ProcessManager) Stop() error    { return nil }
 func (m *ProcessManager) Restart() error { return m.Start() }
+func (m *ProcessManager) Pid() int       { return 0 }

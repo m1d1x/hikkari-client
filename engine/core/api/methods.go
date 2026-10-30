@@ -12,8 +12,8 @@ import (
 
 	"NekkoVPN/core/applist"
 	"NekkoVPN/core/cleanliness"
-	"NekkoVPN/core/engine"
 	"NekkoVPN/core/downdetector"
+	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/profile"

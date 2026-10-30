@@ -243,6 +243,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 
 	c.logger.Logf("=== api.Core init, baseDir=%s ===", baseDir)
 	c.logEnvironment()
+	c.startUpdates()
 	return nil
 }
 
