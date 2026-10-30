@@ -3,7 +3,7 @@
 # to ship it on Windows; the crate is kept byte-identical to its source so
 # fixes travel both ways as plain file copies.
 [workspace]
-members = ["nekko-updater"]
+members = ["nekko-updater", "hikkari-updater"]
 resolver = "2"
 
 # Must equal app/pubspec.yaml `version` (without the +build suffix): that is

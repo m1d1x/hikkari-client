@@ -1,0 +1,28 @@
+# hikkari-updater — the executable the Hikkari service runs to check, stage,
+# swap, confirm and roll back releases. All policy lives in nekko-updater;
+# this crate is the HTTP transport, the on-disk layout and a JSON-lines CLI.
+[package]
+name = "hikkari-updater"
+version.workspace = true
+edition = "2021"
+
+[[bin]]
+name = "hikkari-updater"
+path = "src/main.rs"
+
+[dependencies]
+nekko-updater = { path = "../nekko-updater" }
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Blocking HTTP: the updater is a short-lived process doing one thing at a
+# time, so an async runtime would buy nothing. Default features are off on
+# purpose — `gzip` makes the client ask for compressed bodies, and a Range
+# request against a compressed body resumes at an offset that means nothing.
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+# Only to sign test releases; same versions nekko-updater pins.
+ed25519-dalek = "2"
+hex = "0.4"
