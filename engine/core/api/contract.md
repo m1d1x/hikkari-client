@@ -283,6 +283,29 @@ Only `tunnel` proves traffic passes through the proxy. `tcp` means the port
 accepts a handshake (DPI may still kill the protocol), `icmp` only that the
 host answers pings.
 
+### Telemetry
+
+Product events and scrubbed errors for the hub (docs/TELEMETRY.md). One switch,
+default from the build (`telemetry.Default`), governs telemetry **and** the
+downdetector. Events and errors are checked against the contract in
+`core/telemetry/contract.go`; anything unlisted is refused with an error.
+The endpoint is stamped at build time (`telemetry.EventsURL`, env
+`HIKKARI_TELEMETRY_URL` overrides); without it items queue (≤1 MiB, ≤7 days)
+and nothing leaves.
+
+| method                | args                                                  | data             |
+|-----------------------|-------------------------------------------------------|------------------|
+| `TelemetrySettings`   | —                                                     | `Settings`       |
+| `SetTelemetryEnabled` | `{"enabled":bool}`                                    | —                |
+| `TelemetryLastBatch`  | —                                                     | `Batch \| null`  |
+| `TelemetryEvent`      | `{"name":string,"fields":{…}}`                        | —                |
+| `TelemetryError`      | `{"code":string,"component":string,"message":string}` | —                |
+
+`Settings`: `enabled` (effective), `explicit` (the user chose; a changed default
+no longer applies), `default`, `endpoint` (this build can send). Off wipes the
+queue and the install ID. `StartVPN` reports `connect` and, once per install,
+`first_connect_ok` by itself; the UI reports `ui_open`, `cta` and `ui.exception`.
+
 ### Downdetector
 
 Anonymous reports for the shared downdetector (docs/DOWNDETECTOR.md). Phase 0:
@@ -295,7 +318,8 @@ nothing is sent yet.
 | `SetDowndetectorSettings` | `{"enabled":bool,"share_private":bool}`     | —                |
 | `DowndetectorLastReport`  | —                                           | `Report \| null` |
 
-`Settings`: `enabled` (default `true`), `share_private` (default `false`).
+`Settings`: `enabled` follows the telemetry switch and cannot be set here
+(the value passed is ignored), `share_private` (default `false`).
 Servers from an http(s) subscription are reported always; the user's own
 (single links, pasted configs, profiles saved before `origin` existed) only
 with `share_private`. Turning `enabled` off also drops the queued reports.
