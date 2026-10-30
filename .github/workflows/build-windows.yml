@@ -10,6 +10,10 @@ on:
 
 env:
   SING_BOX_LX_TAG: v1.14.3-lx.21
+  # A tag v* is a release (docs/AUTOUPDATE-ROADMAP.md, Phase 6): its version
+  # is stamped everywhere, hikkari-updater gets the channel baked in, the app
+  # tree is signed and published. Every other build has no channel at all.
+  RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   # sing-box-lx with our patches (core-patches/sing-box-lx/*.patch) applied —
@@ -62,6 +66,32 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Fails before anything is built: a release without its channel would
+      # ship installs that can never update, and one signed with a key the
+      # clients do not trust would publish an update nobody accepts.
+      - name: Release version and configuration
+        if: env.RELEASE == 'true'
+        shell: bash
+        env:
+          UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          UPDATE_KEYS: ${{ vars.HIKKARI_UPDATE_KEYS }}
+          KEY_ID: ${{ vars.HIKKARI_RELEASE_KEY_ID }}
+          HAS_KEY: ${{ secrets.HIKKARI_RELEASE_KEY != '' }}
+        run: |
+          missing=()
+          [[ -n "$UPDATE_URL" ]] || missing+=("variable HIKKARI_UPDATE_URL")
+          [[ -n "$UPDATE_KEYS" ]] || missing+=("variable HIKKARI_UPDATE_KEYS")
+          [[ -n "$KEY_ID" ]] || missing+=("variable HIKKARI_RELEASE_KEY_ID")
+          [[ "$HAS_KEY" == true ]] || missing+=("secret HIKKARI_RELEASE_KEY")
+          if (( ${#missing[@]} )); then
+            printf '::error::release %s is missing %s\n' "$GITHUB_REF_NAME" "${missing[*]}"
+            exit 1
+          fi
+          [[ "$UPDATE_URL" == https://* ]] || { echo "::error::HIKKARI_UPDATE_URL must be https://"; exit 1; }
+          [[ ",$UPDATE_KEYS" == *",$KEY_ID:"* ]] ||
+            { echo "::error::HIKKARI_RELEASE_KEY_ID '$KEY_ID' is not in HIKKARI_UPDATE_KEYS"; exit 1; }
+          bash scripts/set-version.sh "${GITHUB_REF_NAME#v}" "$GITHUB_RUN_NUMBER"
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -141,9 +171,18 @@ jobs:
           if (-not (Test-Path "HikkariService.exe")) { throw "HikkariService.exe was not generated!" }
           if (-not (Test-Path "Hikkari.exe")) { throw "Hikkari.exe was not generated!" }
 
+      # Release builds trust exactly the channel and keys they are built with
+      # (option_env! in hikkari-updater); other builds get neither.
       - name: Build hikkari-updater.exe
         shell: pwsh
+        env:
+          HIKKARI_UPDATE_URL: ${{ env.RELEASE == 'true' && vars.HIKKARI_UPDATE_URL || '' }}
+          HIKKARI_UPDATE_KEYS: ${{ env.RELEASE == 'true' && vars.HIKKARI_UPDATE_KEYS || '' }}
         run: |
+          # An empty variable is still "set" for option_env!: drop it.
+          foreach ($n in "HIKKARI_UPDATE_URL", "HIKKARI_UPDATE_KEYS") {
+            if (-not [Environment]::GetEnvironmentVariable($n)) { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
+          }
           rustup toolchain install stable --profile minimal
           rustup default stable
           cd updater
@@ -273,18 +312,28 @@ jobs:
             $st = Invoke-Hikkari '{"op":"stop"}'
             if ($st.running) { throw "the core is still running after stop" }
 
-            # Updates: this CI build has no channel baked in, so the service
-            # must say "unavailable" and refuse to apply — and recovery with
+            # Updates: a non-release build has no channel baked in, so the
+            # service must say "unavailable"; a release build must not (its
+            # channel may not answer from here — "error" is fine). Either way
+            # it refuses to apply with nothing staged, and recovery with
             # nothing pending must not touch anything.
             if (-not (Test-Path "$root\Hikkari.exe")) { throw "the launcher was not installed" }
             $rec = Invoke-Hikkari '{"op":"recover_update"}'
             if (-not $rec.ok -or $rec.recovery -ne "nothing") { throw "unexpected recovery: $($rec.recovery)" }
             $chk = Invoke-Hikkari '{"op":"check_update"}'
-            for ($i = 0; $i -lt 20 -and $chk.update.state -ne "unavailable"; $i++) {
-              Start-Sleep -Milliseconds 500
-              $chk = Invoke-Hikkari '{"op":"status"}'
+            if ($env:RELEASE -eq "true") {
+              for ($i = 0; $i -lt 40 -and $chk.update.state -eq "downloading"; $i++) {
+                Start-Sleep -Milliseconds 500
+                $chk = Invoke-Hikkari '{"op":"status"}'
+              }
+              if ($chk.update.state -eq "unavailable") { throw "the release build has no update channel" }
+            } else {
+              for ($i = 0; $i -lt 20 -and $chk.update.state -ne "unavailable"; $i++) {
+                Start-Sleep -Milliseconds 500
+                $chk = Invoke-Hikkari '{"op":"status"}'
+              }
+              if ($chk.update.state -ne "unavailable") { throw "update state: $($chk.update.state)" }
             }
-            if ($chk.update.state -ne "unavailable") { throw "update state: $($chk.update.state)" }
             $app = Invoke-Hikkari '{"op":"apply_update"}'
             if ($app.ok) { throw "apply_update succeeded with nothing staged" }
             if (-not (Test-Path "$root\app\sing-box.exe")) { throw "a refused apply moved app\" }
@@ -295,8 +344,8 @@ jobs:
 
       # A real update through the service, on Windows, with the core running
       # (so sing-box.exe holds app\ open until the service stops it): an
-      # updater built against a local channel and a throwaway key, a "1.0.1"
-      # release published from the installed tree, check → stage → apply with
+      # updater built against a local channel and a throwaway key, a release
+      # one patch above the installed version published from the installed tree, check → stage → apply with
       # reconnect → trial → confirm.
       - name: Update smoke test
         shell: pwsh
@@ -321,10 +370,13 @@ jobs:
           Copy-Item -Force updater/target-ci/release/hikkari-updater.exe "$root\"
           Start-Service HikkariService
 
-          $rel = "$tmp\release-1.0.1"
+          $from = Get-Content -Raw "$root\app\VERSION"
+          $v = [version]$from
+          $to = "$($v.Major).$($v.Minor).$($v.Build + 1)"
+          $rel = "$tmp\release-$to"
           Copy-Item -Recurse "$root\app" $rel
-          Set-Content -NoNewline -Encoding ascii -Path "$rel\VERSION" -Value "1.0.1"
-          & updater/target/release/nekko-manifest.exe publish --dir $rel --version 1.0.1 --platform windows `
+          Set-Content -NoNewline -Encoding ascii -Path "$rel\VERSION" -Value $to
+          & updater/target/release/nekko-manifest.exe publish --dir $rel --version $to --platform windows `
               --base-url "http://127.0.0.1:$port" --key "$tmp\ci.key" --key-id ci-1 --out "$tmp\channel"
           if ($LASTEXITCODE -ne 0) { throw "publish failed" }
           $server = Start-Process python -ArgumentList "-m","http.server","$port","--bind","127.0.0.1","--directory","$tmp\channel" -PassThru -WindowStyle Hidden
@@ -360,16 +412,16 @@ jobs:
               Start-Sleep -Milliseconds 500
               $st = Invoke-Hikkari '{"op":"status"}'
             }
-            if ($st.update.state -ne "ready" -or $st.update.version -ne "1.0.1") { throw "1.0.1 was not staged" }
-            if ((Get-Content -Raw "$root\app\VERSION") -ne "1.0.0") { throw "staging touched the installation" }
+            if ($st.update.state -ne "ready" -or $st.update.version -ne $to) { throw "$to was not staged" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne $from) { throw "staging touched the installation" }
 
             $ap = Invoke-Hikkari '{"op":"apply_update","reconnect":true}'
-            if (-not $ap.ok -or $ap.from -ne "1.0.0" -or $ap.to -ne "1.0.1") { throw "apply failed" }
+            if (-not $ap.ok -or $ap.from -ne $from -or $ap.to -ne $to) { throw "apply failed" }
             if (-not $ap.running) { throw "the core did not come back after the swap" }
-            if ((Get-Content -Raw "$root\app\VERSION") -ne "1.0.1") { throw "app\ is not 1.0.1" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne $to) { throw "app\ is not $to" }
             if (-not (Test-Path "$root\app.old\nekkobox.exe")) { throw "the previous version was not kept" }
             $v = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari").DisplayVersion
-            if ($v -ne "1.0.1") { throw "Apps & features still says $v after the update" }
+            if ($v -ne $to) { throw "Apps & features still says $v after the update" }
 
             $rec = Invoke-Hikkari '{"op":"recover_update"}'
             if ($rec.recovery -ne "on_trial") { throw "expected a trial, got $($rec.recovery)" }
@@ -404,6 +456,45 @@ jobs:
           if (Test-Path $root) { cmd /c dir /a /s "$root"; throw "$root was not removed" }
           Write-Host "removed after ~$([math]::Round($i / 2)) s"
 
+      # The update: the app\ tree exactly as the installer ships it, hashed
+      # and signed into a channel tree (blobs/, stable/windows/{manifest,
+      # latest}.json), then checked against the public key the clients were
+      # just built to trust. The private key exists on disk only for this step.
+      - name: Sign update channel
+        if: env.RELEASE == 'true'
+        shell: pwsh
+        env:
+          RELEASE_KEY: ${{ secrets.HIKKARI_RELEASE_KEY }}
+          KEY_ID: ${{ vars.HIKKARI_RELEASE_KEY_ID }}
+          UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          UPDATE_KEYS: ${{ vars.HIKKARI_UPDATE_KEYS }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = Get-Content -Raw bundle/Hikkari/app/VERSION
+          $manifestBin = "updater/target/release/nekko-manifest.exe"
+          if (-not (Test-Path $manifestBin)) { throw "nekko-manifest was not built" }
+          $key = Join-Path $env:RUNNER_TEMP "release.key"
+          Set-Content -NoNewline -Encoding ascii -Path $key -Value $env:RELEASE_KEY.Trim()
+          try {
+            & $manifestBin publish --dir bundle/Hikkari/app --version $version --platform windows `
+                --base-url $env:UPDATE_URL.TrimEnd('/') --key $key --key-id $env:KEY_ID --out update-channel
+            if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+          } finally {
+            Remove-Item -Force $key -ErrorAction SilentlyContinue
+          }
+          $pub = ($env:UPDATE_KEYS -split ',' | Where-Object { $_ -like "$($env:KEY_ID):*" } | Select-Object -First 1).Split(':', 2)[1]
+          & $manifestBin verify --manifest update-channel/stable/windows/manifest.json `
+              --public-key $pub --key-id $env:KEY_ID --platform windows
+          if ($LASTEXITCODE -ne 0) { throw "the signed manifest does not verify against the key the clients trust" }
+
+      - name: Upload update channel
+        if: env.RELEASE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-channel
+          path: update-channel
+          retention-days: 30
+
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -417,3 +508,57 @@ jobs:
           name: HikkariSetup
           path: HikkariSetup.exe
           retention-days: 14
+
+  # Blobs → manifests → probe onto the update server, then checked from its
+  # public URL (scripts/publish-update-channel.sh). Separate from the build so
+  # the deploy credentials never reach the runner that executes the build.
+  publish-channel:
+    name: Publish update channel
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy configuration
+        env:
+          DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
+          UPDATE_DIR: ${{ vars.HIKKARI_UPDATE_DIR }}
+          HAS_SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY != '' }}
+          HAS_KNOWN_HOSTS: ${{ secrets.HIKKARI_DEPLOY_KNOWN_HOSTS != '' }}
+        run: |
+          missing=()
+          [[ -n "$DEPLOY_HOST" ]] || missing+=("variable HIKKARI_DEPLOY_HOST")
+          [[ -n "$UPDATE_DIR" ]] || missing+=("variable HIKKARI_UPDATE_DIR")
+          [[ "$HAS_SSH_KEY" == true ]] || missing+=("secret HIKKARI_DEPLOY_SSH_KEY")
+          [[ "$HAS_KNOWN_HOSTS" == true ]] || missing+=("secret HIKKARI_DEPLOY_KNOWN_HOSTS")
+          if (( ${#missing[@]} )); then
+            printf '::error::cannot publish %s: missing %s\n' "$GITHUB_REF_NAME" "${missing[*]}"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: update-channel
+          path: update-channel
+
+      - name: SSH
+        env:
+          SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HIKKARI_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$SSH_KEY" | ssh-add -
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Publish
+        env:
+          HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
+          HIKKARI_UPDATE_DIR: ${{ vars.HIKKARI_UPDATE_DIR }}
+        run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}"
