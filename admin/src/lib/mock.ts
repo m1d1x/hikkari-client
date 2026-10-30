@@ -284,31 +284,48 @@ export function donations(w: Win) {
 
 // ---------- presets ----------
 //
-// A preset is a ready-made routing setup the client pulls from the server:
-// the mode and the lists of domains and apps. A new version never goes to
-// everyone at once: testers first, then a growing share, while the rest
-// keep the current version. Errors among those who got it decide whether
-// to go on or roll back.
+// The client gets routing presets as groups: steam, discord, banks... Each
+// group is a bundle of rules of the client's three kinds. Edits pile up in a draft; a
+// release makes a new version, which goes to testers first, then a growing
+// share, while the rest keep the current one. Errors among those who got
+// it decide whether to go on or roll back.
 
 export type RoutingMode = 'bypass' | 'proxy';
 
-export interface PresetVersion {
-	v: number;
+export interface Rules {
 	domains: string[];
-	apps: string[];
+	ips: string[];
+	/** the client's "приложения": exe name on windows, process name of the .app on macos */
+	processes: string[];
 }
 
-export interface Preset {
+export type RuleKind = keyof Rules;
+
+export const RULE_KINDS: { key: RuleKind; label: string; hint: string }[] = [
+	{ key: 'domains', label: 'домены', hint: '+ домен' },
+	{ key: 'ips', label: 'ip / подсети', hint: '+ ip или подсеть' },
+	{ key: 'processes', label: 'приложения', hint: '+ exe или имя .app' },
+];
+
+export interface GroupVersion {
+	v: number;
+	rules: Rules;
+}
+
+export interface Group {
 	id: string;
 	name: string;
+	/** where the group goes unless the person moves it */
 	mode: RoutingMode;
-	/** what everyone has now; null for a preset nobody has yet */
-	current: PresetVersion | null;
+	platforms: Platform[];
+	/** what is being edited, not on any device yet */
+	draft: Rules;
+	/** what everyone has; null for a group never fully rolled out */
+	current: GroupVersion | null;
 	/** the version being rolled out; null when nothing is */
-	next: PresetVersion | null;
+	next: GroupVersion | null;
 	/** index into STAGES */
 	stage: number;
-	platforms: Platform[];
 	testers: string[];
 	paused: boolean;
 	received: number;
@@ -322,49 +339,107 @@ export const STAGES = [0, 5, 25, 50, 100];
 /** Active devices: what a percent of the audience is measured against. */
 export const ACTIVE_DEVICES = 6800;
 
-const RU = ['gosuslugi.ru', 'sberbank.ru', 'vk.com', 'yandex.ru', 'ozon.ru', 'wildberries.ru', 'mos.ru'];
+const rules = (r: Partial<Rules>): Rules => ({ domains: [], ips: [], processes: [], ...r });
 
-export const presets: Preset[] = [
-	{
-		id: 'ru',
-		name: 'ru сайты напрямую',
-		mode: 'bypass',
-		current: { v: 3, domains: RU, apps: [] },
-		next: { v: 4, domains: [...RU, 'tbank.ru', 'avito.ru'], apps: ['Steam.exe'] },
-		stage: 2,
-		platforms: ['windows', 'macos'],
-		testers: ['@kirill_v', '7f3a…c1'],
-		paused: false,
-		received: 1104,
-		errPct: { next: 0.4, current: 0.3 },
-	},
-	{
-		id: 'games',
-		name: 'discord через vpn',
-		mode: 'proxy',
-		current: null,
-		next: { v: 1, domains: ['discord.com', 'discord.gg', 'discordapp.net'], apps: ['Discord.exe', 'Discord'] },
-		stage: 0,
-		platforms: ['windows', 'macos'],
-		testers: ['7f3a…c1', 'b20e…9d', '@kirill_v'],
-		paused: false,
-		received: 2,
-		errPct: { next: 0, current: 0 },
-	},
-	{
-		id: 'yt',
-		name: 'youtube через vpn',
-		mode: 'proxy',
-		current: { v: 2, domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be'], apps: [] },
-		next: null,
-		stage: 4,
-		platforms: ['windows', 'macos', 'android'],
+function group(g: Omit<Group, 'draft' | 'stage' | 'testers' | 'paused' | 'received' | 'errPct'> & Partial<Group>): Group {
+	return {
+		stage: g.next ? 0 : STAGES.length - 1,
 		testers: [],
 		paused: false,
+		received: 0,
+		errPct: { next: 0, current: 0 },
+		draft: structuredClone((g.next ?? g.current)?.rules ?? rules({})),
+		...g,
+	};
+}
+
+const STEAM = rules({
+	domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com'],
+	processes: ['steam.exe', 'steam_osx'],
+});
+
+export const groups: Group[] = [
+	group({
+		id: 'steam',
+		name: 'steam',
+		mode: 'bypass',
+		platforms: ['windows', 'macos'],
+		current: { v: 1, rules: STEAM },
+		next: {
+			v: 2,
+			rules: { ...STEAM, domains: [...STEAM.domains, 'steamserver.net'], processes: [...STEAM.processes, 'steamwebhelper.exe'] },
+		},
+		stage: 2,
+		testers: ['@kirill_v', '7f3a…c1'],
+		received: 1104,
+		errPct: { next: 0.4, current: 0.3 },
+	}),
+	group({
+		id: 'discord',
+		name: 'discord',
+		mode: 'proxy',
+		platforms: ['windows', 'macos', 'android'],
+		current: {
+			v: 2,
+			rules: rules({
+				domains: ['discord.com', 'discord.gg', 'discordapp.com', 'discordapp.net', 'discord.media'],
+				processes: ['Discord.exe', 'Discord', 'Update.exe'],
+			}),
+		},
+		next: null,
 		received: 6512,
-		errPct: { next: 0, current: 0.2 },
-	},
+	}),
+	group({
+		id: 'banks',
+		name: 'госуслуги и банки',
+		mode: 'bypass',
+		platforms: ['windows', 'macos', 'android'],
+		current: {
+			v: 3,
+			rules: rules({ domains: ['gosuslugi.ru', 'nalog.gov.ru', 'sberbank.ru', 'tbank.ru', 'vtb.ru', 'alfabank.ru'] }),
+		},
+		next: null,
+		received: 6380,
+	}),
+	group({
+		id: 'youtube',
+		name: 'youtube',
+		mode: 'proxy',
+		platforms: ['windows', 'macos', 'android'],
+		current: { v: 4, rules: rules({ domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be', 'ggpht.com'] }) },
+		next: null,
+		received: 6490,
+	}),
+	group({
+		id: 'telegram',
+		name: 'telegram',
+		mode: 'proxy',
+		platforms: ['windows', 'macos', 'android'],
+		current: null,
+		next: {
+			v: 1,
+			rules: rules({
+				domains: ['telegram.org', 't.me'],
+				ips: ['91.108.4.0/22', '149.154.160.0/20'],
+				processes: ['Telegram.exe', 'Telegram'],
+			}),
+		},
+		testers: ['7f3a…c1', 'b20e…9d', '@kirill_v'],
+		received: 2,
+	}),
 ];
+
+/** A fresh group, nothing in it yet. */
+export function emptyGroup(): Group {
+	return group({
+		id: Math.random().toString(36).slice(2, 8),
+		name: '',
+		mode: 'proxy',
+		platforms: ['windows', 'macos', 'android'],
+		current: null,
+		next: null,
+	});
+}
 
 // ---------- format ----------
 
