@@ -1,0 +1,17 @@
+# Update channel and swap, vendored verbatim from m1d1x/nekko
+# (client-core/nekko-updater, see VENDORED.md). Hikkari is the first product
+# to ship it on Windows; the crate is kept byte-identical to its source so
+# fixes travel both ways as plain file copies.
+[workspace]
+members = ["nekko-updater", "hikkari-updater"]
+resolver = "2"
+
+# Must equal app/pubspec.yaml `version` (without the +build suffix): that is
+# what the binaries are stamped with and what the manifest names.
+[workspace.package]
+version = "1.0.0"
+
+[profile.release]
+lto = true
+opt-level = 3
+strip = true

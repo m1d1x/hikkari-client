@@ -1,0 +1,564 @@
+name: Build Windows Client
+
+on:
+  workflow_dispatch:
+  push:
+    # claude/** too: a working branch gets its own HikkariSetup.exe to try,
+    # and the service/update/uninstall smoke tests run before it merges.
+    branches: [ main, 'claude/**' ]
+    tags: [ 'v*' ]
+
+env:
+  SING_BOX_LX_TAG: v1.14.3-lx.21
+  # A tag v* is a release (docs/AUTOUPDATE-ROADMAP.md, Phase 6): its version
+  # is stamped everywhere, hikkari-updater gets the channel baked in, the app
+  # tree is signed and published. Every other build has no channel at all.
+  RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  # sing-box-lx with our patches (core-patches/sing-box-lx/*.patch) applied —
+  # upstream packet-up xhttp sends one POST per write and chokes on 50 pps
+  # UDP (Discord voice). Cross-compiled on Linux, CGO off like upstream.
+  sing-box:
+    name: Build patched sing-box-lx (windows-amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clone sing-box-lx
+        run: |
+          git clone --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/Leadaxe/sing-box-lx sbx
+          cd sbx
+          git submodule update --init --depth 1 submodules/gvisor submodules/sing-tun submodules/utls submodules/wireguard-go
+          for p in ../core-patches/sing-box-lx/*.patch; do
+            echo "applying $p"
+            git apply "$p"
+          done
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: sbx/go.sum
+
+      - name: Build sing-box.exe
+        run: |
+          cd sbx
+          TAGS=$(make -s -f Makefile.lx lx-print-tags)
+          VERSION="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG##*-}-hikkari"
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags "$TAGS" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$VERSION' -checklinkname=0 -s -w -buildid=" \
+            -o ../sing-box.exe ./cmd/sing-box
+          ls -la ../sing-box.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-patched
+          path: sing-box.exe
+          retention-days: 3
+
+  build:
+    name: Build Windows x64
+    needs: sing-box
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Fails before anything is built: a release without its channel would
+      # ship installs that can never update, and one signed with a key the
+      # clients do not trust would publish an update nobody accepts.
+      - name: Release version and configuration
+        if: env.RELEASE == 'true'
+        shell: bash
+        env:
+          UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          UPDATE_KEYS: ${{ vars.HIKKARI_UPDATE_KEYS }}
+          KEY_ID: ${{ vars.HIKKARI_RELEASE_KEY_ID }}
+          HAS_KEY: ${{ secrets.HIKKARI_RELEASE_KEY != '' }}
+        run: |
+          missing=()
+          [[ -n "$UPDATE_URL" ]] || missing+=("variable HIKKARI_UPDATE_URL")
+          [[ -n "$UPDATE_KEYS" ]] || missing+=("variable HIKKARI_UPDATE_KEYS")
+          [[ -n "$KEY_ID" ]] || missing+=("variable HIKKARI_RELEASE_KEY_ID")
+          [[ "$HAS_KEY" == true ]] || missing+=("secret HIKKARI_RELEASE_KEY")
+          if (( ${#missing[@]} )); then
+            printf '::error::release %s is missing %s\n' "$GITHUB_REF_NAME" "${missing[*]}"
+            exit 1
+          fi
+          [[ "$UPDATE_URL" == https://* ]] || { echo "::error::HIKKARI_UPDATE_URL must be https://"; exit 1; }
+          [[ ",$UPDATE_KEYS" == *",$KEY_ID:"* ]] ||
+            { echo "::error::HIKKARI_RELEASE_KEY_ID '$KEY_ID' is not in HIKKARI_UPDATE_KEYS"; exit 1; }
+          bash scripts/set-version.sh "${GITHUB_REF_NAME#v}" "$GITHUB_RUN_NUMBER"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: engine/go.sum
+
+      - name: Setup MinGW GCC for CGO
+        run: |
+          echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Download patched sing-box
+        uses: actions/download-artifact@v4
+        with:
+          name: sing-box-patched
+          path: patched-sb
+
+      - name: Prepare native binaries (sing-box & wintun)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "archive"
+
+          # 1. Download sing-box 1.14.3 (sing-box-lx fork with xhttp, AmneziaWG, anti-DPI patches)
+          Write-Host "Downloading sing-box (lx with xhttp & awg support)..."
+          Invoke-WebRequest -Uri "https://github.com/Leadaxe/sing-box-lx/releases/download/$env:SING_BOX_LX_TAG/sing-box-$($env:SING_BOX_LX_TAG.TrimStart('v'))-windows-amd64.zip" -OutFile "sing-box.zip"
+          Expand-Archive -Path "sing-box.zip" -DestinationPath "temp_sb" -Force
+          # Upstream zip is only used for libcronet.dll; sing-box.exe is our patched build.
+          Copy-Item -Path "patched-sb/sing-box.exe" -Destination "archive/sing-box.exe"
+          Get-ChildItem -Path "temp_sb" -Recurse -Filter "libcronet.dll" | Select-Object -First 1 | Copy-Item -Destination "archive/libcronet.dll"
+
+          # 2. Download wintun 0.14.1
+          Write-Host "Downloading wintun..."
+          Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "wintun.zip"
+          Expand-Archive -Path "wintun.zip" -DestinationPath "temp_wintun" -Force
+          Copy-Item -Path "temp_wintun/wintun/bin/amd64/wintun.dll" -Destination "archive/wintun.dll"
+
+          # Cleanup temporary zip files
+          Remove-Item -Recurse -Force "temp_sb", "temp_wintun", "sing-box.zip", "wintun.zip"
+
+          Write-Host "Binaries ready in archive/:"
+          Get-ChildItem -Path "archive"
+
+      - name: Build Go Engine (nekkobox.dll)
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "1"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CC = "gcc"
+          cd engine
+          go build -buildmode=c-shared -o ../nekkobox.dll ./cmd/nekkobox-ffi
+          cd ..
+          if (-not (Test-Path "nekkobox.dll")) {
+            throw "nekkobox.dll was not generated!"
+          }
+          Write-Host "nekkobox.dll generated successfully."
+
+      - name: Build HikkariService.exe and Hikkari.exe
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
+          cd engine
+          go build -trimpath -ldflags "-s -w -X NekkoVPN/core/winsvc.Version=$version" -o ../HikkariService.exe ./cmd/hikkari-service
+          # The launcher is what the shortcuts point at: give it the app icon.
+          go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico ../app/windows/runner/resources/app_icon.ico -o cmd/hikkari-launcher/rsrc_windows_amd64.syso
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o ../Hikkari.exe ./cmd/hikkari-launcher
+          cd ..
+          if (-not (Test-Path "HikkariService.exe")) { throw "HikkariService.exe was not generated!" }
+          if (-not (Test-Path "Hikkari.exe")) { throw "Hikkari.exe was not generated!" }
+
+      # Release builds trust exactly the channel and keys they are built with
+      # (option_env! in hikkari-updater); other builds get neither.
+      - name: Build hikkari-updater.exe
+        shell: pwsh
+        env:
+          HIKKARI_UPDATE_URL: ${{ env.RELEASE == 'true' && vars.HIKKARI_UPDATE_URL || '' }}
+          HIKKARI_UPDATE_KEYS: ${{ env.RELEASE == 'true' && vars.HIKKARI_UPDATE_KEYS || '' }}
+        run: |
+          # An empty variable is still "set" for option_env!: drop it.
+          foreach ($n in "HIKKARI_UPDATE_URL", "HIKKARI_UPDATE_KEYS") {
+            if (-not [Environment]::GetEnvironmentVariable($n)) { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
+          }
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cd updater
+          cargo build --release --locked -p hikkari-updater
+          Copy-Item target/release/hikkari-updater.exe ../hikkari-updater.exe
+
+      - name: Build Flutter Windows App
+        shell: pwsh
+        run: |
+          cd app
+          flutter pub get
+          flutter build windows --release
+          cd ..
+
+      # Layout of the installed client (docs/AUTOUPDATE-ROADMAP.md §1):
+      #   Hikkari\Hikkari.exe            launcher (shortcut target)
+      #   Hikkari\HikkariService.exe     install / service
+      #   Hikkari\hikkari-updater.exe
+      #   Hikkari\app\                   GUI, engine, core, VERSION — what updates replace
+      # Unpack and run HikkariService.exe: one UAC prompt, it copies itself to
+      # Program Files\Hikkari and starts the service.
+      - name: Assemble Release Bundle
+        shell: pwsh
+        run: |
+          $releaseDir = "app/build/windows/x64/runner/Release"
+          if (-not (Test-Path $releaseDir)) {
+            throw "Release directory does not exist: $releaseDir"
+          }
+
+          $bundle = "bundle/Hikkari"
+          New-Item -ItemType Directory -Force -Path "$bundle/app" | Out-Null
+          Copy-Item -Recurse -Force "$releaseDir/*" -Destination "$bundle/app/"
+
+          # Engine and core binaries live in app\ beside the GUI.
+          Copy-Item -Force "nekkobox.dll" -Destination "$bundle/app/"
+          Copy-Item -Force "archive/sing-box.exe" -Destination "$bundle/app/"
+          Copy-Item -Force "archive/wintun.dll" -Destination "$bundle/app/"
+          if (Test-Path "archive/libcronet.dll") {
+            Copy-Item -Force "archive/libcronet.dll" -Destination "$bundle/app/"
+          }
+
+          # The installed version, read by hikkari-updater (covered by the manifest).
+          $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
+          Set-Content -NoNewline -Encoding ascii -Path "$bundle/app/VERSION" -Value $version
+
+          Copy-Item -Force "HikkariService.exe" -Destination "$bundle/"
+          Copy-Item -Force "hikkari-updater.exe" -Destination "$bundle/"
+          Copy-Item -Force "Hikkari.exe" -Destination "$bundle/"
+
+          Write-Host "Bundle ($version):"
+          Get-ChildItem -Recurse -Path "bundle" | Select-Object FullName
+
+          Compress-Archive -Path "bundle/Hikkari" -DestinationPath "hikkari-windows-x64.zip" -Force
+          Write-Host "hikkari-windows-x64.zip created successfully."
+
+      # The one file users download: the bundle above, embedded.
+      - name: Build HikkariSetup.exe
+        shell: pwsh
+        run: |
+          Copy-Item -Force "hikkari-windows-x64.zip" "engine/cmd/hikkari-setup/payload/hikkari.zip"
+          cd engine
+          $env:CGO_ENABLED = "0"
+          go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico ../app/windows/runner/resources/app_icon.ico -o cmd/hikkari-setup/rsrc_windows_amd64.syso
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o ../HikkariSetup.exe ./cmd/hikkari-setup
+          cd ..
+          if (-not (Test-Path "HikkariSetup.exe")) { throw "HikkariSetup.exe was not generated!" }
+          Write-Host ("HikkariSetup.exe: {0:N1} MB" -f ((Get-Item HikkariSetup.exe).Length / 1MB))
+
+      # The runner is elevated, which makes it the one place the privileged
+      # half can be exercised for real: install from the bundle, talk to the
+      # pipe, bring up a TUN through the service, take it down, uninstall.
+      # auto_route stays off so the runner's own traffic is never rerouted.
+      - name: Service smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Installed the way users install: through HikkariSetup.exe (a GUI
+          # program, so Start-Process -Wait for its exit code).
+          $setup = Start-Process -FilePath ./HikkariSetup.exe -ArgumentList "--quiet" -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "setup failed ($($setup.ExitCode))" }
+          $root = "$env:ProgramFiles\Hikkari"
+          if (Test-Path "$env:ProgramFiles\Hikkari.setup") { throw "setup left its unpack folder behind" }
+          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari"
+          if ($entry.DisplayVersion -ne (Get-Content -Raw "$root\app\VERSION")) { throw "uninstall entry version: $($entry.DisplayVersion)" }
+          Write-Host "Apps & features: $($entry.DisplayName) $($entry.DisplayVersion), $($entry.EstimatedSize) KB"
+          foreach ($lnk in @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Hikkari.lnk", "$env:PUBLIC\Desktop\Hikkari.lnk")) {
+            if (-not (Test-Path $lnk)) { throw "missing shortcut $lnk" }
+            $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+            if ($target -ne "$root\Hikkari.exe") { throw "$lnk points at $target" }
+          }
+          if ((Get-Service HikkariService).Status -ne 'Running') { throw "service is not running" }
+          if (-not (Test-Path "$root\app\sing-box.exe")) { throw "build was not copied to $root" }
+
+          function Invoke-Hikkari([string]$json) {
+            $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(".", "hikkari-service", [System.IO.Pipes.PipeDirection]::InOut)
+            $pipe.Connect(5000)
+            $w = New-Object System.IO.StreamWriter($pipe); $w.AutoFlush = $true
+            $r = New-Object System.IO.StreamReader($pipe)
+            $w.WriteLine($json)
+            $line = $r.ReadLine()
+            $pipe.Dispose()
+            Write-Host "<- $line"
+            return $line | ConvertFrom-Json
+          }
+
+          try {
+            $st = Invoke-Hikkari '{"op":"status"}'
+            if (-not $st.ok -or $st.running) { throw "unexpected status" }
+
+            $bad = Invoke-Hikkari '{"op":"start","config":{"inbounds":[],"services":[]}}'
+            if ($bad.ok) { throw "the service accepted a config with a forbidden section" }
+            $bad = Invoke-Hikkari '{"op":"start","config":{"inbounds":[],"outbounds":[{"type":"direct","tag":"d","tls":{"certificate_path":"C:\\Windows\\win.ini"}}]}}'
+            if ($bad.ok) { throw "the service accepted a config that reads a file" }
+
+            $cfg = '{"log":{"level":"info","timestamp":true},"dns":{"servers":[{"tag":"local","type":"local"}]},"inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"auto_route":false,"stack":"mixed"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","default_domain_resolver":{"server":"local"}},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"},"cache_file":{"enabled":true,"path":"cache.db"}}}'
+            $st = Invoke-Hikkari ('{"op":"start","config":' + $cfg + '}')
+            if (-not $st.ok -or -not $st.running) { throw "the core did not start" }
+
+            $up = $false
+            for ($i = 0; $i -lt 20 -and -not $up; $i++) {
+              Start-Sleep -Milliseconds 500
+              try { $v = Invoke-RestMethod -TimeoutSec 2 http://127.0.0.1:9090/version; $up = $true; Write-Host "core: $($v | ConvertTo-Json -Compress)" } catch {}
+            }
+            if (-not $up) { throw "the core never answered on the Clash API" }
+            if (-not (Test-Path "$root\core\cache.db")) { throw "cache.db is not in the service's directory" }
+
+            $st = Invoke-Hikkari '{"op":"stop"}'
+            if ($st.running) { throw "the core is still running after stop" }
+
+            # Updates: a non-release build has no channel baked in, so the
+            # service must say "unavailable"; a release build must not (its
+            # channel may not answer from here — "error" is fine). Either way
+            # it refuses to apply with nothing staged, and recovery with
+            # nothing pending must not touch anything.
+            if (-not (Test-Path "$root\Hikkari.exe")) { throw "the launcher was not installed" }
+            $rec = Invoke-Hikkari '{"op":"recover_update"}'
+            if (-not $rec.ok -or $rec.recovery -ne "nothing") { throw "unexpected recovery: $($rec.recovery)" }
+            $chk = Invoke-Hikkari '{"op":"check_update"}'
+            if ($env:RELEASE -eq "true") {
+              for ($i = 0; $i -lt 40 -and $chk.update.state -eq "downloading"; $i++) {
+                Start-Sleep -Milliseconds 500
+                $chk = Invoke-Hikkari '{"op":"status"}'
+              }
+              if ($chk.update.state -eq "unavailable") { throw "the release build has no update channel" }
+            } else {
+              for ($i = 0; $i -lt 20 -and $chk.update.state -ne "unavailable"; $i++) {
+                Start-Sleep -Milliseconds 500
+                $chk = Invoke-Hikkari '{"op":"status"}'
+              }
+              if ($chk.update.state -ne "unavailable") { throw "update state: $($chk.update.state)" }
+            }
+            $app = Invoke-Hikkari '{"op":"apply_update"}'
+            if ($app.ok) { throw "apply_update succeeded with nothing staged" }
+            if (-not (Test-Path "$root\app\sing-box.exe")) { throw "a refused apply moved app\" }
+          } finally {
+            Write-Host "---- service.log ----"
+            Get-Content "$root\core\service.log" -ErrorAction SilentlyContinue
+          }
+
+      # A real update through the service, on Windows, with the core running
+      # (so sing-box.exe holds app\ open until the service stops it): an
+      # updater built against a local channel and a throwaway key, a release
+      # one patch above the installed version published from the installed tree, check → stage → apply with
+      # reconnect → trial → confirm.
+      - name: Update smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "$env:ProgramFiles\Hikkari"
+          $tmp = $env:RUNNER_TEMP
+          $port = 8731
+
+          Push-Location updater
+          cargo build --release --locked -p nekko-updater --bin nekko-manifest
+          $keygen = & target/release/nekko-manifest.exe keygen --out "$tmp\ci.key"
+          $pub = ([regex]::Match(($keygen -join "`n"), 'public key: ([0-9a-f]{64})')).Groups[1].Value
+          if (-not $pub) { throw "no public key in: $keygen" }
+          $env:HIKKARI_UPDATE_URL = "http://127.0.0.1:$port"
+          $env:HIKKARI_UPDATE_KEYS = "ci-1:$pub"
+          cargo build --release --locked -p hikkari-updater --target-dir target-ci
+          Remove-Item Env:HIKKARI_UPDATE_URL, Env:HIKKARI_UPDATE_KEYS
+          Pop-Location
+
+          Stop-Service HikkariService
+          Copy-Item -Force updater/target-ci/release/hikkari-updater.exe "$root\"
+          Start-Service HikkariService
+
+          $from = Get-Content -Raw "$root\app\VERSION"
+          $v = [version]$from
+          $to = "$($v.Major).$($v.Minor).$($v.Build + 1)"
+          $rel = "$tmp\release-$to"
+          Copy-Item -Recurse "$root\app" $rel
+          Set-Content -NoNewline -Encoding ascii -Path "$rel\VERSION" -Value $to
+          & updater/target/release/nekko-manifest.exe publish --dir $rel --version $to --platform windows `
+              --base-url "http://127.0.0.1:$port" --key "$tmp\ci.key" --key-id ci-1 --out "$tmp\channel"
+          if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+          $server = Start-Process python -ArgumentList "-m","http.server","$port","--bind","127.0.0.1","--directory","$tmp\channel" -PassThru -WindowStyle Hidden
+          # Start-Process returns before the server listens: wait for the
+          # channel to answer instead of racing it.
+          $probe = "http://127.0.0.1:$port/stable/windows/latest.json"
+          $listening = $false
+          for ($i = 0; $i -lt 60 -and -not $listening; $i++) {
+            try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 $probe; $listening = $true } catch { Start-Sleep -Milliseconds 250 }
+          }
+          if (-not $listening) { throw "the test channel never came up at $probe" }
+
+          function Invoke-Hikkari([string]$json) {
+            $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(".", "hikkari-service", [System.IO.Pipes.PipeDirection]::InOut)
+            $pipe.Connect(10000)
+            $w = New-Object System.IO.StreamWriter($pipe); $w.AutoFlush = $true
+            $r = New-Object System.IO.StreamReader($pipe)
+            $w.WriteLine($json)
+            $line = $r.ReadLine()
+            $pipe.Dispose()
+            Write-Host "<- $line"
+            return $line | ConvertFrom-Json
+          }
+
+          try {
+            $cfg = '{"log":{"level":"info"},"dns":{"servers":[{"tag":"local","type":"local"}]},"inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"auto_route":false,"stack":"mixed"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","default_domain_resolver":{"server":"local"}},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"},"cache_file":{"enabled":true,"path":"cache.db"}}}'
+            $st = Invoke-Hikkari ('{"op":"start","config":' + $cfg + '}')
+            if (-not $st.running) { throw "the core did not start" }
+
+            $st = Invoke-Hikkari '{"op":"check_update"}'
+            for ($i = 0; $i -lt 120 -and $st.update.state -ne "ready"; $i++) {
+              if ($st.update.state -eq "error" -or $st.update.state -eq "unavailable") { throw "update state $($st.update.state): $($st.update.error)" }
+              Start-Sleep -Milliseconds 500
+              $st = Invoke-Hikkari '{"op":"status"}'
+            }
+            if ($st.update.state -ne "ready" -or $st.update.version -ne $to) { throw "$to was not staged" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne $from) { throw "staging touched the installation" }
+
+            $ap = Invoke-Hikkari '{"op":"apply_update","reconnect":true}'
+            if (-not $ap.ok -or $ap.from -ne $from -or $ap.to -ne $to) { throw "apply failed" }
+            if (-not $ap.running) { throw "the core did not come back after the swap" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne $to) { throw "app\ is not $to" }
+            if (-not (Test-Path "$root\app.old\nekkobox.exe")) { throw "the previous version was not kept" }
+            $v = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari").DisplayVersion
+            if ($v -ne $to) { throw "Apps & features still says $v after the update" }
+
+            $rec = Invoke-Hikkari '{"op":"recover_update"}'
+            if ($rec.recovery -ne "on_trial") { throw "expected a trial, got $($rec.recovery)" }
+            if ($rec.pid -ne $ap.pid) { throw "counting a trial start restarted the core" }
+            $null = Invoke-Hikkari '{"op":"confirm_update"}'
+            if (Test-Path "$root\app.old") { throw "app.old survived the confirmation" }
+            $null = Invoke-Hikkari '{"op":"stop"}'
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+            Write-Host "---- service.log ----"
+            Get-Content "$root\core\service.log" -ErrorAction SilentlyContinue
+          }
+
+      # Uninstall the way "Apps & features" does — its QuietUninstallString —
+      # and check that nothing of ours is left behind.
+      - name: Uninstall
+        if: always()
+        shell: pwsh
+        run: |
+          $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari"
+          $cmd = (Get-ItemProperty $key -ErrorAction SilentlyContinue).QuietUninstallString
+          if (-not $cmd) { throw "no uninstall entry" }
+          Write-Host "> $cmd"
+          # The string as Windows would run it: verbatim to cmd.exe.
+          $un = Start-Process -FilePath cmd.exe -ArgumentList "/c $cmd" -Wait -PassThru -NoNewWindow
+          if ($un.ExitCode -ne 0) { throw "uninstall failed ($($un.ExitCode))" }
+          if (Get-Service HikkariService -ErrorAction SilentlyContinue) { throw "the service is still registered" }
+          if (Test-Path $key) { throw "the uninstall entry is still there" }
+          if (Test-Path "$env:PUBLIC\Desktop\Hikkari.lnk") { throw "the desktop shortcut is still there" }
+          $root = "$env:ProgramFiles\Hikkari"
+          for ($i = 0; $i -lt 60 -and (Test-Path $root); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path $root) { cmd /c dir /a /s "$root"; throw "$root was not removed" }
+          Write-Host "removed after ~$([math]::Round($i / 2)) s"
+
+      # The update: the app\ tree exactly as the installer ships it, hashed
+      # and signed into a channel tree (blobs/, stable/windows/{manifest,
+      # latest}.json), then checked against the public key the clients were
+      # just built to trust. The private key exists on disk only for this step.
+      - name: Sign update channel
+        if: env.RELEASE == 'true'
+        shell: pwsh
+        env:
+          RELEASE_KEY: ${{ secrets.HIKKARI_RELEASE_KEY }}
+          KEY_ID: ${{ vars.HIKKARI_RELEASE_KEY_ID }}
+          UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          UPDATE_KEYS: ${{ vars.HIKKARI_UPDATE_KEYS }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = Get-Content -Raw bundle/Hikkari/app/VERSION
+          $manifestBin = "updater/target/release/nekko-manifest.exe"
+          if (-not (Test-Path $manifestBin)) { throw "nekko-manifest was not built" }
+          $key = Join-Path $env:RUNNER_TEMP "release.key"
+          Set-Content -NoNewline -Encoding ascii -Path $key -Value $env:RELEASE_KEY.Trim()
+          try {
+            & $manifestBin publish --dir bundle/Hikkari/app --version $version --platform windows `
+                --base-url $env:UPDATE_URL.TrimEnd('/') --key $key --key-id $env:KEY_ID --out update-channel
+            if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+          } finally {
+            Remove-Item -Force $key -ErrorAction SilentlyContinue
+          }
+          $pub = ($env:UPDATE_KEYS -split ',' | Where-Object { $_ -like "$($env:KEY_ID):*" } | Select-Object -First 1).Split(':', 2)[1]
+          & $manifestBin verify --manifest update-channel/stable/windows/manifest.json `
+              --public-key $pub --key-id $env:KEY_ID --platform windows
+          if ($LASTEXITCODE -ne 0) { throw "the signed manifest does not verify against the key the clients trust" }
+
+      - name: Upload update channel
+        if: env.RELEASE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-channel
+          path: update-channel
+          retention-days: 30
+
+      - name: Upload Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hikkari-windows-x64
+          path: hikkari-windows-x64.zip
+          retention-days: 14
+
+      - name: Upload Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: HikkariSetup
+          path: HikkariSetup.exe
+          retention-days: 14
+
+  # Blobs → manifests → probe onto the update server, then checked from its
+  # public URL (scripts/publish-update-channel.sh). Separate from the build so
+  # the deploy credentials never reach the runner that executes the build.
+  publish-channel:
+    name: Publish update channel
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy configuration
+        env:
+          DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
+          UPDATE_DIR: ${{ vars.HIKKARI_UPDATE_DIR }}
+          HAS_SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY != '' }}
+          HAS_KNOWN_HOSTS: ${{ secrets.HIKKARI_DEPLOY_KNOWN_HOSTS != '' }}
+        run: |
+          missing=()
+          [[ -n "$DEPLOY_HOST" ]] || missing+=("variable HIKKARI_DEPLOY_HOST")
+          [[ -n "$UPDATE_DIR" ]] || missing+=("variable HIKKARI_UPDATE_DIR")
+          [[ "$HAS_SSH_KEY" == true ]] || missing+=("secret HIKKARI_DEPLOY_SSH_KEY")
+          [[ "$HAS_KNOWN_HOSTS" == true ]] || missing+=("secret HIKKARI_DEPLOY_KNOWN_HOSTS")
+          if (( ${#missing[@]} )); then
+            printf '::error::cannot publish %s: missing %s\n' "$GITHUB_REF_NAME" "${missing[*]}"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: update-channel
+          path: update-channel
+
+      - name: SSH
+        env:
+          SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HIKKARI_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$SSH_KEY" | ssh-add -
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Publish
+        env:
+          HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
+          HIKKARI_UPDATE_DIR: ${{ vars.HIKKARI_UPDATE_DIR }}
+        run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}"

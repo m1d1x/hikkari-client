@@ -1,0 +1,10 @@
+# базовое — обязательно
+httpx[socks]>=0.27      # HTTP-клиент с поддержкой socks5-прокси
+
+# анализ датасета — желательно (без них harness пишет обычный CSV)
+pandas>=2.0
+pyarrow>=15.0           # для parquet-снапшотов
+
+# реальный Cloudflare-челлендж — опционально (флаг --cf-challenge)
+# после установки: playwright install chromium
+playwright>=1.44

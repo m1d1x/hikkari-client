@@ -1,0 +1,96 @@
+# =============================================================
+#  NEKOBOX monorepo — корневой .gitignore
+#  Подпроекты (app/ — Flutter, engine/ — Go) имеют свои .gitignore
+#  для генерируемых ими артефактов. Здесь — только сквозное.
+# =============================================================
+
+# === Локальный мусор прежнего проекта (не в git) ===
+archive/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# === Editors / IDE ===
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# === Logs ===
+*.log
+*.log.old
+logs/
+
+# === Go ===
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+go.work
+go.work.sum
+
+# === Native deps (распространяются отдельно, не коммитим) ===
+sing-box.exe
+sing-box
+wintun.dll
+dist/
+
+# === Runtime / сгенерированное движком (у каждого юзера своё) ===
+config.json
+profiles.json
+uptime-history.json
+direct-ip.txt
+subscription-device-id
+routing-presets.json
+xray-transport.json
+xray.json
+xray-runtime.json
+
+# === Env / Secrets (никогда не коммитим) ===
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+ipqs-key.txt
+# Ключ подписи обновлений (nekko-manifest keygen) — только в секретах CI
+release-*.key
+
+# === Backups / Temp ===
+*.bak
+*.backup
+*.tmp
+*.old
+*.orig
+*.rej
+
+# === Claude / OMC локальное ===
+.claude/settings.local.json
+.omc/state/
+.omc/logs/
+
+# Rust (updater/)
+updater/target/
+
+# Built by CI (cmd/hikkari-setup embeds it; Windows resources)
+engine/cmd/hikkari-setup/payload/*.zip
+engine/cmd/*/*.syso
+
+# === Локальные планы и инструкции агентов (не публикуем) ===
+/plans/
+/CLAUDE.md
+/AGENTS.md
+.claude/
+.omc/
