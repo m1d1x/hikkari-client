@@ -60,7 +60,7 @@ class _UpdateCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final u = context.watch<AppState>().update;
+    final u = context.watch<AppState>().updateStatus;
     final versions = [
       if (u.installed.isNotEmpty) u.installed,
       if (u.version.isNotEmpty) u.version,
@@ -144,7 +144,7 @@ class _Progress extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final u = context.watch<AppState>().update;
+    final u = context.watch<AppState>().updateStatus;
     final failed = u.state == 'error';
     final fraction = u.bytesTotal > 0
         ? (u.bytesDone / u.bytesTotal).clamp(0.0, 1.0)
