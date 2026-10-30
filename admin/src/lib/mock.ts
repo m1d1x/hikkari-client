@@ -283,65 +283,86 @@ export function donations(w: Win) {
 }
 
 // ---------- presets ----------
+//
+// A preset is a ready-made routing setup the client pulls from the server:
+// the mode and the lists of domains and apps. A new version never goes to
+// everyone at once: testers first, then a growing share, while the rest
+// keep the current version. Errors among those who got it decide whether
+// to go on or roll back.
 
 export type RoutingMode = 'bypass' | 'proxy';
+
+export interface PresetVersion {
+	v: number;
+	domains: string[];
+	apps: string[];
+}
 
 export interface Preset {
 	id: string;
 	name: string;
-	version: number;
 	mode: RoutingMode;
-	domains: string[];
-	apps: string[];
-	percent: number;
+	/** what everyone has now; null for a preset nobody has yet */
+	current: PresetVersion | null;
+	/** the version being rolled out; null when nothing is */
+	next: PresetVersion | null;
+	/** index into STAGES */
+	stage: number;
 	platforms: Platform[];
-	users: string[];
+	testers: string[];
 	paused: boolean;
 	received: number;
+	/** share of devices with an error since they got it, next vs current */
+	errPct: { next: number; current: number };
 }
 
-/** Devices one percent of the audience is: what the rollout is measured against. */
+/** Rollout stages, percent of the audience; 0 is testers only. */
+export const STAGES = [0, 5, 25, 50, 100];
+
+/** Active devices: what a percent of the audience is measured against. */
 export const ACTIVE_DEVICES = 6800;
+
+const RU = ['gosuslugi.ru', 'sberbank.ru', 'vk.com', 'yandex.ru', 'ozon.ru', 'wildberries.ru', 'mos.ru'];
 
 export const presets: Preset[] = [
 	{
-		id: 'ru-base',
-		name: 'ru базовый',
-		version: 3,
+		id: 'ru',
+		name: 'ru сайты напрямую',
 		mode: 'bypass',
-		domains: ['gosuslugi.ru', 'sberbank.ru', 'vk.com', 'yandex.ru', 'ozon.ru', 'wildberries.ru', 'mos.ru'],
-		apps: [],
-		percent: 100,
-		platforms: ['windows', 'macos', 'android'],
-		users: [],
-		paused: false,
-		received: 6512,
-	},
-	{
-		id: 'ru-base-4',
-		name: 'ru базовый',
-		version: 4,
-		mode: 'bypass',
-		domains: ['gosuslugi.ru', 'sberbank.ru', 'vk.com', 'yandex.ru', 'ozon.ru', 'wildberries.ru', 'mos.ru', 'tbank.ru', 'avito.ru'],
-		apps: ['Steam.exe'],
-		percent: 25,
+		current: { v: 3, domains: RU, apps: [] },
+		next: { v: 4, domains: [...RU, 'tbank.ru', 'avito.ru'], apps: ['Steam.exe'] },
+		stage: 2,
 		platforms: ['windows', 'macos'],
-		users: [],
+		testers: ['@kirill_v', '7f3a…c1'],
 		paused: false,
 		received: 1104,
+		errPct: { next: 0.4, current: 0.3 },
 	},
 	{
 		id: 'games',
-		name: 'игры через прокси',
-		version: 1,
+		name: 'discord через vpn',
 		mode: 'proxy',
-		domains: ['discord.com', 'discord.gg', 'discordapp.net'],
-		apps: ['Discord.exe', 'Discord'],
-		percent: 0,
+		current: null,
+		next: { v: 1, domains: ['discord.com', 'discord.gg', 'discordapp.net'], apps: ['Discord.exe', 'Discord'] },
+		stage: 0,
 		platforms: ['windows', 'macos'],
-		users: ['7f3a…c1', 'b20e…9d', '@kirill_v'],
+		testers: ['7f3a…c1', 'b20e…9d', '@kirill_v'],
 		paused: false,
 		received: 2,
+		errPct: { next: 0, current: 0 },
+	},
+	{
+		id: 'yt',
+		name: 'youtube через vpn',
+		mode: 'proxy',
+		current: { v: 2, domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be'], apps: [] },
+		next: null,
+		stage: 4,
+		platforms: ['windows', 'macos', 'android'],
+		testers: [],
+		paused: false,
+		received: 6512,
+		errPct: { next: 0, current: 0.2 },
 	},
 ];
 
