@@ -9,10 +9,7 @@
 		SIDES,
 		RULE_KINDS,
 		ACTIVE_DEVICES,
-		PLATFORMS,
-		PLATFORM_SHARE,
 		type Group,
-		type Platform,
 		type Preset,
 		type Rules,
 		type Side,
@@ -43,12 +40,15 @@
 		return `${n} ${d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many}`;
 	}
 
-	/** Rules added and dropped between two states of one group. */
+	/** Rules added and dropped between two states of one group, OS named for the per-OS lists. */
 	function ruleDiff(was: Rules, now: Rules): string[] {
-		return RULE_KINDS.flatMap(({ key }) => [
-			...now[key].filter((v) => !was[key].includes(v)).map((v) => `+ ${v}`),
-			...was[key].filter((v) => !now[key].includes(v)).map((v) => `− ${v}`),
-		]);
+		return RULE_KINDS.flatMap(({ key, os }) => {
+			const tag = os ? ` (${os})` : '';
+			return [
+				...now[key].filter((v) => !was[key].includes(v)).map((v) => `+ ${v}${tag}`),
+				...was[key].filter((v) => !now[key].includes(v)).map((v) => `− ${v}${tag}`),
+			];
+		});
 	}
 
 	/** What a release would change against the latest version: groups in and out, and edits inside groups. */
@@ -85,10 +85,9 @@
 		return { text: `v${x.current.v}`, cls: 'dim' };
 	}
 
-	/** Devices the stage is meant to reach: its share of the chosen platforms plus the testers. */
+	/** Devices the stage is meant to reach: its share of everyone plus the testers. */
 	function target(x: Preset): number {
-		const share = x.platforms.reduce((s, y) => s + PLATFORM_SHARE[y], 0);
-		return Math.round((ACTIVE_DEVICES * share * STAGES[x.stage]) / 100) + x.testers.length;
+		return Math.round((ACTIVE_DEVICES * STAGES[x.stage]) / 100) + x.testers.length;
 	}
 
 	async function create() {
@@ -97,7 +96,6 @@
 			name: '',
 			bypass: [],
 			proxy: [],
-			platforms: [...PLATFORMS],
 			current: null,
 			next: null,
 			stage: STAGES.length - 1,
@@ -153,10 +151,6 @@
 		p.next = null;
 		p.stage = STAGES.length - 1;
 		p.paused = false;
-	}
-
-	function togglePlatform(x: Platform) {
-		p.platforms = p.platforms.includes(x) ? p.platforms.filter((y) => y !== x) : [...p.platforms, x];
 	}
 
 	function setTesters(text: string) {
@@ -230,14 +224,6 @@
 				{/each}
 			</div>
 
-			<div class="block form">
-				<span class="label">платформы</span>
-				<div class="chips">
-					{#each PLATFORMS as x (x)}
-						<button class="chip" class:on={p.platforms.includes(x)} onclick={() => togglePlatform(x)}>{x}</button>
-					{/each}
-				</div>
-			</div>
 
 			{#if diff.length}
 				<div class="block">

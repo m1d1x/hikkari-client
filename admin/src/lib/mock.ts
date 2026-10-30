@@ -284,30 +284,66 @@ export function donations(w: Win) {
 
 // ---------- groups & presets ----------
 //
-// A group bundles every rule about one thing: steam, discord, banks. Groups
-// are a library, edited in place, never sent on their own. A preset is a set
-// of groups, each put on one side: past the vpn or through it, which fills
-// the client's bypass and proxy lists. Presets are what gets rolled out: a
-// release freezes the groups as they are into a version, which goes to
-// testers first, then a growing share, while the rest keep the current one.
+// A group bundles every rule about one thing: steam, discord, banks. Domains
+// and ips hold everywhere; apps and folders are written per OS, in that OS's
+// own form: an exe on windows, the binary inside the .app on macos, a package
+// on android. Every client gets the whole preset and takes the shared rules
+// plus its own OS's, so a preset needs no per-platform targeting.
+//
+// A preset is a set of groups, each put on one side: past the vpn or through
+// it, which fills the client's bypass and proxy lists. Presets are what gets
+// rolled out: a release freezes the groups as they are into a version, which
+// goes to testers first, then a growing share, while the rest keep the
+// current one.
 
 export interface Rules {
 	domains: string[];
 	ips: string[];
-	/** the client's "приложения": exe name on windows, process name of the .app on macos */
-	processes: string[];
-	/** path fragments: every binary under them, wherever installed — a launcher's games, an .app's helpers */
-	folders: string[];
+	/** process names: the exe */
+	winApps: string[];
+	/** path fragments: every binary under them, wherever installed */
+	winFolders: string[];
+	/** process names: the binary in Contents/MacOS */
+	macApps: string[];
+	macFolders: string[];
+	/** package names */
+	androidApps: string[];
 }
 
 export type RuleKind = keyof Rules;
 
-export const RULE_KINDS: { key: RuleKind; label: string; hint: string }[] = [
-	{ key: 'domains', label: 'домены', hint: '+ домен' },
-	{ key: 'ips', label: 'ip / подсети', hint: '+ ip или подсеть' },
-	{ key: 'processes', label: 'приложения', hint: '+ exe или имя .app' },
-	{ key: 'folders', label: 'папки', hint: '+ кусок пути' },
+export const RULE_SECTIONS: { label: string; kinds: { key: RuleKind; label: string; hint: string }[] }[] = [
+	{
+		label: 'везде',
+		kinds: [
+			{ key: 'domains', label: 'домены', hint: '+ домен' },
+			{ key: 'ips', label: 'ip / подсети', hint: '+ ip или подсеть' },
+		],
+	},
+	{
+		label: 'windows',
+		kinds: [
+			{ key: 'winApps', label: 'приложения', hint: '+ имя exe' },
+			{ key: 'winFolders', label: 'папки', hint: '+ кусок пути' },
+		],
+	},
+	{
+		label: 'macos',
+		kinds: [
+			{ key: 'macApps', label: 'приложения', hint: '+ имя бинаря из .app' },
+			{ key: 'macFolders', label: 'папки', hint: '+ кусок пути' },
+		],
+	},
+	{
+		label: 'android',
+		kinds: [{ key: 'androidApps', label: 'приложения', hint: '+ пакет' }],
+	},
 ];
+
+/** Every rule list, with the OS it belongs to; null for the shared ones. */
+export const RULE_KINDS = RULE_SECTIONS.flatMap((s, i) =>
+	s.kinds.map((k) => ({ ...k, os: i === 0 ? null : s.label })),
+);
 
 export interface Group {
 	id: string;
@@ -334,7 +370,6 @@ export interface Preset {
 	/** group ids, what is being edited, not on any device yet */
 	bypass: string[];
 	proxy: string[];
-	platforms: Platform[];
 	/** what everyone has; null for a preset never fully rolled out */
 	current: PresetVersion | null;
 	/** the version being rolled out; null when nothing is */
@@ -354,57 +389,81 @@ export const STAGES = [0, 5, 25, 50, 100];
 /** Active devices: what a percent of the audience is measured against. */
 export const ACTIVE_DEVICES = 6800;
 
-const rules = (r: Partial<Rules>): Rules => ({ domains: [], ips: [], processes: [], folders: [], ...r });
+export const emptyRules = (r: Partial<Rules> = {}): Rules => ({
+	domains: [],
+	ips: [],
+	winApps: [],
+	winFolders: [],
+	macApps: [],
+	macFolders: [],
+	androidApps: [],
+	...r,
+});
 
 export const groups: Group[] = [
 	{
 		id: 'steam',
 		name: 'steam',
-		rules: rules({
+		rules: emptyRules({
 			domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com', 'steamserver.net'],
-			processes: ['steam.exe', 'steamwebhelper.exe', 'steam_osx'],
-			folders: ['steamapps/common/'],
+			winApps: ['steam.exe', 'steamwebhelper.exe'],
+			winFolders: ['steamapps/common/'],
+			macApps: ['steam_osx'],
+			macFolders: ['steamapps/common/'],
+			androidApps: ['com.valvesoftware.android.steam.community'],
 		}),
 	},
 	{
 		id: 'discord',
 		name: 'discord',
-		rules: rules({
+		rules: emptyRules({
 			domains: ['discord.com', 'discord.gg', 'discordapp.com', 'discordapp.net', 'discord.media'],
-			processes: ['Discord.exe', 'Discord'],
-			folders: ['Discord.app/'],
+			winApps: ['Discord.exe'],
+			macApps: ['Discord'],
+			macFolders: ['Discord.app/'],
+			androidApps: ['com.discord'],
 		}),
 	},
 	{
 		id: 'banks',
 		name: 'госуслуги и банки',
-		rules: rules({ domains: ['gosuslugi.ru', 'nalog.gov.ru', 'sberbank.ru', 'tbank.ru', 'vtb.ru', 'alfabank.ru'] }),
+		rules: emptyRules({
+			domains: ['gosuslugi.ru', 'nalog.gov.ru', 'sberbank.ru', 'tbank.ru', 'vtb.ru', 'alfabank.ru'],
+			androidApps: ['ru.rostel', 'ru.sberbankmobile', 'com.idamob.tinkoff.android'],
+		}),
 	},
 	{
 		id: 'youtube',
 		name: 'youtube',
-		rules: rules({ domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be', 'ggpht.com'] }),
+		rules: emptyRules({
+			domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be', 'ggpht.com'],
+			androidApps: ['com.google.android.youtube'],
+		}),
 	},
 	{
 		id: 'telegram',
 		name: 'telegram',
-		rules: rules({
+		rules: emptyRules({
 			domains: ['telegram.org', 't.me'],
 			ips: ['91.108.4.0/22', '149.154.160.0/20'],
-			processes: ['Telegram.exe', 'Telegram'],
+			winApps: ['Telegram.exe'],
+			macApps: ['Telegram'],
+			androidApps: ['org.telegram.messenger'],
 		}),
 	},
 ];
 
 const freeze = (ids: string[]) => structuredClone(groups.filter((g) => ids.includes(g.id)));
 
-/** steam as it was before steamserver.net and steamwebhelper.exe went in */
+/** steam as it was before steamserver.net, the web helper and the games folder went in */
 const OLD_STEAM: Group = {
 	id: 'steam',
 	name: 'steam',
-	rules: rules({
+	rules: emptyRules({
 		domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com'],
-		processes: ['steam.exe', 'steam_osx'],
+		winApps: ['steam.exe'],
+		macApps: ['steam_osx'],
+		androidApps: ['com.valvesoftware.android.steam.community'],
 	}),
 };
 
@@ -414,7 +473,6 @@ export const presets: Preset[] = [
 		name: 'россия · стандарт',
 		bypass: ['banks', 'steam'],
 		proxy: ['discord', 'youtube', 'telegram'],
-		platforms: ['windows', 'macos', 'android'],
 		current: { v: 3, bypass: [...freeze(['banks']), OLD_STEAM], proxy: freeze(['discord', 'youtube']) },
 		next: { v: 4, bypass: freeze(['banks', 'steam']), proxy: freeze(['discord', 'youtube', 'telegram']) },
 		stage: 2,
@@ -428,7 +486,6 @@ export const presets: Preset[] = [
 		name: 'геймер',
 		bypass: ['steam'],
 		proxy: ['discord'],
-		platforms: ['windows', 'macos'],
 		current: { v: 1, bypass: [OLD_STEAM], proxy: freeze(['discord']) },
 		next: null,
 		stage: STAGES.length - 1,

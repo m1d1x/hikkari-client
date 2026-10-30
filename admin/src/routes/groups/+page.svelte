@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import RuleList from './RuleList.svelte';
 	import { db } from '$lib/store.svelte';
-	import { RULE_KINDS, type Group } from '$lib/mock';
+	import { RULE_KINDS, RULE_SECTIONS, emptyRules, type Group } from '$lib/mock';
 
 	let currentId = $state(page.url.searchParams.get('g') ?? db.groups[0]?.id);
 	let nameEl = $state<HTMLInputElement | null>(null);
@@ -13,7 +13,7 @@
 	const usedIn = (x: Group) => db.presets.filter((p) => p.bypass.includes(x.id) || p.proxy.includes(x.id));
 
 	async function create() {
-		const x: Group = { id: Math.random().toString(36).slice(2, 8), name: '', rules: { domains: [], ips: [], processes: [], folders: [] } };
+		const x: Group = { id: Math.random().toString(36).slice(2, 8), name: '', rules: emptyRules() };
 		db.groups.push(x);
 		currentId = x.id;
 		await tick();
@@ -69,14 +69,17 @@
 				{/if}
 			</div>
 
-			<div class="rules">
-				{#each RULE_KINDS as k (k.key)}
-					<RuleList label={k.label} hint={k.hint} bind:items={g.rules[k.key]} />
-				{/each}
-			</div>
+			{#each RULE_SECTIONS as s (s.label)}
+				<div class="section">
+					<div class="os">{s.label}</div>
+					{#each s.kinds as k (k.key)}
+						<RuleList label={k.label} hint={k.hint} bind:items={g.rules[k.key]} />
+					{/each}
+				</div>
+			{/each}
 			<p class="dim note">
-				папки — кусок пути, без диска и имени юзера: ловит все exe под ним, где бы ни стояло. так покрываются
-				игры лаунчеров (<span class="mono">steamapps/common/</span>) и хелперы внутри .app
+				каждый клиент берёт «везде» и свою ос. папки — кусок пути без диска и имени юзера, ловит все бинари под
+				ним, где бы ни стояло: игры лаунчеров (<span class="mono">steamapps/common/</span>), хелперы внутри .app
 				(<span class="mono">Discord.app/</span>)
 			</p>
 		</section>
@@ -163,12 +166,18 @@
 		font-size: 11px;
 	}
 
-	.rules {
+	/* one row per OS: its name, then its rule lists */
+	.section {
 		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
+		grid-template-columns: 90px repeat(2, minmax(0, 1fr));
 		gap: 24px;
-		margin-top: 18px;
+		margin-top: 16px;
 		padding-top: 14px;
 		border-top: 1px solid var(--border-subtle);
+	}
+
+	.os {
+		font-size: 12px;
+		color: var(--text-2);
 	}
 </style>
