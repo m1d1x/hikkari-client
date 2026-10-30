@@ -37,14 +37,10 @@ import (
 // inject a libbox-backed Manager via InitWithVPN instead.
 type VPNFactory func(baseDir string, log vpn.LineLogger) vpn.Manager
 
-// DefaultVPNFactory is the desktop ProcessManager factory.
+// DefaultVPNFactory is the desktop factory: a service client on Windows, a
+// ProcessManager elsewhere (see factory_*.go).
 func DefaultVPNFactory(baseDir string, log vpn.LineLogger) vpn.Manager {
-	return vpn.NewProcessManager(
-		filepath.Join(baseDir, vpn.BinaryName),
-		filepath.Join(baseDir, "config.json"),
-		baseDir,
-		log,
-	)
+	return newDesktopVPN(baseDir, log)
 }
 
 // Core holds every long-lived component the engine needs. Construct with New(),

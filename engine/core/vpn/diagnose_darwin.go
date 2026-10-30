@@ -3,10 +3,8 @@
 package vpn
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -124,48 +122,7 @@ var followOnce sync.Once
 
 // followCoreLog copies new lines of singbox.log (the supervisor's and the
 // core's stdout/stderr, written by launchd as root) into the engine log under
-// the "singbox" tag, so the one file a tester sends has both halves. Starts
-// at the current end of the file: older lines are already in a previous
-// engine log or in Diagnose's tail.
+// the "singbox" tag, so the one file a tester sends has both halves.
 func (m *ProcessManager) followCoreLog() {
-	followOnce.Do(func() {
-		pr, pw := io.Pipe()
-		go m.log.PipeLines("singbox", pr)
-		go func() {
-			path := m.logFile()
-			var off int64
-			if fi, err := os.Stat(path); err == nil {
-				off = fi.Size()
-			}
-			for {
-				time.Sleep(time.Second)
-				fi, err := os.Stat(path)
-				if err != nil {
-					continue
-				}
-				if fi.Size() < off {
-					off = 0 // truncated or replaced
-				}
-				if fi.Size() == off {
-					continue
-				}
-				f, err := os.Open(path)
-				if err != nil {
-					continue
-				}
-				if _, err := f.Seek(off, io.SeekStart); err == nil {
-					r := bufio.NewReader(f)
-					for {
-						ln, err := r.ReadString('\n')
-						if err != nil {
-							break // partial last line: re-read next tick
-						}
-						off += int64(len(ln))
-						_, _ = pw.Write([]byte(ln))
-					}
-				}
-				f.Close()
-			}
-		}()
-	})
+	followOnce.Do(func() { followFile(m.logFile(), "singbox", m.log) })
 }

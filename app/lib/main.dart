@@ -84,18 +84,28 @@ class _BootGateState extends State<_BootGate> {
   /// Base directory for the engine — everything it reads and writes
   /// (config.json, profiles.json, logs, caches) lives here.
   ///
-  /// On Windows that is simply the folder containing the running executable,
-  /// next to sing-box.exe, wintun.dll and nekkobox.dll. On macOS the
-  /// executable sits inside a signed .app bundle that must stay read-only, so
-  /// the engine's state goes to the usual per-user location instead.
+  /// Never the executable's folder: on Windows that is Program Files, which
+  /// an unelevated GUI cannot write (the core runs in HikkariService, which
+  /// gets the config over its pipe), and on macOS a signed, read-only .app
+  /// bundle. Both use the per-user location instead. On Windows the
+  /// installer (HikkariService.exe install) migrates a portable install's
+  /// files into it.
   String _baseDir() {
+    final Directory dir;
     if (Platform.isMacOS) {
       final home = Platform.environment['HOME'] ?? '';
-      final dir = Directory('$home/Library/Application Support/nekkobox');
-      dir.createSync(recursive: true);
-      return dir.path;
+      dir = Directory('$home/Library/Application Support/nekkobox');
+    } else if (Platform.isWindows) {
+      final local = Platform.environment['LOCALAPPDATA'];
+      if (local == null || local.isEmpty) {
+        throw StateError('LOCALAPPDATA is not set');
+      }
+      dir = Directory('$local\\Hikkari');
+    } else {
+      return File(Platform.resolvedExecutable).parent.path;
     }
-    return File(Platform.resolvedExecutable).parent.path;
+    dir.createSync(recursive: true);
+    return dir.path;
   }
 
   @override

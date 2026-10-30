@@ -224,6 +224,16 @@ func (m *ProcessManager) Restart() error {
 	return err
 }
 
+// Pid is the running core's process id, or 0 when none is running.
+func (m *ProcessManager) Pid() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.isAlive() {
+		return 0
+	}
+	return m.cmd.Process.Pid
+}
+
 func (m *ProcessManager) isAlive() bool {
 	return m.cmd != nil && m.cmd.Process != nil && m.cmd.ProcessState == nil
 }

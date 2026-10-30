@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <!--
-    requireAdministrator: sing-box needs admin to bring up the TUN interface
-    (see https://sing-box.sagernet.org/configuration/inbound/tun/). Without
-    this, every StartVPN fails with "configure tun interface: Access is denied"
-    and the user has to remember to launch us from an elevated shell.
+    asInvoker: the GUI never needs administrator rights. Bringing up TUN
+    does, and that happens in HikkariService (LocalSystem), which the GUI
+    drives over a named pipe — so there is no UAC prompt at launch.
   -->
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
       </requestedPrivileges>
     </security>
   </trustInfo>

@@ -1,7 +1,7 @@
 # AUTOUPDATE-ROADMAP
 
 Автообновление клиента с наших серверов, по модели Telegram, на апдейтере из Nekko.
-Сначала Windows. Статус: фазы 0–1 готовы. Дата: 2026-10-30.
+Сначала Windows. Статус: фазы 0–2 готовы. Дата: 2026-10-30.
 
 ---
 
@@ -32,8 +32,14 @@ C:\Program Files\Hikkari\        ← пишет только SYSTEM/админ
     app\                         ← текущая версия: GUI, nekkobox.dll, sing-box, wintun, VERSION
     app.old\                     ← предыдущая, пока новая на испытании
     .staging\                    ← tree\, parts\, READY.json, PENDING.json, REFUSED.json
-C:\ProgramData\Hikkari\          ← профили, конфиг, логи, кэши (не трогаются заменой)
+    core\                        ← служба: свой config.json, cache.db, service.log
+%LOCALAPPDATA%\Hikkari\          ← профили, конфиг GUI, логи, кэши (не трогаются заменой)
 ```
+
+- **Данные пользователя — в `%LOCALAPPDATA%`, а не в `ProgramData`.** ProgramData выбирали,
+  чтобы его читала служба; но служба получает конфиг **содержимым** через pipe и держит свою
+  копию в `core\`, так что общая папка не нужна. Per-user папка не требует настройки ACL
+  установщиком и не показывает профили одного пользователя другим (как на macOS).
 
 - **Бинарники — только в `Program Files`.** Служба исполняет их от SYSTEM; если бы они лежали
   в папке, куда может писать пользователь (`%LocalAppData%`), любая программа подменила бы
@@ -86,14 +92,32 @@ GUI:                 баннер «Доступно X — Перезапуст�
 - Манифест `asInvoker` не нужен: эвристика «installer detection» Windows касается только
   32-битных exe, запущенных интерактивно; наш — 64-битный и запускается службой.
 
-### Phase 2 — `HikkariService.exe` (Go, `x/sys/windows/svc`)
-- [ ] Запуск/остановка sing-box переезжает из DLL в GUI в службу (Job Object — туда же).
-- [ ] Named pipe с ACL: GUI ↔ служба (старт/стоп/статус/обновление). Никаких произвольных путей.
-- [ ] Цикл обновлений: зовёт `hikkari-updater`, отдаёт прогресс в GUI.
-- [ ] GUI: `requireAdministrator` → `asInvoker`.
+### Phase 2 — `HikkariService.exe` (Go, `x/sys/windows/svc`) ✅
+- [x] sing-box запускает служба (`core/winsvc`, LocalSystem); GUI-движок на Windows — клиент pipe
+      (`vpn.ServiceManager`). Job Object, taskkill-подметание, flushdns — внутри службы.
+- [x] Pipe `\\.\pipe\hikkari-service` (`core/svcproto`): SYSTEM/админы — всё, интерактивные
+      пользователи — чтение/запись, сетевые — запрет. Один JSON-запрос на соединение:
+      `start` (с содержимым конфига), `stop`, `status`.
+- [x] **Санитайзер конфига** (`svcproto.Sanitize`) — граница безопасности: от SYSTEM sing-box
+      открывает пути из конфига, поэтому разрешён только список секций, `log.output` убирается,
+      `cache_file.path` принудительно в `core\`, Clash API только на loopback и без `external_ui`,
+      любые `*_path` / `*directory` и локальные rule-set — отказ. Тесты на реальном конфиге GUI.
+- [x] Служба отказывается работать не из `Program Files\Hikkari` (иначе SYSTEM исполнял бы
+      бинарники из папки, куда пишет пользователь).
+- [x] `HikkariService.exe install` (двойной клик → один UAC): копирует сборку в
+      `Program Files\Hikkari`, переносит профили portable-версии в `%LOCALAPPDATA%\Hikkari`,
+      регистрирует службу (автозапуск, перезапуск при падении), запускает. `uninstall`, `debug`.
+- [x] GUI: `requireAdministrator` → `asInvoker`; данные — `%LOCALAPPDATA%\Hikkari`.
+- [x] CI: zip в целевой раскладке (`Hikkari\HikkariService.exe`, `hikkari-updater.exe`, `app\`,
+      `app\VERSION`); smoke-тест на Windows-раннере — установка, отказ санитайзера, подъём TUN
+      через службу, Clash API, остановка, удаление. `engine.yml`: vet/test на Windows и Linux.
+- Известное: пользователь, который может запустить VPN, может направить трафик машины как
+  угодно — это суть VPN-клиента (так же у Tailscale). Файловая система закрыта санитайзером.
 
-### Phase 3 — лаунчер `Hikkari.exe`
-- [ ] `recover` → старт `app\` → наблюдение N секунд → `confirm` или `rollback`.
+### Phase 3 — цикл обновлений + лаунчер `Hikkari.exe`
+- [ ] Служба: раз в 4 ч `hikkari-updater update`, состояние и прогресс — в `status` pipe.
+- [ ] Pipe-операция `apply`: служба ждёт выхода GUI, гасит ядро, `hikkari-updater apply`.
+- [ ] Лаунчер: `recover` → старт `app\` → наблюдение N секунд → `confirm` или `rollback`.
 - [ ] Single-instance; передача «показать окно» уже запущенному GUI.
 
 ### Phase 4 — установщик `HikkariSetup.exe` (Go)

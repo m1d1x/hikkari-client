@@ -123,6 +123,27 @@ jobs:
           }
           Write-Host "nekkobox.dll generated successfully."
 
+      - name: Build HikkariService.exe
+        shell: pwsh
+        run: |
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
+          cd engine
+          go build -trimpath -ldflags "-s -w -X NekkoVPN/core/winsvc.Version=$version" -o ../HikkariService.exe ./cmd/hikkari-service
+          cd ..
+          if (-not (Test-Path "HikkariService.exe")) { throw "HikkariService.exe was not generated!" }
+
+      - name: Build hikkari-updater.exe
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cd updater
+          cargo build --release --locked -p hikkari-updater
+          Copy-Item target/release/hikkari-updater.exe ../hikkari-updater.exe
+
       - name: Build Flutter Windows App
         shell: pwsh
         run: |
@@ -131,6 +152,12 @@ jobs:
           flutter build windows --release
           cd ..
 
+      # Layout of the installed client (docs/AUTOUPDATE-ROADMAP.md §1):
+      #   Hikkari\HikkariService.exe     install / service
+      #   Hikkari\hikkari-updater.exe
+      #   Hikkari\app\                   GUI, engine, core, VERSION — what updates replace
+      # Unpack and run HikkariService.exe: one UAC prompt, it copies itself to
+      # Program Files\Hikkari and starts the service.
       - name: Assemble Release Bundle
         shell: pwsh
         run: |
@@ -139,23 +166,86 @@ jobs:
             throw "Release directory does not exist: $releaseDir"
           }
 
-          # Ensure all engine and driver binaries are present in the release folder
-          Copy-Item -Force "nekkobox.dll" -Destination "$releaseDir/"
-          Copy-Item -Force "archive/sing-box.exe" -Destination "$releaseDir/"
-          Copy-Item -Force "archive/wintun.dll" -Destination "$releaseDir/"
+          $bundle = "bundle/Hikkari"
+          New-Item -ItemType Directory -Force -Path "$bundle/app" | Out-Null
+          Copy-Item -Recurse -Force "$releaseDir/*" -Destination "$bundle/app/"
+
+          # Engine and core binaries live in app\ beside the GUI.
+          Copy-Item -Force "nekkobox.dll" -Destination "$bundle/app/"
+          Copy-Item -Force "archive/sing-box.exe" -Destination "$bundle/app/"
+          Copy-Item -Force "archive/wintun.dll" -Destination "$bundle/app/"
           if (Test-Path "archive/libcronet.dll") {
-            Copy-Item -Force "archive/libcronet.dll" -Destination "$releaseDir/"
+            Copy-Item -Force "archive/libcronet.dll" -Destination "$bundle/app/"
           }
 
-          # Copy unblock.bat helper
-          Copy-Item -Force "windows/unblock.bat" -Destination "$releaseDir/"
+          # The installed version, read by hikkari-updater (covered by the manifest).
+          $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
+          Set-Content -NoNewline -Encoding ascii -Path "$bundle/app/VERSION" -Value $version
 
-          Write-Host "Release folder contents:"
-          Get-ChildItem -Path $releaseDir
+          Copy-Item -Force "HikkariService.exe" -Destination "$bundle/"
+          Copy-Item -Force "hikkari-updater.exe" -Destination "$bundle/"
 
-          # Create zip archive
-          Compress-Archive -Path "$releaseDir/*" -DestinationPath "hikkari-windows-x64.zip" -Force
+          Write-Host "Bundle ($version):"
+          Get-ChildItem -Recurse -Path "bundle" | Select-Object FullName
+
+          Compress-Archive -Path "bundle/Hikkari" -DestinationPath "hikkari-windows-x64.zip" -Force
           Write-Host "hikkari-windows-x64.zip created successfully."
+
+      # The runner is elevated, which makes it the one place the privileged
+      # half can be exercised for real: install from the bundle, talk to the
+      # pipe, bring up a TUN through the service, take it down, uninstall.
+      # auto_route stays off so the runner's own traffic is never rerouted.
+      - name: Service smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & bundle/Hikkari/HikkariService.exe install --quiet
+          if ($LASTEXITCODE -ne 0) { throw "install failed ($LASTEXITCODE)" }
+          $root = "$env:ProgramFiles\Hikkari"
+          if ((Get-Service HikkariService).Status -ne 'Running') { throw "service is not running" }
+          if (-not (Test-Path "$root\app\sing-box.exe")) { throw "build was not copied to $root" }
+
+          function Invoke-Hikkari([string]$json) {
+            $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(".", "hikkari-service", [System.IO.Pipes.PipeDirection]::InOut)
+            $pipe.Connect(5000)
+            $w = New-Object System.IO.StreamWriter($pipe); $w.AutoFlush = $true
+            $r = New-Object System.IO.StreamReader($pipe)
+            $w.WriteLine($json)
+            $line = $r.ReadLine()
+            $pipe.Dispose()
+            Write-Host "<- $line"
+            return $line | ConvertFrom-Json
+          }
+
+          try {
+            $st = Invoke-Hikkari '{"op":"status"}'
+            if (-not $st.ok -or $st.running) { throw "unexpected status" }
+
+            $bad = Invoke-Hikkari '{"op":"start","config":{"inbounds":[],"services":[]}}'
+            if ($bad.ok) { throw "the service accepted a config with a forbidden section" }
+            $bad = Invoke-Hikkari '{"op":"start","config":{"inbounds":[],"outbounds":[{"type":"direct","tag":"d","tls":{"certificate_path":"C:\\Windows\\win.ini"}}]}}'
+            if ($bad.ok) { throw "the service accepted a config that reads a file" }
+
+            $cfg = '{"log":{"level":"info","timestamp":true},"dns":{"servers":[{"tag":"local","type":"local"}]},"inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"auto_route":false,"stack":"mixed"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","default_domain_resolver":{"server":"local"}},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"},"cache_file":{"enabled":true,"path":"cache.db"}}}'
+            $st = Invoke-Hikkari ('{"op":"start","config":' + $cfg + '}')
+            if (-not $st.ok -or -not $st.running) { throw "the core did not start" }
+
+            $up = $false
+            for ($i = 0; $i -lt 20 -and -not $up; $i++) {
+              Start-Sleep -Milliseconds 500
+              try { $v = Invoke-RestMethod -TimeoutSec 2 http://127.0.0.1:9090/version; $up = $true; Write-Host "core: $($v | ConvertTo-Json -Compress)" } catch {}
+            }
+            if (-not $up) { throw "the core never answered on the Clash API" }
+            if (-not (Test-Path "$root\core\cache.db")) { throw "cache.db is not in the service's directory" }
+
+            $st = Invoke-Hikkari '{"op":"stop"}'
+            if ($st.running) { throw "the core is still running after stop" }
+          } finally {
+            Write-Host "---- service.log ----"
+            Get-Content "$root\core\service.log" -ErrorAction SilentlyContinue
+            & "$root\HikkariService.exe" uninstall --quiet
+          }
+          if (Get-Service HikkariService -ErrorAction SilentlyContinue) { throw "the service is still registered" }
 
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
