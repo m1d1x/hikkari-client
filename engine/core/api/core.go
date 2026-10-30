@@ -272,10 +272,10 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 	return out
 }
 
-// downdetectorServers lists every profile as a reportable server. They are
-// all private for now: there are no Nekko nodes yet and profiles don't
-// remember whether they came from a subscription, so nothing is shared
-// unless the user opts in.
+// downdetectorServers lists every profile as a reportable server. Only
+// subscription servers and our nodes are shared by default; the user's own
+// servers (single links, pasted configs, profiles older than the Origin
+// field) need the share_private opt-in.
 func (c *Core) downdetectorServers() []downdetector.Server {
 	pf, err := c.profiles.Read()
 	if err != nil {
@@ -292,7 +292,7 @@ func (c *Core) downdetectorServers() []downdetector.Server {
 			Profile: p.Name,
 			ID:      downdetector.ServerID(host, port, proto),
 			Proto:   proto,
-			Private: true,
+			Private: !p.Shared(),
 		})
 	}
 	return out

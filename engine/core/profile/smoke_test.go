@@ -1,7 +1,10 @@
 package profile
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,7 +127,7 @@ func TestAddOnFreshInstall(t *testing.T) {
 	}
 	name, err := s.Add("Germany", KindOutbound, map[string]interface{}{
 		"type": "vless", "server": "144.31.104.44", "server_port": 443,
-	})
+	}, OriginLink)
 	if err != nil {
 		t.Fatalf("Add on empty store: %v", err)
 	}
@@ -179,5 +182,58 @@ func TestParseURIs_Subscription(t *testing.T) {
 	}
 	if drafts[2].Label != "🇫🇮ФИНКА СТАРАЯ" {
 		t.Errorf("draft[2].Label = %q", drafts[2].Label)
+	}
+}
+
+func TestParseURIs_Origin(t *testing.T) {
+	const link = "vless://c18cef8f-a1a7-4f58-b32b-21d54b8ad4f2@example.com:443?security=tls&sni=example.com#x"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(link + "\n" + link))))
+	}))
+	defer srv.Close()
+
+	fetched, err := ParseURIs(srv.URL)
+	if err != nil {
+		t.Fatalf("subscription: %v", err)
+	}
+	pasted, err := ParseURIs(link + "\n" + link)
+	if err != nil {
+		t.Fatalf("pasted: %v", err)
+	}
+	for _, d := range fetched {
+		if d.Origin != OriginSubscription {
+			t.Errorf("fetched subscription draft has origin %q", d.Origin)
+		}
+	}
+	for _, d := range pasted {
+		if d.Origin != OriginLink {
+			t.Errorf("pasted draft has origin %q", d.Origin)
+		}
+	}
+}
+
+func TestProfileOriginPersisted(t *testing.T) {
+	s := New(filepath.Join(t.TempDir(), "profiles.json"))
+	cfg := map[string]interface{}{"type": "vless", "server": "1.2.3.4", "server_port": 443}
+	sub, _ := s.Add("sub", KindOutbound, cfg, OriginSubscription)
+	own, _ := s.Add("own", KindOutbound, cfg, OriginLink)
+
+	for name, shared := range map[string]bool{sub: true, own: false} {
+		p, ok, err := s.Get(name)
+		if err != nil || !ok {
+			t.Fatalf("Get %s: %v", name, err)
+		}
+		if p.Shared() != shared {
+			t.Errorf("%s: Shared() = %v, want %v", name, p.Shared(), shared)
+		}
+	}
+
+	var legacy Profile
+	if err := json.Unmarshal([]byte(`{"name":"old","config":{"type":"vless"}}`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Shared() {
+		t.Error("profile without origin must stay private")
 	}
 }

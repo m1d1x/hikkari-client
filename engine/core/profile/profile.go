@@ -23,6 +23,21 @@ const (
 	KindOutbound = "outbound"
 )
 
+// Origin says where a profile came from. The downdetector only shares
+// servers many people use (subscriptions, our nodes); anything else is the
+// user's own and stays private unless they opt in. Empty on profiles saved
+// before the field existed — treated as private.
+const (
+	OriginSubscription = "subscription" // fetched from an http(s) subscription URL
+	OriginLink         = "link"         // a single link / pasted config
+	OriginNekko        = "nekko"        // our node (reserved for the orchestrator)
+)
+
+// Shared reports whether the profile's server is one many people use.
+func (p Profile) Shared() bool {
+	return p.Origin == OriginSubscription || p.Origin == OriginNekko
+}
+
 // SelectorTag is the single sing-box outbound that route.final and
 // dns.detour point at. It's a `selector` group that lists every profile;
 // switching profiles is a Clash-API call against this tag, not a config
@@ -65,6 +80,7 @@ type Profile struct {
 	Label  string                 `json:"label"`
 	Kind   string                 `json:"kind"`
 	Config map[string]interface{} `json:"config"`
+	Origin string                 `json:"origin,omitempty"`
 }
 
 // UnmarshalJSON tolerates the legacy on-disk shape that used "endpoint"
@@ -77,6 +93,7 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 		Kind     string                 `json:"kind"`
 		Config   map[string]interface{} `json:"config"`
 		Endpoint map[string]interface{} `json:"endpoint"`
+		Origin   string                 `json:"origin"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
 		return err
@@ -85,6 +102,7 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	p.Label = r.Label
 	p.Kind = r.Kind
 	p.Config = r.Config
+	p.Origin = r.Origin
 	if p.Config == nil && r.Endpoint != nil {
 		p.Config = r.Endpoint
 	}
@@ -284,7 +302,7 @@ func (s *Store) Delete(name string) error {
 }
 
 // Add appends a new profile with a unique name derived from label.
-func (s *Store) Add(label, kind string, cfg map[string]interface{}) (string, error) {
+func (s *Store) Add(label, kind string, cfg map[string]interface{}, origin string) (string, error) {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return "", fmt.Errorf("название не может быть пустым")
@@ -302,6 +320,7 @@ func (s *Store) Add(label, kind string, cfg map[string]interface{}) (string, err
 		Label:  label,
 		Kind:   kind,
 		Config: cfg,
+		Origin: origin,
 	})
 	if err := s.Write(pf); err != nil {
 		return "", err

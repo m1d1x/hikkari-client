@@ -224,9 +224,10 @@ nothing is sent yet.
 | `SetDowndetectorSettings` | `{"enabled":bool,"share_private":bool}`     | —                |
 | `DowndetectorLastReport`  | —                                           | `Report \| null` |
 
-`Settings`: `enabled` (default `true`), `share_private` (default `false`;
-every profile counts as private for now, so nothing is reported until it is
-on). Turning `enabled` off also drops the queued reports.
+`Settings`: `enabled` (default `true`), `share_private` (default `false`).
+Servers from an http(s) subscription are reported always; the user's own
+(single links, pasted configs, profiles saved before `origin` existed) only
+with `share_private`. Turning `enabled` off also drops the queued reports.
 
 `Report` — the complete list of what a report carries:
 

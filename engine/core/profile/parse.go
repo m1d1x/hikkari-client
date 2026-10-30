@@ -18,11 +18,12 @@ import (
 
 // Draft is the parsed result of an import URI. Kind/Config are what
 // Store.Add wants; Label is the human-readable name taken from the URI
-// fragment (or falls back to host).
+// fragment (or falls back to host). Origin is set by ParseURIs.
 type Draft struct {
 	Kind   string
 	Label  string
 	Config map[string]interface{}
+	Origin string
 }
 
 // ParseURI dispatches by scheme. Returns an error for unknown schemes so the
@@ -78,6 +79,7 @@ func ParseURIs(input string) ([]Draft, error) {
 		if err != nil {
 			return nil, err
 		}
+		d.Origin = OriginLink
 		return []Draft{d}, nil
 	}
 
@@ -102,6 +104,11 @@ func ParseURIs(input string) ([]Draft, error) {
 				firstErr = err
 			}
 			continue
+		}
+		// A pasted list (or base64 blob) is not a subscription we fetched:
+		// it may well be the user's own servers, so it stays private.
+		if d.Origin == "" {
+			d.Origin = OriginLink
 		}
 		drafts = append(drafts, d)
 	}
@@ -156,6 +163,7 @@ func fetchSubscription(subURL string) ([]Draft, error) {
 		if err != nil {
 			continue
 		}
+		d.Origin = OriginSubscription
 		drafts = append(drafts, d)
 	}
 

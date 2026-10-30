@@ -204,7 +204,7 @@ func (c *Core) AddProfileFromURI(uri string) (string, error) {
 	}
 	var firstName string
 	for _, d := range drafts {
-		name, err := c.profiles.Add(d.Label, d.Kind, d.Config)
+		name, err := c.profiles.Add(d.Label, d.Kind, d.Config, d.Origin)
 		if err != nil {
 			return "", err
 		}
