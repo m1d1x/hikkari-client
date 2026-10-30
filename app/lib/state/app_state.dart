@@ -21,6 +21,14 @@ const bool kRoutingDryRun = kDebugMode;
 /// false to wire to backend.
 const bool kEngineDryRun = kDebugMode;
 
+/// What the update banner shows in dry-run, to work on its design without a
+/// staged release: `flutter run --dart-define=DRY_UPDATE=mandatory` (or
+/// `none`). Default: an ordinary update is ready.
+const String kDryUpdate = String.fromEnvironment(
+  'DRY_UPDATE',
+  defaultValue: 'ready',
+);
+
 void _rlog(String msg) {
   debugPrint('[routing${kRoutingDryRun ? '/dry' : ''}] $msg');
 }
@@ -88,12 +96,14 @@ class AppState extends ChangeNotifier {
   UpdateStatus get update => _update;
   List<ProfileInfo> get profiles => _profiles;
   Map<String, String> get profileCountries => _profileCountries;
+
   /// Resolved lowercase ISO country code for [name], or null if not resolved
   /// (either still loading, or the host couldn't be geolocated).
   String? countryCodeFor(String name) {
     final code = _profileCountries[name];
     return (code == null || code.isEmpty) ? null : code;
   }
+
   /// True when [name]'s flag is still being resolved in the background — the
   /// badge shows a spinner in this window, then the flag bounces in once the
   /// code lands. A profile already present in [_profileCountries] (even with
@@ -120,6 +130,7 @@ class AppState extends ChangeNotifier {
     if (since == null) return false;
     return DateTime.now().difference(since) < const Duration(seconds: 10);
   }
+
   String? get activeProfileName {
     for (final p in _profiles) {
       if (p.active) return p.name;
@@ -183,14 +194,17 @@ class AppState extends ChangeNotifier {
       if (!kRoutingDryRun) {
         _routing = await _core.routing();
       } else {
-        _rlog('start: dry-run, routing kept at ${_routing.mode.wire} '
-            'enabled=${_routing.enabled}');
+        _rlog(
+          'start: dry-run, routing kept at ${_routing.mode.wire} '
+          'enabled=${_routing.enabled}',
+        );
       }
       if (kEngineDryRun) {
         _elog('start: dry-run, seeding fake profiles/health');
         _profiles = _dryProfiles;
         _health = _dryHealth;
         _cleanliness = _dryCleanliness;
+        _update = _dryUpdate;
         _uptime = {'dry-demo': _seedDryUptime()};
         _autoMode = false;
       } else {
@@ -200,14 +214,15 @@ class AppState extends ChangeNotifier {
         _autoMode = await _core.autoMode();
       }
     });
-    _healthTimer ??=
-        Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    _healthTimer ??= Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     _refreshProfileCountries();
     if (!kEngineDryRun) {
       // Every launch is a reason to look: the service throttles repeats.
-      unawaited(_core.checkUpdate().catchError((Object e) {
-        _elog('checkUpdate failed: $e');
-      }));
+      unawaited(
+        _core.checkUpdate().catchError((Object e) {
+          _elog('checkUpdate failed: $e');
+        }),
+      );
       unawaited(_refreshUpdate());
     }
   }
@@ -226,9 +241,23 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// «Перезапустить»: the launcher takes over and the app exits. Returns
-  /// false (with [lastError] set) if the hand-over could not start.
+  /// «Перезапустить»: the service swaps the new version in and the app
+  /// exits (to be reopened as the new version). Returns false if the app
+  /// should stay: the hand-over could not start ([lastError] is set), or —
+  /// in dry-run — the restart was only played out: the banner goes away and
+  /// comes back a few seconds later, so it can be looked at again.
   Future<bool> restartToUpdate() async {
+    if (kEngineDryRun) {
+      _elog('restartToUpdate: dry-run, simulating the swap');
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      _update = UpdateStatus(state: 'idle', installed: _dryUpdate.version);
+      notifyListeners();
+      Timer(const Duration(seconds: 4), () {
+        _update = _dryUpdate;
+        notifyListeners();
+      });
+      return false;
+    }
     try {
       await _core.restartToUpdate();
       return true;
@@ -275,6 +304,21 @@ class AppState extends ChangeNotifier {
   );
   // Фейк «чистоты» для dry-run (debug): плашка рендерится с правдоподобными
   // моками, чтобы крутить UI без движка и включённого VPN.
+  static UpdateStatus get _dryUpdate => switch (kDryUpdate) {
+    'none' => const UpdateStatus(state: 'idle', installed: '1.0.3'),
+    'mandatory' => const UpdateStatus(
+      state: 'ready',
+      installed: '1.0.3',
+      version: '1.1.0',
+      mandatory: true,
+    ),
+    _ => const UpdateStatus(
+      state: 'ready',
+      installed: '1.0.3',
+      version: '1.0.4',
+    ),
+  };
+
   static const _dryCleanliness = ServerCleanliness(
     running: true,
     checked: true,
@@ -307,7 +351,8 @@ class AppState extends ChangeNotifier {
         severity: 'high',
         title:
             'Хостинг/датацентр IP — Cloudflare Turnstile почти всегда челленджит такие',
-        fix: 'Перейти на residential или mobile выход — это устраняет главную причину фрода.',
+        fix:
+            'Перейти на residential или mobile выход — это устраняет главную причину фрода.',
       ),
       CleanlinessReason(
         severity: 'high',
@@ -455,7 +500,9 @@ class AppState extends ChangeNotifier {
       // Strip ANSI color codes that sing-box embeds (e.g. \x1b[31mFATAL\x1b[0m).
       final line = raw.replaceAll(RegExp(r'\x1B\[[0-9;]*[A-Za-z]'), '');
       if (line.contains('FATAL') ||
-          (line.contains('[singbox.err]') && !line.contains(' INFO ') && !line.contains(' DEBUG ')) ||
+          (line.contains('[singbox.err]') &&
+              !line.contains(' INFO ') &&
+              !line.contains(' DEBUG ')) ||
           line.contains('failed to start') ||
           line.contains('Access is denied')) {
         lastErr = line.trim();
@@ -604,7 +651,12 @@ class AppState extends ChangeNotifier {
       final p = _profiles.firstWhere(
         (p) => p.name == name,
         orElse: () => ProfileInfo(
-            name: name, label: name, active: false, endpoint: '', protocol: 'vless'),
+          name: name,
+          label: name,
+          active: false,
+          endpoint: '',
+          protocol: 'vless',
+        ),
       );
       final proto = p.protocol.isEmpty ? 'vless' : p.protocol;
       final host = p.endpoint.isEmpty ? 'demo.example.com:443' : p.endpoint;
