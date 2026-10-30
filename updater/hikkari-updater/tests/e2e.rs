@@ -72,6 +72,7 @@ const V2: &[(&str, &str)] = &[
 /// manifest, then the probe.
 fn publish(
     release: &Path,
+    platform: Platform,
     version: &str,
     minimum: &str,
     base_url: &str,
@@ -83,7 +84,7 @@ fn publish(
     let manifest = Manifest {
         version: Version::parse(version).unwrap(),
         channel: Channel::Stable,
-        platform: Platform::Windows,
+        platform,
         minimum_version: Version::parse(minimum).unwrap(),
         published_at: 1_761_800_000,
         base_url: base_url.to_owned(),
@@ -97,7 +98,7 @@ fn publish(
     for entry in &manifest.files {
         fs::copy(release.join(&entry.path), blobs.join(&entry.sha256)).unwrap();
     }
-    let prefix = out.join("stable/windows");
+    let prefix = out.join(format!("stable/{platform}"));
     fs::create_dir_all(&prefix).unwrap();
     fs::write(prefix.join("manifest.json"), &envelope).unwrap();
     let probe = VersionProbe {
@@ -220,6 +221,7 @@ fn handle(stream: TcpStream, root: &Path, log: &Mutex<HashMap<String, u32>>) {
 
 struct Updater {
     root: PathBuf,
+    layout: &'static str,
     url: String,
     trust: String,
 }
@@ -231,6 +233,7 @@ impl Updater {
             .arg(command)
             .arg("--root")
             .arg(&self.root)
+            .args(["--layout", self.layout])
             .args(["--base-url", &self.url, "--trust", &self.trust])
             .output()
             .unwrap();
@@ -269,6 +272,7 @@ fn scene(label: &str, minimum: &str) -> (Tmp, ChannelServer, Updater) {
     let (private, public) = new_key();
     publish(
         &tmp.0.join("build-1.1.0"),
+        Platform::Windows,
         "1.1.0",
         minimum,
         &server.url,
@@ -278,6 +282,7 @@ fn scene(label: &str, minimum: &str) -> (Tmp, ChannelServer, Updater) {
 
     let updater = Updater {
         root,
+        layout: "windows",
         url: server.url.clone(),
         trust: format!("test-1:{public}"),
     };
@@ -405,4 +410,62 @@ fn applying_with_nothing_staged_moves_nothing() {
     assert!(!success);
     assert_eq!(read(&up.app().join("VERSION")), "1.0.0");
     assert!(!up.root.join("app.old").exists());
+}
+
+const MAC_V1: &[(&str, &str)] = &[
+    ("Contents/Resources/VERSION", "1.0.0"),
+    ("Contents/MacOS/nekkobox", "gui 1.0.0"),
+    ("Contents/Resources/sing-box", "core"),
+];
+
+const MAC_V2: &[(&str, &str)] = &[
+    ("Contents/Resources/VERSION", "1.1.0"),
+    ("Contents/MacOS/nekkobox", "gui 1.1.0"),
+    ("Contents/Resources/sing-box", "core"),
+];
+
+/// macOS: the bundle is the installation, replaced whole, its version read
+/// from Contents/Resources, its manifests from stable/macos.
+#[test]
+fn a_macos_bundle_is_swapped_whole() {
+    let tmp = Tmp::new("macos");
+    let root = tmp.0.join("Applications");
+    write_tree(&root.join("Hikkari.app"), MAC_V1);
+    write_tree(&tmp.0.join("build"), MAC_V2);
+    let channel_dir = tmp.0.join("channel");
+    fs::create_dir_all(&channel_dir).unwrap();
+    let server = ChannelServer::serve(&channel_dir);
+    let (private, public) = new_key();
+    publish(
+        &tmp.0.join("build"),
+        Platform::Macos,
+        "1.1.0",
+        "0.0.0",
+        &server.url,
+        &channel_dir,
+        &private,
+    );
+    let up = Updater {
+        root: root.clone(),
+        layout: "macos",
+        url: server.url.clone(),
+        trust: format!("test-1:{public}"),
+    };
+
+    assert_eq!(up.ok("status", "status")["installed"], "1.0.0");
+    assert_eq!(up.ok("update", "ready")["version"], "1.1.0");
+    assert!(root.join(".Hikkari.staging/READY.json").exists());
+    assert_eq!(server.hits("/stable/macos/manifest.json"), 1);
+    up.ok("apply", "applied");
+    assert_eq!(
+        read(&root.join("Hikkari.app/Contents/MacOS/nekkobox")),
+        "gui 1.1.0"
+    );
+    assert_eq!(
+        read(&root.join("Hikkari.app.old/Contents/Resources/VERSION")),
+        "1.0.0"
+    );
+    up.ok("recover", "recovered");
+    up.ok("confirm", "confirmed");
+    assert!(!root.join("Hikkari.app.old").exists());
 }

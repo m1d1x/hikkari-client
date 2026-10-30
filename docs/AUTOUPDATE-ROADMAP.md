@@ -187,8 +187,49 @@ GUI:                 баннер «Доступно X — Перезапуст�
   и выпустить с ним релиз, подписанный старым; только потом подписывать новым.
 - [ ] Не проверено вживую: нет домена и сервера. Первый тег после настройки — проверка всей цепочки.
 
-### Phase 7 — macOS (позже)
-- [ ] Тот же крейт; daemon обновляет свою root-копию sing-box сам, без повторного пароля.
+### Phase 7 — macOS
+Та же модель, что на Windows: привилегированная служба, GUI без прав, пароль — один раз при установке.
+
+```
+/Applications/Hikkari.app                    ← root:wheel, ставится .pkg; заменяется обновлением целиком
+    Contents/MacOS/nekkobox                  GUI (Flutter)
+    Contents/MacOS/HikkariService            служба (root, LaunchDaemon net.hikkari.service)
+    Contents/MacOS/hikkari-updater
+    Contents/Frameworks/libnekkobox.dylib    движок
+    Contents/Resources/sing-box, VERSION
+/Applications/Hikkari.app.old                предыдущая, пока новая на испытании
+/Applications/.Hikkari.staging/              tree/, parts/, READY/PENDING/REFUSED (тот же том, что .app)
+/Library/Application Support/Hikkari/core/   служба: config.json, cache.db, service.log, run
+/var/run/hikkari-service.sock                тот же протокол svcproto, что pipe на Windows
+~/Library/Application Support/nekkobox/      данные GUI (как раньше)
+```
+
+- **Общая служба.** Сервер, цикл обновлений и протокол — один код (`core/service`) для Windows и
+  macOS; платформа подставляет только транспорт (pipe / unix-сокет), запуск апдейтера и запись версии
+  (реестр на Windows). Санитайзер тот же — от root sing-box так же опасен, как от SYSTEM.
+- **sing-box от root запускается только из root-владеемого `.app`.** Служба отказывается работать,
+  если бандл не `root:wheel` и доступен на запись кому-то кроме root (как «только из Program Files»).
+  Поэтому установка — `.pkg` (встроенный установщик macOS, не сторонний): он кладёт бандл от root.
+  Старая схема (LaunchDaemon `com.nekkobox.singbox`, копия sing-box, sentinel-файл, osascript)
+  удаляется установщиком.
+- **Самообновление службы и апдейтера бесплатно.** На macOS переименовать бандл с запущенными
+  бинарями можно; после замены служба выходит, launchd поднимает уже новую, она восстанавливает
+  туннель, если он был включён (файл `core/run`).
+- **Без лаунчера.** «Перезапустить»: GUI → `apply_update` (служба гасит ядро, меняет бандл, поднимает
+  ядро) → GUI запускает отложенный `open` нового бандла и выходит. Новый GUI при старте зовёт
+  `recover_update`, через 20 с — `confirm_update`. Сторож в службе: нет `confirm` за 90 с после
+  `apply` → откат (покрывает версию, которая не стартует вообще — лаунчер на Windows делает то же).
+- **Без Developer ID пока.** `.pkg` не подписан: первый запуск — «Системные настройки →
+  Конфиденциальность → Всё равно открыть». Обновления качает служба, карантина у них нет.
+
+- [ ] `core/service`: общий сервер + цикл обновлений; `winsvc` — только установка/SCM на Windows.
+- [ ] Транспорт: unix-сокет `/var/run/hikkari-service.sock`; `svcclient`/`ServiceManager` для darwin.
+- [ ] `vpn.ProcessManager` на darwin — обычный дочерний процесс службы (вместо launchd-супервизора).
+- [ ] `hikkari-service` для darwin: daemon, `install` (из postinstall), `uninstall`, проверка владельца.
+- [ ] `hikkari-updater`: раскладка macOS (`/Applications`, `Hikkari.app`, `Contents/Resources/VERSION`).
+- [ ] Движок: `RestartToUpdate` / recover / confirm на macOS.
+- [ ] CI `build-macos.yml`: `.app` → `.pkg`, smoke на раннере (sudo без пароля): установка, TUN через
+      службу, обновление до +1 patch, удаление; релиз по тегу в канал `stable/macos`.
 
 ## 4. Открытые вопросы
 

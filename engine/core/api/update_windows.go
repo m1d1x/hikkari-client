@@ -9,29 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"time"
 
-	"NekkoVPN/core/svcclient"
 	"NekkoVPN/core/svcproto"
 )
 
-// UpdateStatus is the service's view of updates. A service that cannot be
-// reached reads as "unavailable", not as an error: the UI polls this, and a
-// missing service already surfaces through StartVPN.
-func (c *Core) UpdateStatus() svcproto.UpdateState {
-	resp, err := svcclient.Call(svcproto.Request{Op: svcproto.OpStatus}, 5*time.Second)
-	if err != nil || resp.Update == nil {
-		return svcproto.UpdateState{State: svcproto.UpdateUnavailable}
-	}
-	return *resp.Update
-}
-
-// CheckUpdate asks the service to poll the channel now. The service ignores
-// it if it checked within the last few minutes.
-func (c *Core) CheckUpdate() error {
-	_, err := svcclient.Call(svcproto.Request{Op: svcproto.OpCheckUpdate}, 5*time.Second)
-	return err
-}
+// startUpdates: on Windows the launcher (Hikkari.exe) recovers and confirms a
+// new version around the GUI, so the GUI has nothing to do at start.
+func (c *Core) startUpdates() {}
 
 // RestartToUpdate hands over to the launcher (<root>\Hikkari.exe), which
 // waits for this process to exit, has the service swap the staged version in

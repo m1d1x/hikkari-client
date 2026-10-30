@@ -1,6 +1,4 @@
-//go:build windows
-
-package winsvc
+package service
 
 import (
 	"bufio"
@@ -12,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"NekkoVPN/core/svcproto"
@@ -31,20 +28,17 @@ const (
 
 	// apply is retried this many times, a second apart.
 	applyAttempts = 3
-
-	createNoWindow = 0x08000000
 )
 
-// updates drives hikkari-updater.exe for the service.
+// updates drives hikkari-updater for the service.
 //
 // Locking: opMu serialises every updater invocation (the staging directory
 // allows one at a time). Operations that touch the core take the server's mu
 // INSIDE opMu, never the other way round — so a long download holds opMu but
 // never blocks the GUI's start/stop, which take only mu.
 type updates struct {
-	srv  *Server
-	exe  string
-	root string
+	srv *Server
+	exe string
 
 	opMu sync.Mutex
 
@@ -57,8 +51,7 @@ type updates struct {
 func newUpdates(srv *Server) *updates {
 	return &updates{
 		srv:  srv,
-		exe:  filepath.Join(srv.root, "hikkari-updater.exe"),
-		root: srv.root,
+		exe:  srv.cfg.Updater,
 		st:   svcproto.UpdateState{State: svcproto.UpdateIdle},
 		kick: make(chan struct{}, 1),
 	}
@@ -186,16 +179,27 @@ func (u *updates) check() {
 	u.srv.log.Logf("updates: %s installed=%s version=%s err=%q", st.State, st.Installed, st.Version, st.Error)
 }
 
-// apply swaps the staged version in. The caller (the launcher) has already
-// waited for the GUI to exit; the core is stopped here because sing-box.exe
-// inside app\ would hold the directory open.
+// apply swaps the staged version in. The core is stopped around it: on
+// Windows sing-box.exe inside app\ would hold the directory open, and on both
+// platforms the core must come back as the new version's binary.
+//
+// When the swap replaced the service itself (Config.RestartAfterApply) the
+// core is not brought back here: the service is about to exit, and the new
+// one resumes it from the run marker — which reconnect sets.
 func (u *updates) apply(reconnect bool) (from, to string, err error) {
 	u.opMu.Lock()
 	defer u.opMu.Unlock()
 	if st := u.snapshot(); st.State != svcproto.UpdateReady {
 		return "", "", errors.New("нет готового обновления")
 	}
-	err = u.withCoreDown(reconnect, func() error {
+	swap := u.withCoreDown
+	if u.srv.cfg.RestartAfterApply {
+		swap = u.withCoreLeftDown
+		if reconnect {
+			_ = os.WriteFile(u.srv.runMarker(), nil, 0o644)
+		}
+	}
+	err = swap(reconnect, func() error {
 		var err error
 		// A file inside app\ held for a moment after the core exits (an
 		// antivirus scanning it, a straggling handle) fails the first
@@ -221,7 +225,7 @@ func (u *updates) apply(reconnect bool) (from, to string, err error) {
 	u.set(func(st *svcproto.UpdateState) {
 		*st = svcproto.UpdateState{State: svcproto.UpdateIdle, Installed: to, CheckedAt: st.CheckedAt}
 	})
-	setDisplayVersion(to)
+	u.srv.onVersion(to)
 	u.srv.log.Logf("updates: applied %s -> %s (reconnect=%v)", from, to, reconnect)
 	return from, to, nil
 }
@@ -256,7 +260,7 @@ func (u *updates) recover() (result, from, to string, err error) {
 		u.srv.log.Logf("updates: recover %s (%s -> %s)", result, from, to)
 	}
 	if result == "rolled_back" {
-		setDisplayVersion(from)
+		u.srv.onVersion(from)
 		u.set(func(st *svcproto.UpdateState) {
 			st.State, st.Installed, st.Version = svcproto.UpdateIdle, from, ""
 		})
@@ -281,7 +285,7 @@ func (u *updates) rollback() (from, to string, err error) {
 		})
 	})
 	if err == nil {
-		setDisplayVersion(from)
+		u.srv.onVersion(from)
 		u.srv.log.Logf("updates: rolled back %s -> %s", to, from)
 		u.set(func(st *svcproto.UpdateState) {
 			st.State, st.Installed, st.Version = svcproto.UpdateIdle, from, ""
@@ -303,13 +307,70 @@ func (u *updates) withCoreDown(start bool, f func() error) error {
 	}
 	err := f()
 	if wasRunning || start {
-		if _, statErr := os.Stat(filepath.Join(s.coreDir, "config.json")); statErr == nil {
+		if _, statErr := os.Stat(filepath.Join(s.cfg.CoreDir, "config.json")); statErr == nil {
 			if startErr := s.core.Start(); startErr != nil {
 				s.log.Logf("updates: core did not come back: %v", startErr)
 			}
 		}
 	}
 	return err
+}
+
+// withCoreLeftDown stops the core around f and leaves it down: the service
+// is about to be replaced and the next one resumes it (see apply).
+func (u *updates) withCoreLeftDown(_ bool, f func() error) error {
+	s := u.srv
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.core.Pid() != 0 {
+		_ = s.core.Stop()
+	}
+	return f()
+}
+
+// watchTrial rolls back a version that was swapped in moments before this
+// service started and is still unconfirmed at Config.TrialDeadline after the
+// swap. On macOS the swap restarts the service and opens the new GUI right
+// away; a GUI that runs confirms within seconds, so a version still on trial
+// at the deadline never came up at all — the case no start counter can see,
+// since nothing of the new version ran to count. A trial older than the
+// deadline (the machine rebooted mid-trial, the GUI is simply not open) is
+// left to the ordinary counting at the next GUI start.
+func (u *updates) watchTrial(ctx context.Context) {
+	deadline := u.srv.cfg.TrialDeadline
+	if deadline <= 0 {
+		return
+	}
+	applied := u.pendingSince()
+	if applied.IsZero() || time.Since(applied) >= deadline {
+		return
+	}
+	u.srv.log.Logf("updates: a version is on trial since %s, watching it for %s", applied.Format(time.RFC3339), deadline)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(time.Until(applied.Add(deadline))):
+	}
+	if u.pendingSince().IsZero() {
+		return
+	}
+	u.srv.log.Logf("updates: the version on trial was never confirmed, rolling back")
+	if _, _, err := u.rollback(); err != nil {
+		u.srv.log.Logf("updates: rollback: %v", err)
+	}
+}
+
+// pendingSince is when the version on trial was swapped in; zero if none is.
+func (u *updates) pendingSince() time.Time {
+	u.opMu.Lock()
+	defer u.opMu.Unlock()
+	var at time.Time
+	_ = u.run("status", func(ev map[string]interface{}) {
+		if p, ok := ev["pending"].(map[string]interface{}); ok {
+			at = time.Unix(num(p["applied_at"]), 0)
+		}
+	})
+	return at
 }
 
 // updaterError is a failed hikkari-updater command, with its error code.
@@ -322,8 +383,10 @@ func (e *updaterError) Error() string { return e.msg }
 // run executes one hikkari-updater command, feeding every JSON event to
 // onEvent. A non-zero exit is an error carrying the command's own message.
 func (u *updates) run(command string, onEvent func(map[string]interface{})) error {
-	cmd := exec.Command(u.exe, command, "--root", u.root)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	cmd := exec.Command(u.exe, append([]string{command}, u.srv.cfg.UpdaterArgs...)...)
+	if u.srv.cfg.PrepareCmd != nil {
+		u.srv.cfg.PrepareCmd(cmd)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

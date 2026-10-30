@@ -1,7 +1,8 @@
-//go:build windows
+//go:build windows || darwin
 
-// Package svcclient talks to HikkariService over its control pipe. Shared by
-// the GUI engine (VPN control, update state) and the launcher.
+// Package svcclient talks to HikkariService over its control endpoint (a
+// named pipe on Windows, a unix socket on macOS). Shared by the GUI engine
+// (VPN control, update state) and the Windows launcher.
 package svcclient
 
 import (
@@ -9,20 +10,17 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Microsoft/go-winio"
-
 	"NekkoVPN/core/svcproto"
 )
 
-// ErrNoService: the pipe is not there — the service is not installed or not
+// ErrNoService: the endpoint is not there — the service is not installed or not
 // running.
 var ErrNoService = errors.New("служба Hikkari не запущена — переустановите приложение")
 
 // Call sends one request and returns the service's answer. A response with
 // ok=false comes back as an error carrying the service's message.
 func Call(req svcproto.Request, timeout time.Duration) (svcproto.Response, error) {
-	dial := 2 * time.Second
-	conn, err := winio.DialPipe(svcproto.PipeName, &dial)
+	conn, err := dial(2 * time.Second)
 	if err != nil {
 		return svcproto.Response{}, fmt.Errorf("%w (%v)", ErrNoService, err)
 	}

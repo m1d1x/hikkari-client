@@ -1,0 +1,6 @@
+#!/bin/sh
+# Hikkari .pkg postinstall (as root): register and start the daemon for the
+# bundle just installed (core/macsvc Install), retiring the pre-service
+# LaunchDaemon if this Mac still has it.
+set -e
+exec "/Applications/Hikkari.app/Contents/MacOS/HikkariService" install

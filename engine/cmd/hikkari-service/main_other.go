@@ -1,7 +1,6 @@
-//go:build !windows
+//go:build !windows && !darwin
 
-// HikkariService.exe exists only on Windows; macOS has its LaunchDaemon
-// (core/vpn/process_darwin.go).
+// HikkariService exists on Windows (core/winsvc) and macOS (core/macsvc).
 package main
 
 import (
@@ -10,6 +9,6 @@ import (
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "HikkariService is Windows-only")
+	fmt.Fprintln(os.Stderr, "HikkariService runs on Windows and macOS only")
 	os.Exit(1)
 }

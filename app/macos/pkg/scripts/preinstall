@@ -1,0 +1,5 @@
+#!/bin/sh
+# Hikkari .pkg preinstall (as root): stop the running daemon so the bundle it
+# executes from is not replaced under it. postinstall starts the new one.
+/bin/launchctl bootout system/net.hikkari.service 2>/dev/null || true
+exit 0

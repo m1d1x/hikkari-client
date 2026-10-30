@@ -1,6 +1,7 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package vpn
 
-// FlushDNS is a no-op outside Windows; see the Windows implementation.
+// FlushDNS is a no-op where no service runs the core; see the Windows and
+// macOS implementations.
 func FlushDNS() {}

@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # publish-update-channel.sh — put a signed channel tree on the update server.
 #
-#   bash scripts/publish-update-channel.sh CHANNEL_DIR VERSION
+#   bash scripts/publish-update-channel.sh CHANNEL_DIR VERSION PLATFORM
 #
-# CHANNEL_DIR is what `nekko-manifest publish --out` wrote (the release job in
-# .github/workflows/build-windows.yml makes it on the Windows runner, where the
-# tree it signs was built):
+# CHANNEL_DIR is what `nekko-manifest publish --out` wrote (the release jobs in
+# .github/workflows/build-{windows,macos}.yml make it on the runner where the
+# tree it signs was built); PLATFORM is windows or macos:
 #
-#   blobs/<sha256>                    every file body, content-addressed
-#   stable/windows/manifest.json      the signed envelope
-#   stable/windows/manifest-X.Y.Z.json  the same bytes, kept for rollback
-#   stable/windows/latest.json        the cheap probe clients poll
+#   blobs/<sha256>                       every file body, content-addressed,
+#                                        shared by every platform and version
+#   stable/PLATFORM/manifest.json        the signed envelope
+#   stable/PLATFORM/manifest-X.Y.Z.json  the same bytes, kept for rollback
+#   stable/PLATFORM/latest.json          the cheap probe clients poll
 #
 # The server only has to serve that directory as static files over HTTPS; an
 # update must keep working when anything else on the box is down.
@@ -27,7 +28,7 @@ set -euo pipefail
 
 CHANNEL_DIR="${1:-}"
 VERSION="${2:-}"
-PLATFORM=windows
+PLATFORM="${3:-}"
 
 say() { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 die() {
@@ -35,9 +36,10 @@ die() {
 	exit 1
 }
 
+[[ -n "$VERSION" && ( "$PLATFORM" == windows || "$PLATFORM" == macos ) ]] ||
+	die "usage: $0 CHANNEL_DIR VERSION windows|macos"
 [[ -d "$CHANNEL_DIR/blobs" && -f "$CHANNEL_DIR/stable/$PLATFORM/latest.json" ]] ||
-	die "usage: $0 CHANNEL_DIR VERSION — $CHANNEL_DIR is not a channel tree"
-[[ -n "$VERSION" ]] || die "usage: $0 CHANNEL_DIR VERSION"
+	die "$CHANNEL_DIR is not a $PLATFORM channel tree"
 : "${HIKKARI_UPDATE_URL:?is not set}" "${HIKKARI_DEPLOY_HOST:?is not set}"
 
 BASE_URL="${HIKKARI_UPDATE_URL%/}"

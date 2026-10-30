@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows || darwin
 
 package vpn
 
@@ -15,15 +15,15 @@ import (
 )
 
 // ServiceManager is the GUI's handle on the core when the core is owned by
-// the Hikkari service (HikkariService.exe, running as LocalSystem).
+// the Hikkari service (core/service: LocalSystem on Windows, root on macOS).
 //
 // This is what lets the GUI run without administrator rights: bringing up
 // TUN needs them, and the service already has them. The GUI generates the
-// config as before and hands its CONTENT over the control pipe; the service
+// config as before and hands its CONTENT over the control endpoint; the service
 // sanitises it (svcproto.Sanitize), writes its own copy and runs the core.
 // No path the GUI controls is ever executed or opened by the service.
 //
-// Consequence worth knowing, same as on macOS: the core lives in the service,
+// Consequence worth knowing: the core lives in the service,
 // so a GUI crash leaves the tunnel up instead of dropping traffic to the
 // clear. A clean GUI shutdown stops it (api.Core.Shutdown → Stop).
 type ServiceManager struct {

@@ -163,7 +163,7 @@ jobs:
           $env:GOARCH = "amd64"
           $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
           cd engine
-          go build -trimpath -ldflags "-s -w -X NekkoVPN/core/winsvc.Version=$version" -o ../HikkariService.exe ./cmd/hikkari-service
+          go build -trimpath -ldflags "-s -w -X NekkoVPN/core/service.Version=$version" -o ../HikkariService.exe ./cmd/hikkari-service
           # The launcher is what the shortcuts point at: give it the app icon.
           go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico ../app/windows/runner/resources/app_icon.ico -o cmd/hikkari-launcher/rsrc_windows_amd64.syso
           go build -trimpath -ldflags "-s -w -H windowsgui" -o ../Hikkari.exe ./cmd/hikkari-launcher
@@ -558,4 +558,4 @@ jobs:
         env:
           HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
           HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
-        run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}"
+        run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}" windows
