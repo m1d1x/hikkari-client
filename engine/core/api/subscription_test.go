@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -119,7 +120,7 @@ func TestSubscriptionWithAlternateEngine(t *testing.T) {
 		t.Fatal("provider depended on concrete transport")
 	}
 	blocked := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "alternate://placeholder#Unsupported%20client")
+		io.WriteString(w, "alternate://placeholder#Unsupported%20client")
 	}))
 	defer blocked.Close()
 	if _, err := c.AddProfileFromURI(blocked.URL); err == nil {
