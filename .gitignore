@@ -76,3 +76,7 @@ ipqs-key.txt
 
 # Rust (updater/)
 updater/target/
+
+# Built by CI (cmd/hikkari-setup embeds it; Windows resources)
+engine/cmd/hikkari-setup/payload/*.zip
+engine/cmd/*/*.syso

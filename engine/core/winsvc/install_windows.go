@@ -35,11 +35,12 @@ func IsElevated() bool {
 	return windows.GetCurrentProcessToken().IsElevated()
 }
 
-// Install puts this build into %ProgramFiles%\Hikkari and registers and
-// starts the service from there, and returns the launcher to start the app
-// with. `src` is the unpacked build (the folder
-// holding HikkariService.exe and app\); `importFrom` are folders that may
-// hold a portable install's data. Re-running it upgrades in place.
+// Install puts this build into %ProgramFiles%\Hikkari, registers and starts
+// the service from there, creates the shortcuts and the "Apps & features"
+// entry, and returns the launcher to start the app with. `src` is the
+// unpacked build (the folder holding HikkariService.exe and app\);
+// `importFrom` are folders that may hold a portable install's data.
+// Re-running it upgrades in place.
 func Install(src string, importFrom []string) (string, error) {
 	dest, err := InstallDir()
 	if err != nil {
@@ -52,11 +53,13 @@ func Install(src string, importFrom []string) (string, error) {
 	}
 	defer m.Disconnect()
 
-	// The running service and its core hold files under dest open.
+	// The running service and its core hold files under dest open, and so
+	// do an open GUI and the launcher.
 	if s, err := m.OpenService(svcproto.ServiceName); err == nil {
 		stopAndWait(s)
 		s.Close()
 	}
+	stopProcessesUnder(dest)
 
 	if !samePath(src, dest) {
 		if err := copyBuild(src, dest); err != nil {
@@ -74,23 +77,71 @@ func Install(src string, importFrom []string) (string, error) {
 	if err := register(m, exe); err != nil {
 		return "", err
 	}
-	return filepath.Join(dest, "Hikkari.exe"), nil
+	launcher := filepath.Join(dest, "Hikkari.exe")
+	if err := writeUninstallEntry(dest, installedVersion(dest)); err != nil {
+		return "", err
+	}
+	if err := createShortcuts(launcher); err != nil {
+		return "", err
+	}
+	return launcher, nil
 }
 
-// Uninstall stops and removes the service. Files are left in place.
+// Uninstall removes everything Install put on the machine: the service, the
+// shortcuts, the "Apps & features" entry and %ProgramFiles%\Hikkari. The
+// user's own data in %LOCALAPPDATA%\Hikkari (profiles, logs) stays.
+//
+// It usually runs from inside the folder it removes (the uninstall entry
+// points at HikkariService.exe), so the folder itself goes a few seconds
+// after this process exits.
 func Uninstall() error {
+	dest, err := InstallDir()
+	if err != nil {
+		return err
+	}
 	m, err := mgr.Connect()
 	if err != nil {
 		return fmt.Errorf("connecting to the service manager: %w", err)
 	}
-	defer m.Disconnect()
-	s, err := m.OpenService(svcproto.ServiceName)
-	if err != nil {
-		return fmt.Errorf("the service is not installed")
+	if s, err := m.OpenService(svcproto.ServiceName); err == nil {
+		stopAndWait(s)
+		if err := s.Delete(); err != nil {
+			s.Close()
+			m.Disconnect()
+			return fmt.Errorf("removing the service: %w", err)
+		}
+		s.Close()
 	}
-	defer s.Close()
-	stopAndWait(s)
-	return s.Delete()
+	m.Disconnect()
+
+	stopProcessesUnder(dest)
+	removeShortcuts()
+	removeUninstallEntry()
+
+	self, _ := exeDir()
+	if !samePath(self, dest) {
+		if err := os.RemoveAll(dest); err != nil {
+			return fmt.Errorf("removing %s: %w", dest, err)
+		}
+		return nil
+	}
+	// Everything but the running executable now; the folder after we exit.
+	entries, _ := os.ReadDir(dest)
+	for _, e := range entries {
+		if !strings.EqualFold(e.Name(), "HikkariService.exe") {
+			_ = os.RemoveAll(filepath.Join(dest, e.Name()))
+		}
+	}
+	return removeDirLater(dest)
+}
+
+// installedVersion is app\VERSION, the version the updater reads too.
+func installedVersion(dest string) string {
+	b, err := os.ReadFile(filepath.Join(dest, "app", "VERSION"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func register(m *mgr.Mgr, exe string) error {
@@ -244,4 +295,15 @@ func migrateUserData(from []string, dest string) {
 			_ = os.Remove(target + ".tmp")
 		}
 	}
+}
+
+// ImportDirs collects the folders named by --import flags.
+func ImportDirs(args []string) []string {
+	var dirs []string
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--import" {
+			dirs = append(dirs, args[i+1])
+		}
+	}
+	return dirs
 }

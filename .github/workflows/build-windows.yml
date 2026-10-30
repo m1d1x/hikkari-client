@@ -132,6 +132,8 @@ jobs:
           $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
           cd engine
           go build -trimpath -ldflags "-s -w -X NekkoVPN/core/winsvc.Version=$version" -o ../HikkariService.exe ./cmd/hikkari-service
+          # The launcher is what the shortcuts point at: give it the app icon.
+          go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico ../app/windows/runner/resources/app_icon.ico -o cmd/hikkari-launcher/rsrc_windows_amd64.syso
           go build -trimpath -ldflags "-s -w -H windowsgui" -o ../Hikkari.exe ./cmd/hikkari-launcher
           cd ..
           if (-not (Test-Path "HikkariService.exe")) { throw "HikkariService.exe was not generated!" }
@@ -195,6 +197,19 @@ jobs:
           Compress-Archive -Path "bundle/Hikkari" -DestinationPath "hikkari-windows-x64.zip" -Force
           Write-Host "hikkari-windows-x64.zip created successfully."
 
+      # The one file users download: the bundle above, embedded.
+      - name: Build HikkariSetup.exe
+        shell: pwsh
+        run: |
+          Copy-Item -Force "hikkari-windows-x64.zip" "engine/cmd/hikkari-setup/payload/hikkari.zip"
+          cd engine
+          $env:CGO_ENABLED = "0"
+          go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico ../app/windows/runner/resources/app_icon.ico -o cmd/hikkari-setup/rsrc_windows_amd64.syso
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o ../HikkariSetup.exe ./cmd/hikkari-setup
+          cd ..
+          if (-not (Test-Path "HikkariSetup.exe")) { throw "HikkariSetup.exe was not generated!" }
+          Write-Host ("HikkariSetup.exe: {0:N1} MB" -f ((Get-Item HikkariSetup.exe).Length / 1MB))
+
       # The runner is elevated, which makes it the one place the privileged
       # half can be exercised for real: install from the bundle, talk to the
       # pipe, bring up a TUN through the service, take it down, uninstall.
@@ -203,9 +218,20 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          & bundle/Hikkari/HikkariService.exe install --quiet
-          if ($LASTEXITCODE -ne 0) { throw "install failed ($LASTEXITCODE)" }
+          # Installed the way users install: through HikkariSetup.exe (a GUI
+          # program, so Start-Process -Wait for its exit code).
+          $setup = Start-Process -FilePath ./HikkariSetup.exe -ArgumentList "--quiet" -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "setup failed ($($setup.ExitCode))" }
           $root = "$env:ProgramFiles\Hikkari"
+          if (Test-Path "$env:ProgramFiles\Hikkari.setup") { throw "setup left its unpack folder behind" }
+          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari"
+          if ($entry.DisplayVersion -ne (Get-Content -Raw "$root\app\VERSION")) { throw "uninstall entry version: $($entry.DisplayVersion)" }
+          Write-Host "Apps & features: $($entry.DisplayName) $($entry.DisplayVersion), $($entry.EstimatedSize) KB"
+          foreach ($lnk in @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Hikkari.lnk", "$env:PUBLIC\Desktop\Hikkari.lnk")) {
+            if (-not (Test-Path $lnk)) { throw "missing shortcut $lnk" }
+            $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+            if ($target -ne "$root\Hikkari.exe") { throw "$lnk points at $target" }
+          }
           if ((Get-Service HikkariService).Status -ne 'Running') { throw "service is not running" }
           if (-not (Test-Path "$root\app\sing-box.exe")) { throw "build was not copied to $root" }
 
@@ -340,6 +366,8 @@ jobs:
             if (-not $ap.running) { throw "the core did not come back after the swap" }
             if ((Get-Content -Raw "$root\app\VERSION") -ne "1.0.1") { throw "app\ is not 1.0.1" }
             if (-not (Test-Path "$root\app.old\nekkobox.exe")) { throw "the previous version was not kept" }
+            $v = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari").DisplayVersion
+            if ($v -ne "1.0.1") { throw "Apps & features still says $v after the update" }
 
             $rec = Invoke-Hikkari '{"op":"recover_update"}'
             if ($rec.recovery -ne "on_trial") { throw "expected a trial, got $($rec.recovery)" }
@@ -353,17 +381,36 @@ jobs:
             Get-Content "$root\core\service.log" -ErrorAction SilentlyContinue
           }
 
-      - name: Remove the test install
+      # Uninstall the way "Apps & features" does — its QuietUninstallString —
+      # and check that nothing of ours is left behind.
+      - name: Uninstall
         if: always()
         shell: pwsh
         run: |
-          $exe = "$env:ProgramFiles\Hikkari\HikkariService.exe"
-          if (Test-Path $exe) { & $exe uninstall --quiet }
+          $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari"
+          $cmd = (Get-ItemProperty $key -ErrorAction SilentlyContinue).QuietUninstallString
+          if (-not $cmd) { throw "no uninstall entry" }
+          Write-Host "> $cmd"
+          # The string as Windows would run it: verbatim to cmd.exe.
+          $un = Start-Process -FilePath cmd.exe -ArgumentList "/c $cmd" -Wait -PassThru -NoNewWindow
+          if ($un.ExitCode -ne 0) { throw "uninstall failed ($($un.ExitCode))" }
           if (Get-Service HikkariService -ErrorAction SilentlyContinue) { throw "the service is still registered" }
+          if (Test-Path $key) { throw "the uninstall entry is still there" }
+          if (Test-Path "$env:PUBLIC\Desktop\Hikkari.lnk") { throw "the desktop shortcut is still there" }
+          $root = "$env:ProgramFiles\Hikkari"
+          for ($i = 0; $i -lt 30 -and (Test-Path $root); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path $root) { Get-ChildItem -Recurse $root | Select-Object FullName; throw "$root was not removed" }
 
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
         with:
           name: hikkari-windows-x64
           path: hikkari-windows-x64.zip
+          retention-days: 14
+
+      - name: Upload Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: HikkariSetup
+          path: HikkariSetup.exe
           retention-days: 14

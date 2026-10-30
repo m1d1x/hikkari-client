@@ -221,6 +221,7 @@ func (u *updates) apply(reconnect bool) (from, to string, err error) {
 	u.set(func(st *svcproto.UpdateState) {
 		*st = svcproto.UpdateState{State: svcproto.UpdateIdle, Installed: to, CheckedAt: st.CheckedAt}
 	})
+	setDisplayVersion(to)
 	u.srv.log.Logf("updates: applied %s -> %s (reconnect=%v)", from, to, reconnect)
 	return from, to, nil
 }
@@ -255,6 +256,7 @@ func (u *updates) recover() (result, from, to string, err error) {
 		u.srv.log.Logf("updates: recover %s (%s -> %s)", result, from, to)
 	}
 	if result == "rolled_back" {
+		setDisplayVersion(from)
 		u.set(func(st *svcproto.UpdateState) {
 			st.State, st.Installed, st.Version = svcproto.UpdateIdle, from, ""
 		})
@@ -279,6 +281,7 @@ func (u *updates) rollback() (from, to string, err error) {
 		})
 	})
 	if err == nil {
+		setDisplayVersion(from)
 		u.srv.log.Logf("updates: rolled back %s -> %s", to, from)
 		u.set(func(st *svcproto.UpdateState) {
 			st.State, st.Installed, st.Version = svcproto.UpdateIdle, from, ""
