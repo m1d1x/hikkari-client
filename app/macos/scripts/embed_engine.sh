@@ -118,5 +118,12 @@ fi
 if [ "$ENABLE_HARDENED_RUNTIME" = "YES" ]; then
   SIGN_ARGS="$SIGN_ARGS --options runtime"
 fi
+# Nested code the bundle seal covers must be signed before it. Debug builds
+# of current Flutter put the app's code in Contents/MacOS/<name>.debug.dylib,
+# which Xcode has not signed yet when this phase runs.
+for nested in "$APP_BUNDLE"/Contents/MacOS/*.dylib; do
+  [ -f "$nested" ] || continue
+  codesign --force --timestamp=none --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$nested"
+done
 # shellcheck disable=SC2086
 codesign $SIGN_ARGS "$APP_BUNDLE"

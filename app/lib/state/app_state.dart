@@ -23,6 +23,14 @@ const bool kRoutingDryRun = kDebugMode;
 /// false to wire to backend.
 const bool kEngineDryRun = kDebugMode;
 
+/// What the update banner shows in dry-run, to work on its design without a
+/// staged release: `flutter run --dart-define=DRY_UPDATE=mandatory` (or
+/// `none`). Default: an ordinary update is ready.
+const String kDryUpdate = String.fromEnvironment(
+  'DRY_UPDATE',
+  defaultValue: 'ready',
+);
+
 void _elog(String msg) {
   debugPrint('[engine${kEngineDryRun ? '/dry' : ''}] $msg');
 }
@@ -253,6 +261,7 @@ class AppState extends ChangeNotifier {
         _profiles = _dryProfiles;
         _health = _dryHealth;
         _cleanliness = _dryCleanliness;
+        _update = _dryUpdate;
         _uptime = {'dry-demo': _seedDryUptime()};
         _autoMode = false;
       } else {
@@ -296,9 +305,23 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// «Перезапустить»: the launcher takes over and the app exits. Returns
-  /// false (with [lastError] set) if the hand-over could not start.
+  /// «Перезапустить»: the service swaps the new version in and the app
+  /// exits (to be reopened as the new version). Returns false if the app
+  /// should stay: the hand-over could not start ([lastError] is set), or —
+  /// in dry-run — the restart was only played out: the banner goes away and
+  /// comes back a few seconds later, so it can be looked at again.
   Future<bool> restartToUpdate() async {
+    if (kEngineDryRun) {
+      _elog('restartToUpdate: dry-run, simulating the swap');
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      _update = UpdateStatus(state: 'idle', installed: _dryUpdate.version);
+      notifyListeners();
+      Timer(const Duration(seconds: 4), () {
+        _update = _dryUpdate;
+        notifyListeners();
+      });
+      return false;
+    }
     try {
       await _core.restartToUpdate();
       return true;
@@ -444,6 +467,21 @@ class AppState extends ChangeNotifier {
   );
   // Фейк «чистоты» для dry-run (debug): плашка рендерится с правдоподобными
   // моками, чтобы крутить UI без движка и включённого VPN.
+  static UpdateStatus get _dryUpdate => switch (kDryUpdate) {
+    'none' => const UpdateStatus(state: 'idle', installed: '1.0.3'),
+    'mandatory' => const UpdateStatus(
+      state: 'ready',
+      installed: '1.0.3',
+      version: '1.1.0',
+      mandatory: true,
+    ),
+    _ => const UpdateStatus(
+      state: 'ready',
+      installed: '1.0.3',
+      version: '1.0.4',
+    ),
+  };
+
   static const _dryCleanliness = ServerCleanliness(
     running: true,
     checked: true,
