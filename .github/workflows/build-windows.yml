@@ -300,6 +300,14 @@ jobs:
               --base-url "http://127.0.0.1:$port" --key "$tmp\ci.key" --key-id ci-1 --out "$tmp\channel"
           if ($LASTEXITCODE -ne 0) { throw "publish failed" }
           $server = Start-Process python -ArgumentList "-m","http.server","$port","--bind","127.0.0.1","--directory","$tmp\channel" -PassThru -WindowStyle Hidden
+          # Start-Process returns before the server listens: wait for the
+          # channel to answer instead of racing it.
+          $probe = "http://127.0.0.1:$port/stable/windows/latest.json"
+          $listening = $false
+          for ($i = 0; $i -lt 60 -and -not $listening; $i++) {
+            try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 $probe; $listening = $true } catch { Start-Sleep -Milliseconds 250 }
+          }
+          if (-not $listening) { throw "the test channel never came up at $probe" }
 
           function Invoke-Hikkari([string]$json) {
             $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(".", "hikkari-service", [System.IO.Pipes.PipeDirection]::InOut)
