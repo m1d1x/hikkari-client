@@ -525,13 +525,11 @@ jobs:
       - name: Deploy configuration
         env:
           DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
-          UPDATE_DIR: ${{ vars.HIKKARI_UPDATE_DIR }}
           HAS_SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY != '' }}
           HAS_KNOWN_HOSTS: ${{ secrets.HIKKARI_DEPLOY_KNOWN_HOSTS != '' }}
         run: |
           missing=()
           [[ -n "$DEPLOY_HOST" ]] || missing+=("variable HIKKARI_DEPLOY_HOST")
-          [[ -n "$UPDATE_DIR" ]] || missing+=("variable HIKKARI_UPDATE_DIR")
           [[ "$HAS_SSH_KEY" == true ]] || missing+=("secret HIKKARI_DEPLOY_SSH_KEY")
           [[ "$HAS_KNOWN_HOSTS" == true ]] || missing+=("secret HIKKARI_DEPLOY_KNOWN_HOSTS")
           if (( ${#missing[@]} )); then
@@ -560,5 +558,4 @@ jobs:
         env:
           HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
           HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
-          HIKKARI_UPDATE_DIR: ${{ vars.HIKKARI_UPDATE_DIR }}
         run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}"
