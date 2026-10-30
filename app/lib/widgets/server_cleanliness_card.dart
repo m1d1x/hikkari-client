@@ -79,7 +79,7 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
             hoverColor: color.withValues(alpha: 0.06),
             child: AnimatedSize(
               duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
+              curve: AppCurves.fastInSlowOut,
               alignment: Alignment.topCenter,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

@@ -6,13 +6,16 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_dialog.dart';
+import '../ui/nekko_dialog_action.dart';
+import '../ui/nekko_dialog_field.dart';
 import 'server_cleanliness_card.dart';
 import 'service_icon.dart';
 import 'sparkline.dart';
 
 /// Метаданные одного пингуемого сервиса. `samples` больше не генерируются
 /// локально — они подтягиваются из реальной истории проб на стороне движка
-/// (`AppState.serviceUptimeHistory()`, ключ `"<activeTag>|<name>"`), поэтому
+/// (`AppState.serviceUptimeHistory()`, ключ `"<profileId>|<name>"`), поэтому
 /// пережидают переоткрытие шита.
 class _ServicePing {
   final String name;
@@ -42,7 +45,7 @@ class _ServicePing {
   String get probeUrl => 'https://$host/generate_204';
 }
 
-/// Нормализует то, что юзер ввёл в диалог "свой эндпоинт", в чистый hostname:
+/// Нормализует то, что юзер ввёл в диалог "свой сайт", в чистый hostname:
 /// срезает схему (`https://`), путь/квери и завершающий слэш, приводит к
 /// нижнему регистру. `https://www.reddit.com/r/x` → `www.reddit.com`.
 String _hostFromInput(String raw) {
@@ -67,8 +70,7 @@ String _shortNameFromHost(String host) {
   if (parts.isEmpty) return host;
   // 1 часть (localhost / ip-огрызок) — как есть; 2 части (domain.tld) — domain;
   // 3+ (sub.domain.tld) — берём часть перед TLD (domain).
-  final String pick =
-      parts.length >= 2 ? parts[parts.length - 2] : parts.first;
+  final String pick = parts.length >= 2 ? parts[parts.length - 2] : parts.first;
   if (pick.isEmpty) return host;
   return pick[0].toUpperCase() + pick.substring(1);
 }
@@ -136,14 +138,16 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
     setState(() {
       for (final svc in custom) {
         final host = _hostFromUrl(svc.url);
-        _services.add(_ServicePing(
-          name: svc.name,
-          host: host,
-          icon: Icons.public,
-          color: Colors.grey,
-          custom: true,
-          faviconUrl: _faviconUrlForHost(host),
-        ));
+        _services.add(
+          _ServicePing(
+            name: svc.name,
+            host: host,
+            icon: Icons.public,
+            color: Colors.grey,
+            custom: true,
+            faviconUrl: _faviconUrlForHost(host),
+          ),
+        );
       }
     });
   }
@@ -205,113 +209,70 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
     // Свой эндпоинт удаляем сразу (юзер сам его добавил — меньше трения).
     // Встроенный сервис — с подтверждением, свайп легко зацепить случайно.
     if (svc.custom) return true;
-    final t = context.tokens;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: t.surface,
-        title: const Text('Убрать сервис?'),
-        content: Text(svc.name),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(
-              foregroundColor: t.bad,
-              overlayColor: Colors.transparent,
-            ),
-            child: const Text('Убрать'),
-          ),
-        ],
-      ),
+    return NekkoDialog.confirm(
+      context,
+      title: 'убрать сервис?',
+      message: svc.name,
+      confirmLabel: 'убрать',
     );
-    return ok ?? false;
   }
 
-  Future<void> _hostDialog(BuildContext context, {String initial = ''}) {
-    final t = context.tokens;
-    final ctrl = TextEditingController(text: initial);
-    return showDialog<String>(
+  Future<void> _hostDialog({String initial = ''}) async {
+    final raw = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: t.surface,
-        title: Text(initial.isEmpty ? 'Свой эндпоинт' : 'Редактировать'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          style: TextStyle(color: t.text, fontFamily: t.monoFamily),
-          decoration: const InputDecoration(hintText: 'example.com'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: Text(initial.isEmpty ? 'Добавить' : 'Сохранить'),
-          ),
-        ],
-      ),
-    ).then((raw) {
-      if (raw == null || raw.isEmpty || raw == initial) return;
-      if (!mounted) return;
-      final host = _hostFromInput(raw);
-      if (host.isEmpty) return;
-      final name = _shortNameFromHost(host);
-      final state = context.read<AppState>();
-      setState(() {
-        if (initial.isEmpty) {
-          _services.add(_ServicePing(
+      barrierColor: Colors.black54,
+      builder: (_) => _ServiceHostDialog(initial: initial),
+    );
+    if (!mounted || raw == null || raw == initial) return;
+    final host = _hostFromInput(raw);
+    if (host.isEmpty) return;
+    final name = _shortNameFromHost(host);
+    final state = context.read<AppState>();
+    setState(() {
+      if (initial.isEmpty) {
+        _services.add(
+          _ServicePing(
             name: name,
             host: host,
             icon: Icons.public,
             color: Colors.grey,
             custom: true,
             faviconUrl: _faviconUrlForHost(host),
-          ));
-          state.core.addCustomService(name, 'https://$host');
-        } else {
-          final i = _services.indexWhere((s) => s.host == initial);
-          if (i == -1) return;
-          final old = _services[i];
-          if (old.custom) {
-            state.core.removeCustomService(old.name);
-          }
-          final newName = old.custom ? _shortNameFromHost(host) : old.name;
-          _services[i] = _ServicePing(
-            name: newName,
-            host: host,
-            icon: old.icon,
-            color: old.color,
-            samples: old.samples,
-            custom: old.custom,
-            faviconUrl: old.custom ? _faviconUrlForHost(host) : old.faviconUrl,
-          );
-          if (old.custom) {
-            state.core.addCustomService(newName, 'https://$host');
-          }
-        }
-      });
+          ),
+        );
+        state.core.addCustomService(name, 'https://$host');
+      } else {
+        final i = _services.indexWhere((s) => s.host == initial);
+        if (i == -1) return;
+        final old = _services[i];
+        if (old.custom) state.core.removeCustomService(old.name);
+        final newName = old.custom ? name : old.name;
+        _services[i] = _ServicePing(
+          name: newName,
+          host: host,
+          icon: old.icon,
+          color: old.color,
+          samples: old.samples,
+          custom: old.custom,
+          faviconUrl: old.custom ? _faviconUrlForHost(host) : old.faviconUrl,
+        );
+        if (old.custom) state.core.addCustomService(newName, 'https://$host');
+      }
     });
   }
 
-  void _addCustomEndpoint() => _hostDialog(context);
+  void _addCustomEndpoint() => _hostDialog();
 
   // Тап по карточке — редактирование хоста. Разрешено для любого сервиса,
   // не только кастомных: юзер может захотеть перепривязать пинг встроенного
   // YouTube/Telegram на свой домен/зеркало.
-  void _editEndpoint(_ServicePing svc) =>
-      _hostDialog(context, initial: svc.host);
+  void _editEndpoint(_ServicePing svc) => _hostDialog(initial: svc.host);
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final s = context.watch<AppState>();
-    final tag = s.activeTag;
+    final tag = s.activeProfileId;
     final hasActive = tag != null;
 
     // Sync samples from backend history (read-only, no FFI calls).
@@ -387,16 +348,16 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
   }
 
   Widget _grabber(NekkoTokens t) => Padding(
-        padding: const EdgeInsets.only(top: 6, bottom: 2),
-        child: Container(
-          width: 36,
-          height: 4,
-          decoration: BoxDecoration(
-            color: t.borderStrong,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(top: 6, bottom: 2),
+    child: Container(
+      width: 36,
+      height: 4,
+      decoration: BoxDecoration(
+        color: t.borderStrong,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    ),
+  );
 
   Widget _header(NekkoTokens t) {
     return Padding(
@@ -406,30 +367,36 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text(
-                  'доступность сервисов',
-                  style: TextStyle(
-                    color: t.text,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    'доступность сервисов',
+                    style: TextStyle(
+                      color: t.text,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  widget.profileLabel,
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: 12,
-                    fontFamily: t.monoFamily,
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      widget.profileLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 12,
+                        fontFamily: t.monoFamily,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-            const Spacer(),
+            const SizedBox(width: 8),
             _addButton(t),
           ],
         ),
@@ -439,26 +406,11 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
 
   Widget _addButton(NekkoTokens t) {
     return Tooltip(
-      message: 'добавить свой эндпоинт',
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(t.radius),
-        child: InkWell(
-          onTap: _addCustomEndpoint,
-          mouseCursor: SystemMouseCursors.click,
-          borderRadius: BorderRadius.circular(t.radius),
-          hoverColor: t.primary.withValues(alpha: 0.10),
-          child: Container(
-            width: 34,
-            height: 34,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              border: Border.all(color: t.borderStrong),
-              borderRadius: BorderRadius.circular(t.radius),
-            ),
-            child: Icon(Icons.add, color: t.text, size: 18),
-          ),
-        ),
+      message: 'добавить свой сайт',
+      child: NekkoDialogAction(
+        icon: Icons.add,
+        enabled: true,
+        onPressed: _addCustomEndpoint,
       ),
     );
   }
@@ -471,8 +423,12 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
   //    Listener ждёт задержку, поэтому обычный тап/свайп до неё не доходят).
   // Отдельной иконки-хендла для реордера больше нет — не нагромождает
   // список ради опции, которой пользуются от случая к случаю.
-  Widget _serviceRow(NekkoTokens t, _ServicePing svc, int index,
-      {required Key key}) {
+  Widget _serviceRow(
+    NekkoTokens t,
+    _ServicePing svc,
+    int index, {
+    required Key key,
+  }) {
     // recentAvgRtt даёт стабильное "сейчас" (окно последних проб), avgRtt —
     // общий фон. -1 = нет успешных проб. Пустая история = ещё не пинговали.
     final noData = svc.samples.isEmpty;
@@ -504,95 +460,193 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
             alignment: Alignment.centerRight,
             child: Icon(Icons.delete_outline, color: t.bad, size: 20),
           ),
-          child: ColoredBox(
-              color: t.surface2,
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: () => _editEndpoint(svc),
-                  mouseCursor: SystemMouseCursors.click,
-                  // Ховер цветом самого сервиса, а не общим акцентом темы —
-                  // у карточек разные цвета (YouTube красный, Telegram синий
-                  // и т.д.), единый розовый primary смотрелся чужеродно.
-                  hoverColor: svc.color.withValues(alpha: 0.08),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 14, 10),
-                    child: Row(
+          child: _ServiceRowSurface(
+            onTap: () => _editEndpoint(svc),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 14, 10),
+              child: Row(
+                children: [
+                  ServiceIconBadge(
+                    icon: svc.icon,
+                    color: svc.color,
+                    faviconUrl: svc.faviconUrl,
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 96,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        ServiceIconBadge(
-                          icon: svc.icon,
-                          color: svc.color,
-                          faviconUrl: svc.faviconUrl,
-                        ),
-                        const SizedBox(width: 10),
-                        SizedBox(
-                          width: 96,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                svc.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: t.text,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                svc.host,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: t.textMuted,
-                                  fontSize: 11,
-                                  fontFamily: t.monoFamily,
-                                ),
-                              ),
-                            ],
+                        Text(
+                          svc.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: SizedBox(
-                            height: 30,
-                            child: Sparkline(
-                              samples: svc.samples,
-                              color: dead ? t.bad : t.ok,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        SizedBox(
-                          width: 52,
-                          child: Text(
-                            rttText,
-                            textAlign: TextAlign.right,
-                            // Обрезаем встроенный ascent/descent шрифта —
-                            // иначе "…"/"57 ms" визуально не совпадают по
-                            // вертикали с иконкой сервиса и графиком рядом.
-                            textHeightBehavior: const TextHeightBehavior(
-                              applyHeightToFirstAscent: false,
-                              applyHeightToLastDescent: false,
-                            ),
-                            style: TextStyle(
-                              color: dead
-                                  ? t.bad
-                                  : (noData ? t.textMuted : t.text),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              fontFamily: t.monoFamily,
-                            ),
+                        Text(
+                          svc.host,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 11,
+                            fontFamily: t.monoFamily,
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: SizedBox(
+                      height: 30,
+                      child: Sparkline(
+                        samples: svc.samples,
+                        color: dead ? t.bad : t.ok,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 52,
+                    child: Text(
+                      rttText,
+                      textAlign: TextAlign.right,
+                      // Обрезаем встроенный ascent/descent шрифта —
+                      // иначе "…"/"57 ms" визуально не совпадают по
+                      // вертикали с иконкой сервиса и графиком рядом.
+                      textHeightBehavior: const TextHeightBehavior(
+                        applyHeightToFirstAscent: false,
+                        applyHeightToLastDescent: false,
+                      ),
+                      style: TextStyle(
+                        color: dead ? t.bad : (noData ? t.textMuted : t.text),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        fontFamily: t.monoFamily,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The input controller belongs to the route and is disposed with it.
+class _ServiceHostDialog extends StatefulWidget {
+  final String initial;
+  const _ServiceHostDialog({required this.initial});
+
+  @override
+  State<_ServiceHostDialog> createState() => _ServiceHostDialogState();
+}
+
+class _ServiceHostDialogState extends State<_ServiceHostDialog> {
+  late final _controller = TextEditingController(text: widget.initial);
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final raw = _controller.text.trim();
+    if (_hostFromInput(raw).isEmpty) {
+      setState(() => _error = 'введите адрес сайта');
+      return;
+    }
+    Navigator.pop(context, raw);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return NekkoDialog(
+      title: widget.initial.isEmpty ? 'свой сайт' : 'редактировать сайт',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          NekkoDialogField(
+            controller: _controller,
+            hint: 'example.com',
+            onSubmitted: (_) => _submit(),
+            onChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: TextStyle(color: t.bad, fontSize: 12)),
+          ],
+        ],
+      ),
+      actions: Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 6,
+        runSpacing: 6,
+        children: [
+          NekkoDialogAction(
+            label: 'отмена',
+            enabled: true,
+            onPressed: () => Navigator.pop(context),
+          ),
+          NekkoDialogAction(
+            label: widget.initial.isEmpty ? 'добавить' : 'сохранить',
+            enabled: true,
+            primary: true,
+            onPressed: _submit,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ServiceRowSurface extends StatefulWidget {
+  final VoidCallback onTap;
+  final Widget child;
+  const _ServiceRowSurface({required this.onTap, required this.child});
+
+  @override
+  State<_ServiceRowSurface> createState() => _ServiceRowSurfaceState();
+}
+
+class _ServiceRowSurfaceState extends State<_ServiceRowSurface> {
+  bool _hovered = false;
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return AnimatedContainer(
+      duration: AppDurations.hover,
+      curve: AppCurves.hover,
+      color: _hovered || _focused
+          ? Color.alphaBlend(t.primary.withValues(alpha: 0.08), t.surface2)
+          : t.surface2,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: widget.onTap,
+          onHover: (value) => setState(() => _hovered = value),
+          onFocusChange: (value) => setState(() => _focused = value),
+          mouseCursor: SystemMouseCursors.click,
+          hoverColor: Colors.transparent,
+          focusColor: Colors.transparent,
+          child: widget.child,
         ),
       ),
     );

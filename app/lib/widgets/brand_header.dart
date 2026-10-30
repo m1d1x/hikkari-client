@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import '../ui/nekko_segmented.dart';
 import '../theme/tokens.dart';
 import 'route_section.dart';
+import 'service_presets.dart';
 
 /// Compact top-right action. The old brand/IP header was intentionally removed
 /// so the home screen starts with the product itself, not chrome.
@@ -44,10 +46,10 @@ class BrandHeader extends StatelessWidget {
   }
 
   Color _statusColor(NekkoTokens t, String status) => switch (status) {
-        'connecting' => t.warn,
-        'broken' => t.bad,
-        _ => t.textMuted,
-      };
+    'connecting' => t.warn,
+    'broken' => t.bad,
+    _ => t.textMuted,
+  };
 
   Future<void> _showSettings(BuildContext context, AppState state) {
     final t = context.tokens;
@@ -67,9 +69,18 @@ class BrandHeader extends StatelessWidget {
   }
 }
 
-class _SettingsSheet extends StatelessWidget {
+class _SettingsSheet extends StatefulWidget {
   final VoidCallback onOpenLogs;
   const _SettingsSheet({required this.onOpenLogs});
+
+  @override
+  State<_SettingsSheet> createState() => _SettingsSheetState();
+}
+
+class _SettingsSheetState extends State<_SettingsSheet> {
+  String? _hint;
+  int _hintVersion = 0;
+  bool _logsHover = false;
 
   @override
   Widget build(BuildContext context) {
@@ -105,37 +116,133 @@ class _SettingsSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 18),
-              Text(
-                'настройки',
-                style: TextStyle(
-                  color: t.text,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              Center(child: Text('настройки', style: t.sectionTitle)),
               const SizedBox(height: 14),
-              _InfoRow(label: 'статус', value: statusLabel),
-              _InfoRow(label: 'ip', value: ip.isEmpty ? '-' : ip),
-              if (msg.isNotEmpty) _InfoRow(label: 'сообщение', value: msg),
+              _InfoRow(label: 'статус', value: statusLabel, loading: false),
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 88,
+                    child: Text(
+                      'движок',
+                      style: TextStyle(
+                        color: t.textMuted,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: IgnorePointer(
+                      ignoring: context.watch<AppState>().switchingEngine,
+                      child: Opacity(
+                        opacity: context.watch<AppState>().switchingEngine
+                            ? 0.6
+                            : 1,
+                        child: NekkoSegmented(
+                          selected: context.watch<AppState>().engineId,
+                          onChanged: (id) =>
+                              context.read<AppState>().switchEngine(id),
+                          segments: const [
+                            NekkoSegment('sing-box', 'sing-box'),
+                            NekkoSegment('xray', 'xray'),
+                          ],
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (context.watch<AppState>().lastError case final error?)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    error,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: t.bad, fontSize: 11),
+                  ),
+                ),
+              const SizedBox(height: 5),
+              _InfoRow(
+                label: 'ip',
+                value: ip,
+                loading: context.watch<AppState>().switchingEngine,
+              ),
+              _InfoRow(
+                label: 'сообщение',
+                value: msg,
+                loading: context.watch<AppState>().switchingEngine,
+              ),
               const SizedBox(height: 16),
               Divider(height: 1, color: t.border),
               const SizedBox(height: 16),
-              const RouteSettingsSection(),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.of(context).maybePop();
-                  onOpenLogs();
-                },
-                icon: const Icon(Icons.terminal, size: 16),
-                label: const Text('логи'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: t.text,
-                  side: BorderSide(color: t.borderStrong),
-                  shape: RoundedRectangleBorder(
+              RouteSettingsSection(onHintChanged: _setHint),
+              const SizedBox(height: 10),
+              PresetSettingsSection(onHintChanged: _setHint),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 42,
+                child: AnimatedSwitcher(
+                  duration: AppDurations.fast,
+                  switchInCurve: AppCurves.fastInSlowOut,
+                  switchOutCurve: Curves.easeIn,
+                  child: _hint == null
+                      ? SizedBox.shrink(key: ValueKey('hint-${_hintVersion}'))
+                      : Align(
+                          key: ValueKey('hint-${_hintVersion}'),
+                          alignment: Alignment.topLeft,
+                          child: Text(
+                            _hint!,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: t.textMuted,
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              MouseRegion(
+                cursor: SystemMouseCursors.click,
+                onEnter: (_) => setState(() => _logsHover = true),
+                onExit: (_) => setState(() => _logsHover = false),
+                child: AnimatedContainer(
+                  duration: AppDurations.fast,
+                  curve: AppCurves.fastInSlowOut,
+                  decoration: BoxDecoration(
+                    color: _logsHover ? t.surface2 : Colors.transparent,
                     borderRadius: BorderRadius.circular(t.radius),
+                    border: Border.all(
+                      color: _logsHover
+                          ? t.primary.withValues(alpha: .55)
+                          : t.borderStrong,
+                    ),
                   ),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).maybePop();
+                      widget.onOpenLogs();
+                    },
+                    icon: const Icon(Icons.terminal, size: 16),
+                    label: const Text('логи'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: t.text,
+                      backgroundColor: Colors.transparent,
+                      side: BorderSide.none,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(t.radius),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -144,13 +251,26 @@ class _SettingsSheet extends StatelessWidget {
       ),
     );
   }
+
+  void _setHint(String? hint) {
+    if (_hint == hint) return;
+    setState(() {
+      _hint = hint;
+      _hintVersion++;
+    });
+  }
 }
 
 class _InfoRow extends StatelessWidget {
   final String label;
   final String value;
+  final bool loading;
 
-  const _InfoRow({required this.label, required this.value});
+  const _InfoRow({
+    required this.label,
+    required this.value,
+    required this.loading,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -164,20 +284,130 @@ class _InfoRow extends StatelessWidget {
             width: 88,
             child: Text(
               label,
-              style: TextStyle(color: t.textMuted, fontSize: 12),
+              style: TextStyle(
+                color: t.textMuted,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
           Expanded(
-            child: SelectableText(
-              value,
-              style: TextStyle(
-                color: t.text,
-                fontSize: 12,
-                fontFamily: t.monoFamily,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: SizedBox(
+                height: 20,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 190),
+                    reverseDuration: const Duration(milliseconds: 140),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    layoutBuilder: (current, previous) => Stack(
+                      alignment: Alignment.centerLeft,
+                      children: [...previous, if (current != null) current],
+                    ),
+                    transitionBuilder: (child, animation) => ClipRect(
+                      child: SizeTransition(
+                        sizeFactor: animation,
+                        axis: Axis.horizontal,
+                        alignment: Alignment.centerLeft,
+                        child: FadeTransition(opacity: animation, child: child),
+                      ),
+                    ),
+                    child: loading
+                        ? const _LoadingDots(key: ValueKey('loading'))
+                        : value.isEmpty
+                        ? Text(
+                            '—',
+                            key: const ValueKey('empty'),
+                            style: TextStyle(
+                              color: t.textFaint,
+                              fontSize: 13,
+                              fontFamily: t.monoFamily,
+                            ),
+                          )
+                        : SelectableText(
+                            value,
+                            key: ValueKey(value),
+                            style: TextStyle(
+                              color: t.text,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: t.monoFamily,
+                            ),
+                          ),
+                  ),
+                ),
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LoadingDots extends StatefulWidget {
+  const _LoadingDots({super.key});
+
+  @override
+  State<_LoadingDots> createState() => _LoadingDotsState();
+}
+
+class _LoadingDotsState extends State<_LoadingDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return SizedBox(
+      key: const ValueKey('loading'),
+      width: 22,
+      height: 16,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Transform.scale(
+          scale: .8,
+          alignment: Alignment.centerLeft,
+          child: SizedBox(
+            width: 28,
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (_, __) => Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: List.generate(3, (index) {
+                  final phase = (_controller.value - index / 3) % 1;
+                  final pulse = 1 - (phase * 2 - 1).abs();
+                  return Opacity(
+                    opacity: .25 + .75 * pulse,
+                    child: Transform.scale(
+                      scale: .65 + .75 * pulse,
+                      child: Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: t.text,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -224,15 +454,10 @@ class _HoverIconState extends State<_HoverIcon> {
           child: Padding(
             padding: widget.padding,
             child: TweenAnimationBuilder<Color?>(
-              tween: ColorTween(
-                end: _hover ? widget.hoverColor : widget.color,
-              ),
+              tween: ColorTween(end: _hover ? widget.hoverColor : widget.color),
               duration: const Duration(milliseconds: 150),
-              builder: (_, color, __) => Icon(
-                widget.icon,
-                size: widget.size,
-                color: color,
-              ),
+              builder: (_, color, __) =>
+                  Icon(widget.icon, size: widget.size, color: color),
             ),
           ),
         ),

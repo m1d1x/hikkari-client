@@ -19,47 +19,41 @@ import (
 	"strings"
 	"sync"
 
-	"NekkoVPN/core/clashapi"
 	"NekkoVPN/core/cleanliness"
-	"NekkoVPN/core/configfile"
+	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/logging"
+	"NekkoVPN/core/presets"
 	"NekkoVPN/core/profile"
+	"NekkoVPN/core/profile/legacy"
+	"NekkoVPN/core/routing"
 	"NekkoVPN/core/uptime"
-	"NekkoVPN/core/diag"
-	"NekkoVPN/core/vpn"
 )
-
-// VPNFactory builds the platform-appropriate Manager given the base directory
-// and a logger. The default factory (used by Init) constructs a ProcessManager
-// — on desktop that runs sing-box.exe as a child process; on mobile we'll
-// inject a libbox-backed Manager via InitWithVPN instead.
-type VPNFactory func(baseDir string, log vpn.LineLogger) vpn.Manager
-
-// DefaultVPNFactory is the desktop ProcessManager factory.
-func DefaultVPNFactory(baseDir string, log vpn.LineLogger) vpn.Manager {
-	return vpn.NewProcessManager(
-		filepath.Join(baseDir, vpn.BinaryName),
-		filepath.Join(baseDir, "config.json"),
-		baseDir,
-		log,
-	)
-}
 
 // Core holds every long-lived component the engine needs. Construct with New(),
 // then call Init() (or InitWithVPN for custom platforms) before any typed
 // method or Call().
 type Core struct {
-	mu      sync.Mutex
-	baseDir string
-	ctx     context.Context
-	cancel  context.CancelFunc
+	mu               sync.Mutex
+	stopping         bool
+	workerDone       chan struct{}
+	operationMu      sync.Mutex
+	presets          *presets.Manager
+	routingPreview   bool
+	routingApp       *routingApplication
+	presetDone       chan struct{}
+	subscriptionDone chan struct{}
+	subscriptionWake chan struct{}
+	presetState      presets.State
+	baseDir          string
+	ctx              context.Context
+	cancel           context.CancelFunc
 
-	logger   *logging.Logger
-	configs  *configfile.Store
-	profiles *profile.Store
-	vpn         vpn.Manager
+	logger      *logging.Logger
+	routing     *routing.Store
+	profiles    *profile.Store
+	backend     engine.Backend
 	health      *health.Checker
 	cleanliness *cleanliness.Checker
 	uptime      *uptime.Tracker
@@ -67,7 +61,6 @@ type Core struct {
 	// (YouTube, Discord, …) measured through the active profile — kept
 	// separate from the per-profile uptime tracker above.
 	serviceUptime *uptime.Tracker
-	diag          *diag.Runner
 
 	customServicesMu   sync.RWMutex
 	customServicesPath string
@@ -79,14 +72,17 @@ func New() *Core { return &Core{} }
 
 // Init wires up the engine for the default (desktop) platform.
 func (c *Core) Init(baseDir string) error {
-	return c.InitWithVPN(baseDir, DefaultVPNFactory)
+	return c.InitWithEngine(baseDir, DefaultEngineFactory)
 }
 
-// InitWithVPN wires up the engine using the given VPN factory. Mobile builds
-// pass a factory that returns a libbox-backed Manager.
-func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
+// InitWithEngine injects a complete engine adapter. UI and application services
+// use this same contract for every engine; only the composition root chooses one.
+func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.stopping {
+		return errors.New("предыдущий движок ещё останавливается")
+	}
 	if baseDir == "" {
 		return errors.New("api.Core: baseDir is required")
 	}
@@ -101,21 +97,69 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 		return errors.New("api.Core: already initialised with a different baseDir")
 	}
 	if factory == nil {
-		factory = DefaultVPNFactory
+		factory = DefaultEngineFactory
 	}
 
 	c.baseDir = baseDir
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		c.cancel()
+		c.ctx = nil
+		return err
+	}
 	c.logger = logging.New(filepath.Join(baseDir, "nekko-vpn.log"))
-	c.configs = configfile.New(filepath.Join(baseDir, "config.json"))
+	backend, err := factory(baseDir, c.logger)
+	if err != nil {
+		c.cancel()
+		c.ctx = nil
+		_ = c.logger.Close()
+		return err
+	}
+	if backend == nil {
+		c.cancel()
+		c.ctx = nil
+		_ = c.logger.Close()
+		return errors.New("engine factory returned no adapter")
+	}
+	c.backend = backend
+	c.routing = routing.New(filepath.Join(baseDir, "routing.json"))
+	if c.routingPreview {
+		c.routing = routing.NewMemory()
+	}
+	manual, err := c.routing.ReadRouting()
+	if err != nil {
+		c.cancel()
+		c.ctx = nil
+		_ = c.logger.Close()
+		return err
+	}
+	c.routingApp = newRoutingApplication(manual, c.routingPreview)
+	presetPath := filepath.Join(baseDir, "routing-presets.json")
+	if c.routingPreview {
+		presetPath = ""
+	}
+	presetContext := c.ctx
+	c.presets, err = presets.New(presetPath, presets.Options{
+		URL:       presetEndpoint("HIKKARI_PRESET_CATALOG_URL", presets.CatalogURL),
+		EventsURL: presetEndpoint("HIKKARI_PRESET_EVENTS_URL", presets.EventsURL),
+		Transact: func(old, next presets.State, persist func() error) error {
+			return c.commitPresetState(presetContext, old, next, persist)
+		},
+	})
+	if err != nil {
+		c.cancel()
+		c.ctx = nil
+		_ = c.logger.Close()
+		return err
+	}
+	c.presetState = c.presets.Snapshot().State
 	c.profiles = profile.New(filepath.Join(baseDir, "profiles.json"))
-	c.vpn = factory(baseDir, c.logger)
-	c.diag = diag.New(c.logger, filepath.Join(baseDir, "config.json"))
 	c.health = health.New(
 		filepath.Join(baseDir, "direct-ip.txt"),
 		c.logger,
 		c.vpnHosts,
+		c.backend.IsRunning,
 	)
 	c.uptime = uptime.New(filepath.Join(baseDir, "uptime-history.json"))
 	c.serviceUptime = uptime.New(filepath.Join(baseDir, "service-uptime-history.json"))
@@ -132,27 +176,53 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 		if ip == "" {
 			return ""
 		}
-		return ip + "|" + c.activeTagProvider()
+		return ip + "|" + c.activeProfileProvider()
 	})
 
 	c.health.LoadDirectIP()
 	c.ensureProfiles()
-	c.ensureSelectorConfig()
+	configurationErr := c.ensureEngineConfiguration()
+	initialEffective, initialErr := c.effectiveRouting(manual)
+	if initialErr != nil {
+		c.publishRouting("failed", initialErr, manual, manual, false)
+	} else {
+		if configurationErr != nil {
+			c.publishRouting("failed", configurationErr, manual, initialEffective, false)
+		} else {
+			c.publishRouting("idle", nil, manual, initialEffective, false)
+		}
+	}
 	c.uptime.Load()
 	c.serviceUptime.Load()
 	c.customServicesPath = filepath.Join(baseDir, "custom-services.json")
 	c.loadCustomServices()
 	geoip.Load(filepath.Join(baseDir, "geoip-cache.json"))
-	cl := clashapi.New("")
-	probe := uptime.NewLiveProbe(cl)
-	go c.uptime.Run(c.ctx, c.uptimeHosts, probe)
-	go c.serviceUptime.RunServices(c.ctx, c.activeTagProvider, c.allServiceTargets, cl)
-	// Health probing is the slow path (HTTPS to api.ipify.org). Running it
-	// in the background keeps FFI calls instant — UI threads on the other
-	// side of the FFI boundary must never wait on network.
-	go c.health.Run(c.ctx)
-	go c.cleanliness.Run(c.ctx)
-	go c.diag.Baseline()
+	c.migrateServiceHistory()
+	probe := uptime.NewLiveProbe(c.backend)
+	// Join every background observer before this Core can be initialized again.
+	// Their providers refer to Core fields, so cancellation alone is insufficient.
+	ctx, tracker, serviceTracker, checker, cleanliness, backend := c.ctx, c.uptime, c.serviceUptime, c.health, c.cleanliness, c.backend
+	var workers sync.WaitGroup
+	run := func(fn func()) { workers.Add(1); go func() { defer workers.Done(); fn() }() }
+	run(func() { tracker.Run(ctx, c.uptimeHosts, probe) })
+	run(func() { serviceTracker.RunServices(ctx, c.activeProfileProvider, c.allServiceTargets, backend) })
+	run(func() { checker.Run(ctx) })
+	run(func() { cleanliness.Run(ctx) })
+	if !c.routingPreview {
+		run(backend.Baseline)
+	}
+	c.workerDone = make(chan struct{})
+	workerDone := c.workerDone
+	go func() { workers.Wait(); close(workerDone) }()
+	presetManager, presetCtx := c.presets, c.ctx
+	c.presetDone = make(chan struct{})
+	presetDone := c.presetDone
+	go func() { defer close(presetDone); presetManager.Run(presetCtx) }()
+
+	c.subscriptionWake = make(chan struct{}, 1)
+	c.subscriptionDone = make(chan struct{})
+	syncContext, syncWake, syncDone := c.ctx, c.subscriptionWake, c.subscriptionDone
+	go func() { defer close(syncDone); c.runSubscriptions(syncContext, syncWake) }()
 
 	c.logger.Logf("=== api.Core init, baseDir=%s ===", baseDir)
 	c.logEnvironment()
@@ -162,18 +232,53 @@ func (c *Core) InitWithVPN(baseDir string, factory VPNFactory) error {
 // Shutdown cancels background loops, stops the VPN core, and closes the log.
 // Safe to call more than once.
 func (c *Core) Shutdown() error {
+	c.operationMu.Lock()
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	if c.stopping {
+		c.mu.Unlock()
+		c.operationMu.Unlock()
+		return errors.New("движок уже останавливается")
+	}
 	if c.ctx == nil {
+		c.mu.Unlock()
+		c.operationMu.Unlock()
 		return nil
 	}
+	c.stopping = true
 	c.logger.Logf("=== api.Core shutdown ===")
+	var stopErr error
+	if !c.routingPreview {
+		stopErr = c.backend.Stop()
+	}
+	if stopErr == nil {
+		stopErr = c.flushRoutingLocked()
+	}
+	c.cancelRoutingTimer()
 	c.cancel()
-	_ = c.vpn.Stop()
-	_ = c.logger.Close()
-	c.ctx = nil
-	c.cancel = nil
-	return nil
+	if stopErr != nil {
+		c.logger.Logf("shutdown: engine stop/flush failed: %v", stopErr)
+	}
+	logger := c.logger
+	subscriptionDone, presetDone, workerDone := c.subscriptionDone, c.presetDone, c.workerDone
+	c.subscriptionWake = nil
+	c.ctx, c.cancel = nil, nil
+	c.mu.Unlock()
+	c.operationMu.Unlock()
+	// Canceled callbacks may still need operationMu to finish rollback.
+	if presetDone != nil {
+		<-presetDone
+	}
+	if subscriptionDone != nil {
+		<-subscriptionDone
+	}
+	if workerDone != nil {
+		<-workerDone
+	}
+	_ = logger.Close()
+	c.mu.Lock()
+	c.stopping = false
+	c.mu.Unlock()
+	return stopErr
 }
 
 // BaseDir reports the directory the engine was initialised with.
@@ -186,36 +291,58 @@ func (c *Core) BaseDir() string {
 // ensureProfiles seeds profiles.json from the current config.json on first
 // run, so the UI always has at least one profile to render.
 func (c *Core) ensureProfiles() {
-	if c.profiles.Exists() {
+	pf, err := c.profiles.Read()
+	if err != nil {
+		c.logger.Logf("profiles: read failed: %v", err)
 		return
 	}
-	cfg, err := c.configs.Read()
+	changed := false
+	if !c.profiles.Exists() {
+		stored, err := legacy.ReadConfig(filepath.Join(c.baseDir, "config.json"))
+		if err != nil {
+			c.logger.Logf("profiles: legacy import failed: %v", err)
+		} else if len(stored) > 0 {
+			pf.Profiles = stored
+			pf.Active = stored[0].Name
+			changed = true
+		}
+	}
+
+	for i, p := range pf.Profiles {
+		if p.Connection != nil {
+			continue
+		}
+		normalized, err := legacy.Normalize(p)
+		if err != nil {
+			c.logger.Logf("profiles: could not normalize %q: %v", p.Name, err)
+			continue
+		}
+		pf.Profiles[i] = normalized
+		changed = true
+	}
+	if changed {
+		if err := c.profiles.Write(pf); err != nil {
+			c.logger.Logf("profiles: migration failed: %v", err)
+		}
+	}
+}
+
+func (c *Core) ensureEngineConfiguration() error {
+	if err := c.rebuildConfig(); err != nil {
+		c.logger.Logf("engine: configuration failed: %v", err)
+		return err
+	}
+	return nil
+}
+
+func (c *Core) migrateServiceHistory() {
+	pf, err := c.profiles.Read()
 	if err != nil {
 		return
 	}
-	eps, _ := cfg["endpoints"].([]interface{})
-	if len(eps) == 0 {
-		return
-	}
-	ep, ok := eps[0].(map[string]interface{})
-	if !ok {
-		return
-	}
-	_ = c.profiles.SeedFromEndpoint(ep)
-}
-
-// ensureSelectorConfig migrates pre-selector config.json layouts to the
-// new shape on first start after the refactor. After this returns, the
-// outbounds list contains every known profile + a "proxy" selector, and
-// route.final / dns.detour point at it.
-func (c *Core) ensureSelectorConfig() {
-	if !c.configs.NeedsSelectorMigration() {
-		return
-	}
-	c.logger.Logf("config: migrating to selector layout")
-	if err := c.rebuildConfig(); err != nil {
-		c.logger.Logf("config: migration failed: %v", err)
-	}
+	scopes := legacy.ServiceScopes(pf.Profiles)
+	c.serviceUptime.MigrateScopes(scopes)
+	c.serviceUptime.Save()
 }
 
 // vpnHosts feeds the health checker the list of server IPs it must never
@@ -246,21 +373,21 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 	for _, p := range pf.Profiles {
 		host, port := profile.PeerHostPort(p)
 		out = append(out, uptime.HostEntry{
-			Profile: p.Name,
-			Tag:     profile.ProfileTag(p.Name),
-			Host:    host,
-			Port:    port,
+			Profile:   p.Name,
+			ProfileID: p.Name,
+			Host:      host,
+			Port:      port,
 		})
 	}
 	return out
 }
 
-func (c *Core) activeTagProvider() string {
+func (c *Core) activeProfileProvider() string {
 	active, err := c.profiles.Active()
 	if err != nil || active == "" {
 		return ""
 	}
-	return profile.ProfileTag(active)
+	return active
 }
 
 func (c *Core) allServiceTargets() []uptime.ServiceTarget {

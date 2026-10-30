@@ -1,13 +1,16 @@
 // Package uptime maintains a rolling per-profile history of probe samples.
-// The actual probe (Clash API delay through the proxy when the engine is up,
+// The actual probe (engine adapter delay through the proxy when the engine is up,
 // TCP-connect fallback when it isn't) is injected via the Probe interface
-// so the tracker stays decoupled from sing-box specifics.
+// so the tracker stays decoupled from native engine specifics.
 package uptime
 
 import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -23,10 +26,10 @@ type Sample struct {
 const (
 	// PingInterval is the *per-profile* window — every profile is probed
 	// once inside it. Each probe is a fresh connection through the tunnel
-	// (Clash API delay), so it competes with user traffic for the same
+	// (engine adapter delay), so it competes with user traffic for the same
 	// transport; 30s keeps the graph useful at a sixth of the old load.
 	PingInterval = 30 * time.Second
-	// PingTimeoutMs is the per-probe deadline. Clash API uses this for the
+	// PingTimeoutMs is the per-probe deadline. engine adapter uses this for the
 	// HTTP delay request; the TCP fallback uses the same value.
 	PingTimeoutMs = 2000
 	// HistoryMax is the rolling window length (≈2.5 h at 30s intervals).
@@ -39,13 +42,13 @@ const (
 type HostProvider func() []HostEntry
 
 // HostEntry pairs a profile name with everything the Probe needs to reach
-// it. Tag drives the Clash-API path (when the engine is up); Host + Port
+// it. ProfileID drives the engine probe (when the engine is up); Host + Port
 // drive the TCP fallback (when it isn't).
 type HostEntry struct {
-	Profile string // human name (key in history map)
-	Tag     string // sing-box outbound/endpoint tag, e.g. "p-main"
-	Host    string // server IP / hostname
-	Port    int    // server port (TCP fallback target)
+	Profile   string // human name (key in history map)
+	ProfileID string // opaque profile ID, independent of native tags
+	Host      string // server IP / hostname
+	Port      int    // server port (TCP fallback target)
 }
 
 // Probe is the abstraction over the live/fallback probe pair. Implementations
@@ -60,8 +63,9 @@ type Probe interface {
 type Tracker struct {
 	path string
 
-	mu      sync.RWMutex
-	history map[string][]Sample
+	mu           sync.RWMutex
+	history      map[string][]Sample
+	scopeVersion int
 }
 
 func New(path string) *Tracker {
@@ -74,8 +78,18 @@ func (t *Tracker) Load() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.history = map[string][]Sample{}
+	t.scopeVersion = 0
 	raw, err := os.ReadFile(t.path)
 	if err != nil {
+		return
+	}
+	var versioned struct {
+		Version int                 `json:"version"`
+		History map[string][]Sample `json:"history"`
+	}
+	if json.Unmarshal(raw, &versioned) == nil && versioned.Version > 0 && versioned.History != nil {
+		t.scopeVersion = versioned.Version
+		t.history = versioned.History
 		return
 	}
 	var m map[string][]Sample
@@ -87,12 +101,32 @@ func (t *Tracker) Load() {
 // Save writes the current history to disk.
 func (t *Tracker) Save() {
 	t.mu.RLock()
-	raw, err := json.MarshalIndent(t.history, "", "  ")
+	var value interface{} = t.history
+	if t.scopeVersion > 0 {
+		value = struct {
+			Version int                 `json:"version"`
+			History map[string][]Sample `json:"history"`
+		}{t.scopeVersion, t.history}
+	}
+	raw, err := json.MarshalIndent(value, "", "  ")
 	t.mu.RUnlock()
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(t.path, raw, 0644)
+	f, err := os.CreateTemp(filepath.Dir(t.path), ".uptime-*")
+	if err != nil {
+		return
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	if _, err = f.Write(raw); err != nil {
+		_ = f.Close()
+		return
+	}
+	if err = f.Close(); err != nil {
+		return
+	}
+	_ = os.Rename(name, t.path)
 }
 
 // Snapshot returns a deep copy of the history for handing off to the UI.
@@ -201,15 +235,14 @@ func (t *Tracker) record(profile string, ok bool, rtt int) {
 	t.history[profile] = hist
 }
 
-// ServiceTarget describes one service probed in the background via Clash API.
+// ServiceTarget describes one service probed in the background via engine adapter.
 type ServiceTarget struct {
 	Name string // e.g. "YouTube"
 	URL  string // e.g. "https://youtube.com/generate_204"
 }
 
-// ActiveTagProvider returns the current active profile's sing-box tag (e.g.
-// "p-main"). If no profile is active or VPN is off, returns "".
-type ActiveTagProvider func() string
+// ActiveProfileProvider returns the current active profile ID. If no profile is active or VPN is off, returns "".
+type ActiveProfileProvider func() string
 
 // ServiceProbe measures one service target through a given proxy tag.
 type ServiceProbe interface {
@@ -217,7 +250,7 @@ type ServiceProbe interface {
 }
 
 // RunServices is a blocking background loop that probes each service
-// through the active profile's Clash API delay endpoint. One round costs a
+// through the active profile's engine adapter delay endpoint. One round costs a
 // new tunnel connection per service (8 by default), so the background
 // cadence is slow; the UI's explicit ping (Core.PingServices) covers the
 // "check now" case.
@@ -231,7 +264,7 @@ const serviceFirstPing = 30 * time.Second
 // Called every tick so additions/removals are picked up without restart.
 type ServiceTargetProvider func() []ServiceTarget
 
-func (t *Tracker) RunServices(ctx context.Context, activeTag ActiveTagProvider, targets ServiceTargetProvider, probe ServiceProbe) {
+func (t *Tracker) RunServices(ctx context.Context, activeTag ActiveProfileProvider, targets ServiceTargetProvider, probe ServiceProbe) {
 	wait := serviceFirstPing
 	for {
 		select {
@@ -264,4 +297,29 @@ func (t *Tracker) RunServices(ctx context.Context, activeTag ActiveTagProvider, 
 		wg.Wait()
 		t.Save()
 	}
+}
+
+// MigrateScopes converts a legacy service-history file in one pass. Versioning
+// prevents a profile literally named "p-server" from being mistaken for the old
+// native tag of "server" after the next application restart.
+func (t *Tracker) MigrateScopes(scopes map[string]string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.scopeVersion >= 1 {
+		return
+	}
+	migrated := make(map[string][]Sample, len(t.history))
+	for key, samples := range t.history {
+		scope, service, ok := strings.Cut(key, "|")
+		if replacement, exists := scopes[scope]; ok && exists {
+			key = replacement + "|" + service
+		}
+		migrated[key] = append(migrated[key], samples...)
+	}
+	for key, samples := range migrated {
+		sort.SliceStable(samples, func(i, j int) bool { return samples[i].Ts < samples[j].Ts })
+		migrated[key] = samples
+	}
+	t.history = migrated
+	t.scopeVersion = 1
 }

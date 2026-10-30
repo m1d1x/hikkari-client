@@ -52,6 +52,7 @@ config.json
 profiles.json
 uptime-history.json
 direct-ip.txt
+subscription-device-id
 
 # === Env / Secrets (никогда не коммитим) ===
 .env
@@ -73,3 +74,15 @@ ipqs-key.txt
 .claude/settings.local.json
 .omc/state/
 .omc/logs/
+
+# === Локальные планы проекта ===
+/plans/
+routing-presets.json
+
+# Xray private runtime configuration
+xray-transport.json
+
+# Standalone Xray runtime state
+xray.json
+xray-runtime.json
+.cursor/

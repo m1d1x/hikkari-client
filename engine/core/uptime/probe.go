@@ -11,11 +11,9 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
-
-	"NekkoVPN/core/clashapi"
 )
 
-// LiveProbe is the production Probe implementation. It tries the Clash API
+// LiveProbe is the production Probe implementation. It tries the engine adapter
 // end-to-end delay first (real signal: did a request from this machine
 // reach a foreign HTTP endpoint through this proxy in time); falls back to
 // a TCP-connect probe when the engine isn't up (weak signal: is the host
@@ -25,8 +23,12 @@ import (
 // has one sparkline per profile. In a future pass we could tag samples
 // with their source so the UI can colour them differently, but that's a
 // scope for later.
+type ProbeEngine interface {
+	IsRunning() bool
+	Delay(profileID, url string, timeoutMs int) (int, error)
+}
 type LiveProbe struct {
-	Clash *clashapi.Client
+	Engine ProbeEngine
 
 	// icmpMu guards lazy init / re-init of icmpConn. icmpConn is a
 	// long-lived raw socket reused across probes — opening one per call
@@ -37,22 +39,22 @@ type LiveProbe struct {
 	icmpSeq  uint32
 }
 
-// NewLiveProbe wires the probe to a Clash client.
-func NewLiveProbe(c *clashapi.Client) *LiveProbe { return &LiveProbe{Clash: c} }
+// NewLiveProbe wires the probe to the selected engine adapter.
+func NewLiveProbe(e ProbeEngine) *LiveProbe { return &LiveProbe{Engine: e} }
 
 // Run delegates to the live probe when the engine answers, otherwise to
 // the TCP fallback, and as a last resort falls back to ICMP echo so
 // UDP-only services (WireGuard, Hysteria2) still show "alive" on the
 // uptime graph for inactive profiles.
 func (p *LiveProbe) Run(ctx context.Context, h HostEntry) (bool, int) {
-	if p.Clash != nil && p.Clash.IsAlive() && h.Tag != "" {
+	if p.Engine != nil && p.Engine.IsRunning() && h.ProfileID != "" {
 		// Once the engine is up, every dial from this process is
-		// captured by sing-box's TUN. TCP/ICMP fallbacks then measure
-		// how fast sing-box ACKs the local SYN — not whether the remote
+		// captured by the engine's TUN. TCP/ICMP fallbacks then measure
+		// how fast the engine ACKs the local SYN — not whether the remote
 		// is alive — and consistently report ~2ms even for dead hosts.
-		// Trust only the Clash signal here; an error means the tunnel
+		// Trust only the adapter signal here; an error means the tunnel
 		// to that profile isn't usable, so we honestly report "down".
-		ms, err := p.Clash.Delay(h.Tag, "", PingTimeoutMs)
+		ms, err := p.Engine.Delay(h.ProfileID, "", PingTimeoutMs)
 		if err != nil {
 			return false, 0
 		}

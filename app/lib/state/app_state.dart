@@ -1,16 +1,18 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
 import '../core/envelope.dart';
 import '../core/models.dart';
+import '../core/routing_presets.dart';
+import '../core/routing_document.dart';
 import '../core/nekkobox_core.dart';
 
-/// Dev-only kill switch for the routing pipeline. When true, every routing
-/// mutation (master toggle, mode flip, list edit) updates Dart state only
-/// and logs to the debug console — the engine is NOT touched, so an external
-/// sing-box session keeps running. Flip back to false to wire to backend.
+/// Debug routing uses the real Go domain/queue with an in-memory store and
+/// preview executor. It never configures or restarts a native engine.
 const bool kRoutingDryRun = kDebugMode;
 
 /// Dev-only kill switch for everything else that would poke the real engine:
@@ -20,10 +22,6 @@ const bool kRoutingDryRun = kDebugMode;
 /// connect/disconnect flapping while iterating on the frontend. Flip back to
 /// false to wire to backend.
 const bool kEngineDryRun = kDebugMode;
-
-void _rlog(String msg) {
-  debugPrint('[routing${kRoutingDryRun ? '/dry' : ''}] $msg');
-}
 
 void _elog(String msg) {
   debugPrint('[engine${kEngineDryRun ? '/dry' : ''}] $msg');
@@ -37,13 +35,22 @@ void _elog(String msg) {
 ///
 /// Polling cadence:
 ///   - health: every 1s (matches the Svelte refresh loop)
-///   - profiles / whitelist: on demand (loaded once at boot + after writes)
+///   - profiles: every 1s from the local snapshot; subscription HTTP runs in Go
 ///   - uptime history: every 2s when its widget is on screen (later — wired
 ///     by the widget itself via [refreshUptime]).
 class AppState extends ChangeNotifier {
   final NekkoboxCore _core;
   NekkoboxCore get core => _core;
   Timer? _healthTimer;
+  Timer? _presetsTimer;
+  RoutingPresets? _presets;
+  RoutingPresets? get presets => _presets;
+  bool _presetsLoading = false;
+  bool _presetsBusy = false;
+  bool get presetsBusy => _presetsBusy;
+  bool _disposed = false;
+  String? _presetError;
+  String? get presetError => _presetError;
 
   HealthInfo? _health;
   List<ProfileInfo> _profiles = const [];
@@ -57,6 +64,7 @@ class AppState extends ChangeNotifier {
   // resolving" (show a spinner) from "resolved, no country" (show nothing):
   // a profile that isn't yet a key in the map while this is true is loading.
   bool _resolvingCountries = false;
+  bool _countryRefreshPending = false;
   RoutingState _routing = const RoutingState.initial();
   Map<String, List<PingSample>> _uptime = const {};
   Map<String, List<PingSample>> _serviceUptime = const {};
@@ -65,8 +73,11 @@ class AppState extends ChangeNotifier {
   // True between a routing list edit and the engine restart that picks it up.
   // The UI uses this for the "применяется… / применено" badge near the mode row.
   RoutingApplyStatus _routingApply = RoutingApplyStatus.idle;
-  Timer? _routingDebounce;
-  Timer? _routingAppliedFade;
+  int _routingSequence = -1;
+  int _routingEpoch = 0;
+  int _routingAppliedAt = 0;
+  String? _routingApplyError;
+  String? get routingApplyError => _routingApplyError;
   bool _autoMode = false;
   String? _lastError;
   // Timestamp of the last VPN start / profile switch. The tunnel needs a
@@ -76,18 +87,72 @@ class AppState extends ChangeNotifier {
   // "checking" instead of "down" during this window.
   DateTime? _connectedSince;
 
-  AppState(this._core);
+  final String? _baseDir;
+  final bool _routingPreview;
+  String _engineId;
+  bool _switchingEngine = false;
+  String get engineId => _engineId;
+  bool get switchingEngine => _switchingEngine;
+
+  AppState(
+    this._core, {
+    this._baseDir,
+    this._routingPreview = false,
+    this._engineId = 'sing-box',
+  });
+
+  Future<void> switchEngine(String id) async {
+    if (_switchingEngine || id == _engineId || _baseDir == null) return;
+    final startedAt = DateTime.now();
+    _switchingEngine = true;
+    _routingEpoch++;
+    _lastError = null;
+    notifyListeners();
+    try {
+      await _core.stopVpnAsync();
+      _healthTimer?.cancel();
+      _presetsTimer?.cancel();
+      _healthTimer = null;
+      _presetsTimer = null;
+      _core.shutdown();
+      _core.init(_baseDir, engineId: id, routingPreview: _routingPreview);
+      _engineId = id;
+      String? validationError;
+      try {
+        await _core.validateConfiguration();
+      } catch (e) {
+        validationError = 'Движок $id не поддерживает текущую политику: $e';
+      }
+      await File(
+        '$_baseDir/engine-selection.json',
+      ).writeAsString(jsonEncode({'engineId': id}));
+      await start();
+      if (validationError != null) _lastError = validationError;
+    } catch (e) {
+      _lastError = 'Не удалось переключить движок: $e';
+    } finally {
+      const minimumIndicatorTime = Duration(milliseconds: 650);
+      final elapsed = DateTime.now().difference(startedAt);
+      if (elapsed < minimumIndicatorTime) {
+        await Future<void>.delayed(minimumIndicatorTime - elapsed);
+      }
+      _switchingEngine = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
 
   // ----- getters -----
   HealthInfo? get health => _health;
   List<ProfileInfo> get profiles => _profiles;
   Map<String, String> get profileCountries => _profileCountries;
+
   /// Resolved lowercase ISO country code for [name], or null if not resolved
   /// (either still loading, or the host couldn't be geolocated).
   String? countryCodeFor(String name) {
     final code = _profileCountries[name];
     return (code == null || code.isEmpty) ? null : code;
   }
+
   /// True when [name]'s flag is still being resolved in the background — the
   /// badge shows a spinner in this window, then the flag bounces in once the
   /// code lands. A profile already present in [_profileCountries] (even with
@@ -102,7 +167,14 @@ class AppState extends ChangeNotifier {
   /// refreshed each tick alongside health (the engine read is instant).
   ServerCleanliness get cleanliness => _cleanliness;
   bool get busy => _busy;
-  RoutingApplyStatus get routingApply => _routingApply;
+  RoutingApplyStatus get routingApply {
+    if (_routingApply == RoutingApplyStatus.applied &&
+        DateTime.now().millisecondsSinceEpoch - _routingAppliedAt > 6000) {
+      return RoutingApplyStatus.idle;
+    }
+    return _routingApply;
+  }
+
   bool get autoMode => _autoMode;
   String? get lastError => _lastError;
   bool get isRunning => _health?.running ?? false;
@@ -114,6 +186,7 @@ class AppState extends ChangeNotifier {
     if (since == null) return false;
     return DateTime.now().difference(since) < const Duration(seconds: 10);
   }
+
   String? get activeProfileName {
     for (final p in _profiles) {
       if (p.active) return p.name;
@@ -121,28 +194,22 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
-  /// Sing-box proxy tag of the active profile, or null when there is no
-  /// active profile. Matches the per-profile tag the engine's uptime tracker
-  /// uses (`profile.ProfileTag` = `"p-<name>"`), so service pings and their
-  /// history land under the same routed member the VPN is currently using.
-  String? get activeTag {
-    final name = activeProfileName;
-    return name == null ? null : 'p-$name';
-  }
+  /// Stable profile ID; native engine tags belong to the backend adapter.
+  String? get activeProfileId => activeProfileName;
 
   // ----- service ping (on-demand, sheet-driven) -----
 
-  /// Probes each service through the active profile's Clash-API delay
-  /// endpoint and records the outcome in the engine's service uptime history.
+  /// Probes each service through the active profile's engine
+  /// adapter and records the outcome in the engine's service uptime history.
   /// Thin pass-through to [NekkoboxCore.pingServices] — widgets don't hold a
   /// core handle. Returns an empty list (never throws) when the engine can't
   /// be reached, so the sheet degrades gracefully.
   Future<List<ServicePingResultDto>> pingServices(
-    String activeTag,
+    String profileId,
     List<ServicePingTargetDto> services,
   ) async {
     try {
-      return await _core.pingServices(activeTag, services);
+      return await _core.pingServices(profileId, services);
     } on NekkoboxError catch (e) {
       _elog('pingServices failed: ${e.message}');
       return const [];
@@ -153,7 +220,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Snapshot of the whole service-ping history, keyed by
-  /// `"<activeTag>|<service name>"`. Pass-through to the core; returns an
+  /// `"<profileId>|<service name>"`. Pass-through to the core; returns an
   /// empty map on failure.
   Future<Map<String, List<PingSample>>> serviceUptimeHistory() async {
     try {
@@ -172,14 +239,9 @@ class AppState extends ChangeNotifier {
   /// notifyListeners() updates everything that depends on either.
   Future<void> start() async {
     await _safeReload(() async {
-      // In dry-run we deliberately skip reading routing from the engine —
-      // any leftover live config shouldn't taint the UI we're tweaking.
-      if (!kRoutingDryRun) {
-        _routing = await _core.routing();
-      } else {
-        _rlog('start: dry-run, routing kept at ${_routing.mode.wire} '
-            'enabled=${_routing.enabled}');
-      }
+      _routingEpoch++;
+      _routingSequence = -1;
+      await refreshRoutingState();
       if (kEngineDryRun) {
         _elog('start: dry-run, seeding fake profiles/health');
         _profiles = _dryProfiles;
@@ -194,10 +256,99 @@ class AppState extends ChangeNotifier {
         _autoMode = await _core.autoMode();
       }
     });
-    _healthTimer ??=
-        Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    _healthTimer ??= Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     _refreshProfileCountries();
+    await refreshPresetState();
+    if (_disposed) return;
+    _presetsTimer ??= Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => refreshPresetState(),
+    );
   }
+
+  /// Refresh silently after focus/resume; no sync errors enter lastError.
+  Future<void> onAppResumed() async {
+    if (_disposed || kEngineDryRun) return;
+    try {
+      await _core.subscriptionWake();
+    } catch (e) {
+      _elog('subscription wake failed: $e');
+    }
+    if (!_disposed) await _tick();
+  }
+
+  Future<void> _reloadSyncedProfiles() async {
+    if (_busy || _disposed || _switchingEngine) return;
+    try {
+      final profiles = await _core.profiles();
+      final autoMode = await _core.autoMode();
+      if (_disposed || _busy || _switchingEngine) return;
+      final endpoints = {for (final p in _profiles) p.name: p.endpoint};
+      final topologyChanged =
+          profiles.length != _profiles.length ||
+          profiles.any((p) => endpoints[p.name] != p.endpoint);
+      _profiles = profiles;
+      _autoMode = autoMode;
+      if (topologyChanged) {
+        _profileCountries = {
+          for (final p in profiles)
+            if (endpoints[p.name] == p.endpoint &&
+                _profileCountries.containsKey(p.name))
+              p.name: _profileCountries[p.name]!,
+        };
+        _refreshProfileCountries();
+      }
+    } catch (e) {
+      _elog('background profiles reload failed: $e');
+    }
+  }
+
+  Future<void> refreshPresetState() async {
+    if (_presetsLoading || _disposed) return;
+    _presetsLoading = true;
+    try {
+      final value = await _core.routingPresets();
+      if (!_disposed) {
+        if (_presets == null) _presetError = null;
+        _presets = value;
+        notifyListeners();
+      }
+    } catch (e) {
+      if (!_disposed) {
+        _presetError = e.toString();
+        notifyListeners();
+      }
+    } finally {
+      _presetsLoading = false;
+    }
+  }
+
+  Future<void> _changePreset(Future<void> Function() change) async {
+    if (_presetsBusy || _disposed) return;
+    _presetsBusy = true;
+    _presetError = null;
+    notifyListeners();
+    try {
+      await change();
+      await refreshPresetState();
+    } catch (e) {
+      _presetError = e.toString();
+    } finally {
+      await refreshRoutingState();
+      _presetsBusy = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<void> setPresetSync(bool on) =>
+      _changePreset(() => _core.setPresetSync(on));
+  Future<void> setServicePreset(String id, bool on) {
+    final mode = _routing.mode;
+    return _changePreset(() => _core.setServicePreset(mode, id, on));
+  }
+
+  Future<void> refreshPresets() =>
+      _changePreset(() => _core.refreshRoutingPresets());
 
   /// Resolves each profile's country (for the flag badge) in the background.
   /// Fire-and-forget on purpose: [NekkoboxCore.profileCountries] can take a
@@ -207,18 +358,33 @@ class AppState extends ChangeNotifier {
   /// show a spinner where the flag will land. Skipped entirely in dry-run.
   /// Degrades to leaving the previous map in place on failure.
   Future<void> _refreshProfileCountries() async {
-    if (kEngineDryRun) return;
+    if (kEngineDryRun || _disposed) return;
+    if (_resolvingCountries) {
+      _countryRefreshPending = true;
+      return;
+    }
+    final endpoints = {for (final p in _profiles) p.name: p.endpoint};
     _resolvingCountries = true;
     notifyListeners();
     try {
-      _profileCountries = await _core.profileCountries();
+      final countries = await _core.profileCountries();
+      if (_disposed) return;
+      _profileCountries = {
+        for (final p in _profiles)
+          if (endpoints[p.name] == p.endpoint && countries.containsKey(p.name))
+            p.name: countries[p.name]!,
+      };
     } on NekkoboxError catch (e) {
       _elog('profileCountries failed: ${e.message}');
     } catch (e) {
       _elog('profileCountries failed: $e');
     } finally {
       _resolvingCountries = false;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
+      if (_countryRefreshPending && !_disposed) {
+        _countryRefreshPending = false;
+        unawaited(_refreshProfileCountries());
+      }
     }
   }
 
@@ -265,7 +431,8 @@ class AppState extends ChangeNotifier {
         severity: 'high',
         title:
             'Хостинг/датацентр IP — Cloudflare Turnstile почти всегда челленджит такие',
-        fix: 'Перейти на residential или mobile выход — это устраняет главную причину фрода.',
+        fix:
+            'Перейти на residential или mobile выход — это устраняет главную причину фрода.',
       ),
       CleanlinessReason(
         severity: 'high',
@@ -340,10 +507,9 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
-    _routingDebounce?.cancel();
-    _routingDebounce = null;
-    _routingAppliedFade?.cancel();
-    _routingAppliedFade = null;
+    _disposed = true;
+    _presetsTimer?.cancel();
+    _routingEpoch++;
     _healthTimer?.cancel();
     _healthTimer = null;
     super.dispose();
@@ -386,9 +552,9 @@ class AppState extends ChangeNotifier {
       }
       await _core.startVpnAsync();
       _connectedSince = DateTime.now();
-      // sing-box can exit asynchronously a few hundred ms after Start (e.g.
+      // The engine can exit asynchronously a few hundred ms after Start (e.g.
       // TUN access denied). Give it a moment, then sample health — if the
-      // core died, pull the last FATAL/[singbox.err] line from the log so
+      // core died, pull the last FATAL/[engine.stderr] line from the log so
       // the UI shows something more actionable than just "выкл".
       await Future<void>.delayed(const Duration(milliseconds: 700));
       _health = await _core.health();
@@ -402,7 +568,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Extracts the most recent fatal-ish line from the engine log. We look
-  /// for sing-box's own FATAL marker first, then any [singbox.err] pipe
+  /// for a fatal/error severity marker first, then any [engine.stderr] pipe
   /// line; falls back to the last "failed" line. Returns null if nothing
   /// useful is in the tail (so the caller doesn't overwrite a null error
   /// with garbage).
@@ -410,10 +576,13 @@ class AppState extends ChangeNotifier {
     final lines = tail.split('\n');
     String? lastErr;
     for (final raw in lines) {
-      // Strip ANSI color codes that sing-box embeds (e.g. \x1b[31mFATAL\x1b[0m).
+      // Strip ANSI color codes embedded by a native engine (e.g. \x1b[31mFATAL\x1b[0m).
       final line = raw.replaceAll(RegExp(r'\x1B\[[0-9;]*[A-Za-z]'), '');
       if (line.contains('FATAL') ||
-          (line.contains('[singbox.err]') && !line.contains(' INFO ') && !line.contains(' DEBUG ')) ||
+          line.contains(' ERROR ') ||
+          (line.contains('[engine.stderr]') &&
+              !line.contains(' INFO ') &&
+              !line.contains(' DEBUG ')) ||
           line.contains('failed to start') ||
           line.contains('Access is denied')) {
         lastErr = line.trim();
@@ -498,8 +667,13 @@ class AppState extends ChangeNotifier {
       return;
     }
     await _withBusy(() async {
-      await _core.deleteProfile(name);
-      _profiles = await _core.profiles();
+      try {
+        await _core.deleteProfile(name);
+      } finally {
+        _profiles = await _core.profiles();
+        _autoMode = await _core.autoMode();
+        _health = await _core.health();
+      }
     });
   }
 
@@ -534,7 +708,7 @@ class AppState extends ChangeNotifier {
           ..._dryProfiles,
           ProfileInfo(
             name: name!,
-            label: 'Импортированный профиль ${_dryProfiles.length + 1}',
+            label: 'импортированный профиль ${_dryProfiles.length + 1}',
             active: false,
             endpoint: uri,
             protocol: 'vless',
@@ -562,7 +736,12 @@ class AppState extends ChangeNotifier {
       final p = _profiles.firstWhere(
         (p) => p.name == name,
         orElse: () => ProfileInfo(
-            name: name, label: name, active: false, endpoint: '', protocol: 'vless'),
+          name: name,
+          label: name,
+          active: false,
+          endpoint: '',
+          protocol: 'vless',
+        ),
       );
       final proto = p.protocol.isEmpty ? 'vless' : p.protocol;
       final host = p.endpoint.isEmpty ? 'demo.example.com:443' : p.endpoint;
@@ -580,120 +759,73 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // Debounce window for batching list edits — paste of 50 domains from
-  // Telegram triggers one engine restart, not 50.
-  static const Duration _routingApplyDelay = Duration(milliseconds: 1500);
-
-  Future<void> addRule(String category, String value) async {
-    _rlog('addRule mode=${_routing.mode.wire} cat=$category value="$value"');
-    final list = _routing.active.withAdded(category, value);
-    _routing = _routing.mode == RoutingMode.bypass
-        ? _routing.copyWith(bypass: list)
-        : _routing.copyWith(proxy: list);
-    notifyListeners();
-    if (!kRoutingDryRun) {
-      await _withBusy(() async {
-        await _core.addRule(_routing.mode, category, value);
-        _routing = await _core.routing();
-      });
-    }
-    _markRoutingDirty();
-  }
-
-  Future<void> removeRule(String category, String value) async {
-    _rlog('removeRule mode=${_routing.mode.wire} cat=$category value="$value"');
-    final list = _routing.active.withRemoved(category, value);
-    _routing = _routing.mode == RoutingMode.bypass
-        ? _routing.copyWith(bypass: list)
-        : _routing.copyWith(proxy: list);
-    notifyListeners();
-    if (!kRoutingDryRun) {
-      await _withBusy(() async {
-        await _core.removeRule(_routing.mode, category, value);
-        _routing = await _core.routing();
-      });
-    }
-    _markRoutingDirty();
-  }
-
-  Future<void> setRoutingEnabled(bool on) async {
-    if (_routing.enabled == on) return;
-    _rlog('setRoutingEnabled $on');
-    _routing = _routing.copyWith(enabled: on);
-    notifyListeners();
-    if (!kRoutingDryRun) {
-      await _withBusy(() async {
-        await _core.setRoutingEnabled(on);
-        _routing = await _core.routing();
-      });
-    }
-    _markRoutingDirty();
-  }
-
-  Future<void> setRoutingMode(RoutingMode mode) async {
-    if (_routing.mode == mode) return;
-    _rlog('setRoutingMode ${mode.wire}');
-    _routing = _routing.copyWith(mode: mode);
-    notifyListeners();
-    if (!kRoutingDryRun) {
-      await _withBusy(() async {
-        await _core.setRoutingMode(mode);
-        _routing = await _core.routing();
-      });
-    }
-    _markRoutingDirty();
-  }
-
-  /// Forces the pending routing changes through right now (cancels the
-  /// debounce window).
-  Future<void> flushRouting() async {
-    _routingDebounce?.cancel();
-    _routingDebounce = null;
-    if (_routingApply != RoutingApplyStatus.pending) return;
-    _rlog('flushRouting (manual)');
-    await _applyRoutingNow();
-  }
-
-  void _markRoutingDirty() {
-    _routingApply = RoutingApplyStatus.pending;
-    notifyListeners();
-    _routingDebounce?.cancel();
-    _routingDebounce = Timer(_routingApplyDelay, () {
-      _routingDebounce = null;
-      unawaited(_applyRoutingNow());
-    });
-  }
-
-  // How long the "обновлено" badge stays visible before fading back to idle.
-  static const Duration _routingAppliedFadeAfter = Duration(seconds: 6);
-
-  Future<void> _applyRoutingNow() async {
-    _routingAppliedFade?.cancel();
-    _routingAppliedFade = null;
-
-    _routingApply = RoutingApplyStatus.applying;
-    notifyListeners();
-    _rlog('apply: restartVpn (isRunning=$isRunning)');
-    if (!kRoutingDryRun) {
-      await _withBusy(() async {
-        if (isRunning) await _core.restartVpnAsync();
-      });
-    } else {
-      // Simulate the restart latency so the UI status flow feels real.
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-    }
-    _routingApply = RoutingApplyStatus.applied;
-    notifyListeners();
-    _rlog('apply: done');
-
-    // Auto-fade "обновлено" back to idle so it doesn't sit there forever.
-    _routingAppliedFade = Timer(_routingAppliedFadeAfter, () {
-      _routingAppliedFade = null;
-      if (_routingApply != RoutingApplyStatus.applied) return;
-      _routingApply = RoutingApplyStatus.idle;
+  Future<void> refreshRoutingState() async {
+    final epoch = _routingEpoch;
+    try {
+      final snapshot = await _core.routingStatus();
+      if (_disposed ||
+          epoch != _routingEpoch ||
+          snapshot.sequence < _routingSequence) {
+        return;
+      }
+      _routingSequence = snapshot.sequence;
+      _routing = snapshot.manual;
+      _routingApply = switch (snapshot.status) {
+        RoutingApplicationPhase.idle => RoutingApplyStatus.idle,
+        RoutingApplicationPhase.pending => RoutingApplyStatus.pending,
+        RoutingApplicationPhase.applying => RoutingApplyStatus.applying,
+        RoutingApplicationPhase.applied => RoutingApplyStatus.applied,
+        RoutingApplicationPhase.failed => RoutingApplyStatus.failed,
+        RoutingApplicationPhase.preview => RoutingApplyStatus.preview,
+      };
+      _routingAppliedAt = snapshot.appliedAt;
+      _routingApplyError = snapshot.error.isEmpty ? null : snapshot.error;
+      if (_routingApplyError != null) _lastError = _routingApplyError;
       notifyListeners();
-    });
+    } catch (error) {
+      if (!_disposed && epoch == _routingEpoch) {
+        _lastError = 'Не удалось прочитать маршрутизацию: $error';
+        notifyListeners();
+      }
+    }
   }
+
+  // Every command is delivered, including concurrent edits. Routing commands
+  // do not share _withBusy, which intentionally skips other busy UI actions.
+  Future<void> _routingCommand(Future<void> Function() command) async {
+    final epoch = _routingEpoch;
+    if (_switchingEngine) {
+      _lastError = 'Дождитесь переключения движка';
+      notifyListeners();
+      return;
+    }
+    try {
+      await command();
+      if (!_disposed && epoch == _routingEpoch) _lastError = null;
+    } catch (error) {
+      if (!_disposed && epoch == _routingEpoch) _lastError = error.toString();
+    } finally {
+      if (!_disposed && epoch == _routingEpoch) await refreshRoutingState();
+    }
+  }
+
+  Future<void> addRule(String category, String value) {
+    final mode = _routing.mode;
+    return _routingCommand(() => _core.addRule(mode, category, value));
+  }
+
+  Future<void> removeRule(String category, String value) {
+    final mode = _routing.mode;
+    return _routingCommand(() => _core.removeRule(mode, category, value));
+  }
+
+  Future<void> setRoutingEnabled(bool on) =>
+      _routingCommand(() => _core.setRoutingEnabled(on));
+
+  Future<void> setRoutingMode(RoutingMode mode) =>
+      _routingCommand(() => _core.setRoutingMode(mode));
+
+  Future<void> flushRouting() => _routingCommand(_core.flushRouting);
 
   /// Refreshes uptime history. Cheap-ish (one FFI call + dart-side copies);
   /// call it from the widget that displays uptime, on its own timer.
@@ -719,13 +851,17 @@ class AppState extends ChangeNotifier {
   bool _ticking = false;
 
   Future<void> _tick() async {
-    if (kEngineDryRun) {
-      _growDryUptime();
-      return;
-    }
-    if (_ticking) return;
+    if (_ticking || _disposed || _switchingEngine) return;
     _ticking = true;
     try {
+      await refreshRoutingState();
+      if (_disposed) return;
+      if (kEngineDryRun) {
+        _growDryUptime();
+        return;
+      }
+      await _reloadSyncedProfiles();
+      if (_disposed) return;
       await _safeReload(() async {
         _health = await _core.health();
         _uptime = await _core.uptimeHistory();
@@ -773,4 +909,4 @@ class AppState extends ChangeNotifier {
 /// - [pending] — list was just edited; debounce timer is running.
 /// - [applying] — engine restart in flight.
 /// - [applied] — last change has been picked up by the engine.
-enum RoutingApplyStatus { idle, pending, applying, applied }
+enum RoutingApplyStatus { idle, pending, applying, applied, failed, preview }

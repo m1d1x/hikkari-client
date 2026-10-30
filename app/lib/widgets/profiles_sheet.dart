@@ -21,6 +21,7 @@ class ProfilesSheet extends StatefulWidget {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 1000),
       backgroundColor: t.surface,
       barrierColor: Colors.black54,
       shape: RoundedRectangleBorder(
@@ -65,10 +66,13 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
     final matched = q.isEmpty
         ? List.of(all)
         : all
-            .where((p) =>
-                p.label.toLowerCase().contains(q) ||
-                p.name.toLowerCase().contains(q))
-            .toList();
+              .where(
+                (p) =>
+                    p.label.toLowerCase().contains(q) ||
+                    p.name.toLowerCase().contains(q) ||
+                    (p.subscription?.title.toLowerCase().contains(q) ?? false),
+              )
+              .toList();
 
     // Sort: active profile pinned to top, then alive profiles by latest
     // recent-avg rtt (lowest first), dead/unknown at the bottom. Keeps the
@@ -96,26 +100,39 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
       if (ka.$1 != kb.$1) return ka.$1.compareTo(kb.$1);
       return ka.$2.compareTo(kb.$2);
     });
-    final filtered = matched;
+    final List<Object> entries = [];
+    final seenSubscriptions = <String>{};
+    for (final profile in matched) {
+      final subscription = profile.subscription;
+      if (subscription == null || subscription.id.isEmpty) {
+        entries.add(profile);
+      } else if (seenSubscriptions.add(subscription.id)) {
+        entries.add(
+          _SubscriptionGroup(
+            subscription,
+            matched
+                .where((p) => p.subscription?.id == subscription.id)
+                .toList(),
+          ),
+        );
+      }
+    }
 
     return DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.6,
+      initialChildSize: 0.9,
       minChildSize: 0.35,
-      maxChildSize: 0.92,
+      maxChildSize: 0.95,
       builder: (ctx, scrollCtrl) {
         return Column(
           children: [
             _grabber(t),
             _header(t, all.length),
-            if (all.isNotEmpty) ...[
-              _search(t),
-              const SizedBox(height: 10),
-            ],
+            if (all.isNotEmpty) ...[_search(t), const SizedBox(height: 10)],
             Expanded(
               child: all.isEmpty
                   ? _emptyState(t)
-                  : filtered.isEmpty
+                  : entries.isEmpty
                   ? Center(
                       child: Text(
                         'ничего не найдено',
@@ -125,9 +142,21 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
                   : ListView.builder(
                       controller: scrollCtrl,
                       padding: const EdgeInsets.only(bottom: 16),
-                      itemCount: filtered.length,
+                      itemCount: entries.length,
                       itemBuilder: (_, i) {
-                        final p = filtered[i];
+                        final entry = entries[i];
+                        if (entry is _SubscriptionGroup) {
+                          return _SubscriptionCard(
+                            key: ValueKey('subscription-${entry.info.id}'),
+                            info: entry.info,
+                            profiles: entry.profiles,
+                            expandedProfile: _expanded,
+                            onToggleProfile: (name) => setState(() {
+                              _expanded = _expanded == name ? null : name;
+                            }),
+                          );
+                        }
+                        final p = entry as ProfileInfo;
                         return ProfileTile(
                           key: ValueKey(p.name),
                           profile: p,
@@ -146,16 +175,16 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
   }
 
   Widget _grabber(NekkoTokens t) => Padding(
-        padding: const EdgeInsets.only(top: 6, bottom: 2),
-        child: Container(
-          width: 36,
-          height: 4,
-          decoration: BoxDecoration(
-            color: t.borderStrong,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(top: 6, bottom: 2),
+    child: Container(
+      width: 36,
+      height: 4,
+      decoration: BoxDecoration(
+        color: t.borderStrong,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    ),
+  );
 
   // Пусто = ни одного профиля. Большая понятная кнопка-плашка в стиле
   // активного профиля (тёмная заливка + primary-аутлайн), чтобы сразу
@@ -177,7 +206,10 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
               hoverColor: t.primary.withValues(alpha: 0.06),
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 26),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 26,
+                ),
                 decoration: BoxDecoration(
                   border: Border.all(color: t.primary.withValues(alpha: 0.32)),
                   borderRadius: BorderRadius.circular(t.radiusLg),
@@ -196,17 +228,15 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
                       child: Icon(Icons.add, color: t.primary, size: 30),
                     ),
                     const SizedBox(height: 14),
-                    Text(
-                      'добавить профиль',
-                      style: t.sectionTitle,
-                    ),
+                    Text('добавить профиль', style: t.sectionTitle),
                     const SizedBox(height: 6),
                     Text(
-                      'вставьте HTTPS-подписку — каждый сервер добавится отдельно,\nили ссылку vless://, trojan://, ss://, hysteria2://',
+                      'вставьте HTTPS-подписку = каждый сервер добавится отдельно,\nили ключ vless://, trojan://, ss://, hysteria2://',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: NekkoTokens.sizeBody,
+                        fontWeight: FontWeight.w600,
                         height: 1.4,
                       ),
                     ),
@@ -250,21 +280,18 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
               ],
             ),
             const SizedBox(width: 12),
-            _autoChip(t, s),
-            const Spacer(),
             _addProfileButton(t),
+            const Spacer(),
+            _autoChip(t, s),
           ],
         ),
       ),
     );
   }
 
-  // Заметная "+" вместо мелкого иконбаттона. Бордер + квадрат как у add-
-  // кнопки в маршрутизации, чтобы кнопки в приложении выглядели одного
-  // семейства.
   Widget _addProfileButton(NekkoTokens t) {
     return Tooltip(
-      message: 'импорт по ссылке',
+      message: 'добавить профиль',
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(t.radius),
@@ -274,14 +301,30 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
           borderRadius: BorderRadius.circular(t.radius),
           hoverColor: t.primary.withValues(alpha: 0.10),
           child: Container(
-            width: 34,
             height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             alignment: Alignment.center,
             decoration: BoxDecoration(
               border: Border.all(color: t.borderStrong),
               borderRadius: BorderRadius.circular(t.radius),
             ),
-            child: Icon(Icons.add, color: t.text, size: 20),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Icon(Icons.add, color: t.text, size: 14),
+                const SizedBox(width: 5),
+                Text(
+                  'добавить',
+                  style: TextStyle(
+                    color: t.text,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: t.monoFamily,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -306,8 +349,8 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
         // одной только смене иконки было не считать, что режим активен.
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          height: 30,
-          padding: const EdgeInsets.fromLTRB(9, 0, 13, 0),
+          height: 34,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: on ? const Color(0xFF1A1014) : Colors.transparent,
@@ -351,4 +394,186 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
       ),
     );
   }
+}
+
+class _SubscriptionGroup {
+  final SubscriptionInfo info;
+  final List<ProfileInfo> profiles;
+
+  const _SubscriptionGroup(this.info, this.profiles);
+}
+
+class _SubscriptionCard extends StatelessWidget {
+  final SubscriptionInfo info;
+  final List<ProfileInfo> profiles;
+  final String? expandedProfile;
+  final ValueChanged<String> onToggleProfile;
+
+  const _SubscriptionCard({
+    super.key,
+    required this.info,
+    required this.profiles,
+    required this.expandedProfile,
+    required this.onToggleProfile,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final title = info.title.isEmpty ? 'подписка' : info.title.toLowerCase();
+    final expires = info.expiresAt > 0
+        ? DateTime.fromMillisecondsSinceEpoch(info.expiresAt * 1000)
+        : null;
+    final remaining = expires?.difference(DateTime.now());
+    final daysLeft = remaining == null
+        ? null
+        : remaining.isNegative
+        ? -1
+        : (remaining.inSeconds + Duration.secondsPerDay - 1) ~/
+              Duration.secondsPerDay;
+    final periodLabel = daysLeft == null
+        ? ''
+        : daysLeft < 0
+        ? 'истекла'
+        : daysLeft == 0
+        ? 'меньше дня'
+        : _daysLabel(daysLeft);
+    final usedBytes = info.uploadBytes + info.downloadBytes;
+    final trafficLabel = info.totalBytes > 0
+        ? '${_formatGigabytes((info.totalBytes - usedBytes).clamp(0, info.totalBytes))} ГБ осталось'
+        : usedBytes > 0
+        ? '${_formatGigabytes(usedBytes)} ГБ'
+        : '';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: CustomPaint(
+        foregroundPainter: _DashedSubscriptionBorder(
+          color: t.borderStrong,
+          radius: t.radiusLg,
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 13, 24, 7),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: t.text,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (periodLabel.isNotEmpty)
+                    Expanded(
+                      child: Center(
+                        child: Text(
+                          periodLabel,
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (trafficLabel.isNotEmpty)
+                    Expanded(
+                      child: Text(
+                        trafficLabel,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          color: t.textSecondary,
+                          fontFamily: t.monoFamily,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 2, 0, 7),
+              child: Column(
+                children: [
+                  for (final p in profiles)
+                    ProfileTile(
+                      key: ValueKey('subscription-${info.id}-${p.name}'),
+                      profile: p,
+                      expanded: expandedProfile == p.name,
+                      onToggleExpand: () => onToggleProfile(p.name),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _daysLabel(int days) {
+  final mod100 = days % 100;
+  final mod10 = days % 10;
+  final unit = mod100 >= 11 && mod100 <= 14
+      ? 'дней'
+      : mod10 == 1
+      ? 'день'
+      : mod10 >= 2 && mod10 <= 4
+      ? 'дня'
+      : 'дней';
+  return '$days $unit';
+}
+
+String _formatGigabytes(int bytes) {
+  final gigabytes = bytes / 1000000000;
+  return gigabytes >= 10
+      ? gigabytes.toStringAsFixed(0)
+      : gigabytes.toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '');
+}
+
+class _DashedSubscriptionBorder extends CustomPainter {
+  final Color color;
+  final double radius;
+
+  const _DashedSubscriptionBorder({required this.color, required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const strokeWidth = 1.5;
+    final path = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            strokeWidth / 2,
+            strokeWidth / 2,
+            size.width - strokeWidth,
+            size.height - strokeWidth,
+          ),
+          Radius.circular(radius),
+        ),
+      );
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    for (final metric in path.computeMetrics()) {
+      for (var start = 0.0; start < metric.length; start += 9) {
+        final end = (start + 5).clamp(0.0, metric.length).toDouble();
+        canvas.drawPath(metric.extractPath(start, end), paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedSubscriptionBorder oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.radius != radius;
 }

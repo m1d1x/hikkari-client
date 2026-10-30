@@ -177,7 +177,7 @@ func TestCall_SwitchProfile_UpdatesConfigAndActive(t *testing.T) {
 		t.Fatalf("expected active next, got %q", profiles.Active)
 	}
 
-	cfg, err := c.configs.Read()
+	cfg, err := readBuiltConfig(c)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestCall_ImportSubscriptionsKeepsEveryServer(t *testing.T) {
 		}
 		names[p.Name] = true
 	}
-	cfg, err := c.configs.Read()
+	cfg, err := readBuiltConfig(c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,4 +316,14 @@ func TestCall_ImportSubscriptionsKeepsEveryServer(t *testing.T) {
 	if servers != 4 || selectable != 4 {
 		t.Fatalf("outbounds=%d selector=%d, want 4 each", servers, selectable)
 	}
+}
+
+func readBuiltConfig(c *Core) (map[string]interface{}, error) {
+	data, err := os.ReadFile(filepath.Join(c.BaseDir(), "config.json"))
+	if err != nil {
+		return nil, err
+	}
+	var cfg map[string]interface{}
+	err = json.Unmarshal(data, &cfg)
+	return cfg, err
 }

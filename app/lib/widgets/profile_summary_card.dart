@@ -119,7 +119,7 @@ class ProfileSummaryCard extends StatelessWidget {
               if (footer != null)
                 AnimatedSize(
                   duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOut,
+                  curve: AppCurves.fastInSlowOut,
                   alignment: Alignment.topCenter,
                   child: footerVisible
                       ? Column(

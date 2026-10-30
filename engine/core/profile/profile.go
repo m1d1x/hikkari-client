@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -23,48 +25,44 @@ const (
 	KindOutbound = "outbound"
 )
 
-// SelectorTag is the single sing-box outbound that route.final and
-// dns.detour point at. It's a `selector` group that lists every profile;
-// switching profiles is a Clash-API call against this tag, not a config
-// rewrite — so it never changes once written.
-const SelectorTag = "proxy"
-
-// Historical pre-selector tag values. RebuildActive only references them
-// when scrubbing legacy configs during migration.
-const (
-	SharedEndpointTag = "awg-ep"
-	SharedOutboundTag = "proxy-out"
-)
-
-// LegacyActiveTags is the set of tag values that pre-selector config files
-// may have in route.final / dns.detour. Migration rewrites any of these to
-// SelectorTag.
-var LegacyActiveTags = map[string]bool{
-	SharedEndpointTag: true,
-	SharedOutboundTag: true,
-}
-
-// ProfileTag returns the canonical sing-box tag for a profile with the given
-// `name`. Uses a "p-" prefix so we never collide with system outbounds like
-// "direct" or "block".
-func ProfileTag(name string) string { return "p-" + name }
-
-// Spec is the minimum info configfile.RebuildActive needs per profile.
-type Spec struct {
-	Tag    string                 // ProfileTag(name)
-	Kind   string                 // KindEndpoint | KindOutbound
-	Config map[string]interface{} // sing-box block (Spec.Tag is forced onto it)
-	Name   string                 // raw profile name (for debugging / logs)
-}
-
 // Profile is one server entry stored in profiles.json. Config is the
 // sing-box-shaped block (endpoint object for KindEndpoint, outbound object
 // for KindOutbound).
+// Connection is a portable protocol specification. URI is a standard server
+// link or a WireGuard INI, never a sing-box/Xray configuration object.
+type Connection struct {
+	URI      string `json:"uri"`
+	Protocol string `json:"protocol"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+}
+
+// SubscriptionInfo is shared provider metadata copied onto each server from
+// one imported response. ID is an opaque local grouping key, never the URL.
+type SubscriptionInfo struct {
+	ID                    string `json:"id"`
+	Title                 string `json:"title,omitempty"`
+	UploadBytes           int64  `json:"uploadBytes,omitempty"`
+	DownloadBytes         int64  `json:"downloadBytes,omitempty"`
+	TotalBytes            int64  `json:"totalBytes,omitempty"`
+	ExpiresAt             int64  `json:"expiresAt,omitempty"`
+	UpdateIntervalSeconds int64  `json:"updateIntervalSeconds,omitempty"`
+	WebPageURL            string `json:"webPageUrl,omitempty"`
+	SupportURL            string `json:"supportUrl,omitempty"`
+}
+
 type Profile struct {
-	Name   string                 `json:"name"`
-	Label  string                 `json:"label"`
-	Kind   string                 `json:"kind"`
-	Config map[string]interface{} `json:"config"`
+	Name         string            `json:"name"`
+	Label        string            `json:"label"`
+	Kind         string            `json:"kind,omitempty"`
+	Connection   *Connection       `json:"connection,omitempty"`
+	Subscription *SubscriptionInfo `json:"subscription,omitempty"`
+	// MetadataOnly marks provider sentinel entries such as an encoded
+	// "remaining days" URI. It is consumed during import and never persisted.
+	MetadataOnly  bool   `json:"-"`
+	ProviderLabel string `json:"providerLabel,omitempty"`
+	// Kind/Config are retained only for lossless migration of legacy installs.
+	Config map[string]interface{} `json:"config,omitempty"`
 }
 
 // UnmarshalJSON tolerates the legacy on-disk shape that used "endpoint"
@@ -72,15 +70,21 @@ type Profile struct {
 // treated as KindEndpoint.
 func (p *Profile) UnmarshalJSON(data []byte) error {
 	var r struct {
-		Name     string                 `json:"name"`
-		Label    string                 `json:"label"`
-		Kind     string                 `json:"kind"`
-		Config   map[string]interface{} `json:"config"`
-		Endpoint map[string]interface{} `json:"endpoint"`
+		ProviderLabel string                 `json:"providerLabel"`
+		Connection    *Connection            `json:"connection"`
+		Subscription  *SubscriptionInfo      `json:"subscription"`
+		Name          string                 `json:"name"`
+		Label         string                 `json:"label"`
+		Kind          string                 `json:"kind"`
+		Config        map[string]interface{} `json:"config"`
+		Endpoint      map[string]interface{} `json:"endpoint"`
 	}
 	if err := json.Unmarshal(data, &r); err != nil {
 		return err
 	}
+	p.ProviderLabel = r.ProviderLabel
+	p.Connection = r.Connection
+	p.Subscription = r.Subscription
 	p.Name = r.Name
 	p.Label = r.Label
 	p.Kind = r.Kind
@@ -88,7 +92,7 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 	if p.Config == nil && r.Endpoint != nil {
 		p.Config = r.Endpoint
 	}
-	if p.Kind == "" {
+	if p.Kind == "" && p.Connection == nil {
 		p.Kind = KindEndpoint
 	}
 	return nil
@@ -100,17 +104,19 @@ type File struct {
 	// Auto, when true, makes the config emit a `urltest` outbound that
 	// wraps every profile and continuously picks the fastest live one.
 	// route.final then targets the urltest instead of the manual selector.
-	Auto     bool      `json:"auto,omitempty"`
-	Profiles []Profile `json:"profiles"`
+	Auto          bool           `json:"auto,omitempty"`
+	Profiles      []Profile      `json:"profiles"`
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 }
 
 // Info is the lightweight projection the UI renders.
 type Info struct {
-	Name     string `json:"name"`
-	Label    string `json:"label"`
-	Active   bool   `json:"active"`
-	Endpoint string `json:"endpoint"`
-	Protocol string `json:"protocol"`
+	Name         string            `json:"name"`
+	Label        string            `json:"label"`
+	Active       bool              `json:"active"`
+	Endpoint     string            `json:"endpoint"`
+	Protocol     string            `json:"protocol"`
+	Subscription *SubscriptionInfo `json:"subscription,omitempty"`
 }
 
 // Store is a thin file-backed profile repository.
@@ -141,15 +147,49 @@ func (s *Store) Read() (*File, error) {
 	return &pf, nil
 }
 
-func (s *Store) Write(pf *File) error {
+// PendingWrite prepares an owner-only, synced snapshot without publishing it.
+// Runtime owners can publish only after the candidate configuration has started.
+type PendingWrite struct {
+	temporary   string
+	destination string
+}
+
+func (w *PendingWrite) Commit() error { return os.Rename(w.temporary, w.destination) }
+func (w *PendingWrite) Discard()      { _ = os.Remove(w.temporary) }
+
+func (s *Store) Stage(pf *File) (*PendingWrite, error) {
 	out, err := json.MarshalIndent(pf, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		return nil, err
+	}
+	f, err := os.CreateTemp(filepath.Dir(s.path), ".profiles-*")
+	if err != nil {
+		return nil, err
+	}
+	pending := &PendingWrite{temporary: f.Name(), destination: s.path}
+	fail := func(err error) (*PendingWrite, error) { _ = f.Close(); pending.Discard(); return nil, err }
+	if _, err := f.Write(out); err != nil {
+		return fail(err)
+	}
+	if err := f.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := f.Close(); err != nil {
+		pending.Discard()
+		return nil, err
+	}
+	return pending, nil
+}
+func (s *Store) Write(pf *File) error {
+	pending, err := s.Stage(pf)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(s.path, out, 0644)
+	defer pending.Discard()
+	return pending.Commit()
 }
 
 // Exists reports whether profiles.json is already present on disk.
@@ -182,14 +222,26 @@ func (s *Store) List() ([]Info, error) {
 	out := make([]Info, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
 		out = append(out, Info{
-			Name:     p.Name,
-			Label:    p.Label,
-			Active:   p.Name == pf.Active,
-			Endpoint: peerEndpointForProfile(p),
-			Protocol: prettyProtocol(p),
+			Name:         p.Name,
+			Label:        displayLabel(p),
+			Active:       p.Name == pf.Active,
+			Endpoint:     peerEndpointForProfile(p),
+			Protocol:     prettyProtocol(p),
+			Subscription: p.Subscription,
 		})
 	}
 	return out, nil
+}
+
+// displayLabel keeps stored IDs stable while cleaning labels from older imports.
+func displayLabel(p Profile) string {
+	if label := CleanLabel(p.Label); label != "" {
+		return label
+	}
+	if p.Connection != nil && p.Connection.Host != "" {
+		return p.Connection.Host
+	}
+	return "Профиль"
 }
 
 // Get returns the full stored profile by name. ok is false when no profile
@@ -254,24 +306,43 @@ func (s *Store) Rename(name, newLabel string) error {
 	return fmt.Errorf("профиль %q не найден", name)
 }
 
-// Delete removes a profile by name. Refuses to delete the last one or the
-// currently active one (caller must switch first).
+// Delete removes any profile. Deleting the active one selects the first
+// remaining profile; deleting the last one clears the active selection.
 func (s *Store) Delete(name string) error {
 	pf, err := s.Read()
 	if err != nil {
 		return err
 	}
-	if len(pf.Profiles) <= 1 {
-		return fmt.Errorf("нельзя удалить единственный профиль")
-	}
-	if pf.Active == name {
-		return fmt.Errorf("сначала переключитесь на другой профиль")
+	hidden := map[string]ServerIdentity{}
+	for _, p := range pf.Profiles {
+		if p.Name != name || p.Subscription == nil {
+			continue
+		}
+		id := Identity(p)
+		for _, other := range pf.Profiles {
+			if other.Name == p.Name || other.Subscription == nil || other.Subscription.ID != p.Subscription.ID {
+				continue
+			}
+			otherID := Identity(other)
+			if otherID.Label == id.Label {
+				id.Label = ""
+			}
+			if otherID.Endpoint == id.Endpoint {
+				id.Endpoint = ""
+			}
+		}
+		hidden[p.Name] = id
 	}
 	out := pf.Profiles[:0]
 	found := false
 	for _, p := range pf.Profiles {
 		if p.Name == name {
 			found = true
+			for i := range pf.Subscriptions {
+				if p.Subscription != nil && pf.Subscriptions[i].ID == p.Subscription.ID {
+					pf.Subscriptions[i].Hidden = append(pf.Subscriptions[i].Hidden, hidden[p.Name])
+				}
+			}
 			continue
 		}
 		out = append(out, p)
@@ -280,6 +351,12 @@ func (s *Store) Delete(name string) error {
 		return fmt.Errorf("профиль %q не найден", name)
 	}
 	pf.Profiles = out
+	if len(out) == 0 {
+		pf.Active = ""
+		pf.Auto = false
+	} else if pf.Active == name {
+		pf.Active = out[0].Name
+	}
 	return s.Write(pf)
 }
 
@@ -309,37 +386,90 @@ func (s *Store) Add(label, kind string, cfg map[string]interface{}) (string, err
 	return name, nil
 }
 
-// Snapshot returns the per-profile specs the config rebuild needs, the
-// active profile's tag, and whether auto-fastest mode is on. Tags are
-// forced onto each Config map, and Configs are cloned so callers can
-// mutate freely.
-func (s *Store) Snapshot() ([]Spec, string, bool, error) {
+// AddConnection appends a portable profile without persisting native config.
+func (s *Store) AddConnection(p Profile) (string, error) {
+	names, err := s.AddConnections([]Profile{p})
+	if err != nil {
+		return "", err
+	}
+	return names[0], nil
+}
+
+// AddConnections appends a subscription's servers in one profiles.json
+// transaction so an interrupted write cannot leave a partially imported group.
+func (s *Store) AddConnections(profiles []Profile) ([]string, error) {
 	pf, err := s.Read()
 	if err != nil {
-		return nil, "", false, err
+		return nil, err
 	}
-	specs := make([]Spec, 0, len(pf.Profiles))
-	activeTag := ""
-	for _, p := range pf.Profiles {
-		if p.Config == nil {
+	names, err := AppendConnections(pf, profiles)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.Write(pf); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
+// AppendConnections stages standalone imports without an intermediate disk write.
+func AppendConnections(pf *File, profiles []Profile) ([]string, error) {
+	if len(profiles) == 0 {
+		return nil, fmt.Errorf("пустая конфигурация подключения")
+	}
+	names := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		if p.MetadataOnly {
+			if p.Connection != nil && p.Connection.URI != "" {
+				kept := pf.Profiles[:0]
+				for _, existing := range pf.Profiles {
+					if existing.Connection != nil && existing.Connection.URI == p.Connection.URI {
+						if pf.Active == existing.Name {
+							pf.Active = ""
+						}
+						continue
+					}
+					kept = append(kept, existing)
+				}
+				pf.Profiles = kept
+				if pf.Active == "" && len(pf.Profiles) > 0 {
+					pf.Active = pf.Profiles[0].Name
+				}
+			}
 			continue
 		}
-		kind := p.Kind
-		if kind == "" {
-			kind = KindEndpoint
+		if p.Connection == nil || p.Connection.URI == "" {
+			return nil, fmt.Errorf("пустая конфигурация подключения")
 		}
-		tag := ProfileTag(p.Name)
-		cfg := cloneMap(p.Config)
-		cfg["tag"] = tag
-		specs = append(specs, Spec{Tag: tag, Kind: kind, Config: cfg, Name: p.Name})
-		if p.Name == pf.Active {
-			activeTag = tag
+		p.Label = CleanLabel(p.Label)
+		if p.Label == "" {
+			p.Label = strings.TrimSpace(p.Connection.Host)
 		}
+		if p.Label == "" {
+			return nil, fmt.Errorf("название не может быть пустым")
+		}
+		if p.Subscription != nil {
+			matched := false
+			for i := range pf.Profiles {
+				existing := &pf.Profiles[i]
+				if existing.Connection != nil && existing.Connection.URI == p.Connection.URI {
+					existing.Subscription = p.Subscription
+					names = append(names, existing.Name)
+					matched = true
+					break
+				}
+			}
+			if matched {
+				continue
+			}
+		}
+		p.Name = uniqueName(pf, p.Label)
+		p.Config = nil
+		p.Kind = ""
+		pf.Profiles = append(pf.Profiles, p)
+		names = append(names, p.Name)
 	}
-	if activeTag == "" && len(specs) > 0 {
-		activeTag = specs[0].Tag
-	}
-	return specs, activeTag, pf.Auto, nil
+	return names, nil
 }
 
 // SetActive marks the named profile active after config.json was updated.
@@ -361,6 +491,9 @@ func (s *Store) SetActive(name string) error {
 // probe when the engine isn't up. Returns (host, 0) when the port can't be
 // determined from the profile config.
 func PeerHostPort(p Profile) (string, int) {
+	if p.Connection != nil {
+		return p.Connection.Host, p.Connection.Port
+	}
 	if p.Config == nil {
 		return "", 0
 	}
@@ -395,6 +528,9 @@ func PeerHostPort(p Profile) (string, int) {
 // PeerHost returns the server host/IP for a profile. Works for both endpoint
 // (peers[0].address) and outbound (server) shapes.
 func PeerHost(p Profile) string {
+	if p.Connection != nil {
+		return p.Connection.Host
+	}
 	if p.Config == nil {
 		return ""
 	}
@@ -423,6 +559,9 @@ func endpointPeerHost(ep map[string]interface{}) string {
 }
 
 func peerEndpointForProfile(p Profile) string {
+	if p.Connection != nil {
+		return net.JoinHostPort(p.Connection.Host, strconv.Itoa(p.Connection.Port))
+	}
 	if p.Config == nil {
 		return ""
 	}
@@ -467,6 +606,20 @@ func endpointPeerString(ep map[string]interface{}) string {
 }
 
 func prettyProtocol(p Profile) string {
+	if p.Connection != nil {
+		switch p.Connection.Protocol {
+		case "wireguard":
+			return "WireGuard"
+		case "awg":
+			return "AmneziaWG"
+		case "hysteria2":
+			return "Hysteria2"
+		case "shadowsocks":
+			return "Shadowsocks"
+		default:
+			return strings.ToUpper(p.Connection.Protocol)
+		}
+	}
 	if p.Config == nil {
 		return "—"
 	}

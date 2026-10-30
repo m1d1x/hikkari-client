@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_toast.dart';
 
 /// Engine log overlay. Polls `AppState.logTail()` once a second while it's
 /// on screen, strips ANSI colour codes, and paints lines in a fixed-height
@@ -128,12 +129,11 @@ class _LogOverlayState extends State<LogOverlay> {
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: _lines.join('\n')));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('лог скопирован'),
-        duration: Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-      ),
+    NekkoToast.show(
+      context,
+      'лог скопирован',
+      icon: Icons.check_rounded,
+      hold: NekkoToast.glanceHold,
     );
   }
 

@@ -6,6 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../core/models.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_toast.dart';
 
 /// Bottom sheet «поделиться профилем»: QR-код + ссылка-подписка с кнопкой
 /// копирования. Открывается из развёрнутой карточки профиля.
@@ -219,8 +220,11 @@ class ProfileShareSheet extends StatelessWidget {
               onTap: () async {
                 await Clipboard.setData(ClipboardData(text: uri));
                 if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('ссылка скопирована')),
+                NekkoToast.show(
+                  context,
+                  'ссылка скопирована',
+                  icon: Icons.check_rounded,
+                  hold: NekkoToast.glanceHold,
                 );
               },
               borderRadius: BorderRadius.circular(t.radius),

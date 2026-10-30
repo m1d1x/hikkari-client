@@ -118,7 +118,7 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
       _scrollCtl.animateTo(
         target,
         duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
+        curve: AppCurves.fastInSlowOut,
       );
     });
   }
@@ -334,6 +334,7 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
                 controller: _searchCtl,
                 autofocus: true,
                 hint: 'поиск…',
+                prefixIcon: Icon(Icons.search, size: 16, color: t.textFaint),
                 onChanged: (v) => setState(() => _query = v),
               ),
             ),
@@ -410,7 +411,7 @@ class _FooterButtonState extends State<_FooterButton> {
         // through it flashes dark on the way in.
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          curve: Curves.easeOut,
+          curve: AppCurves.fastInSlowOut,
           height: 40,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
@@ -426,7 +427,7 @@ class _FooterButtonState extends State<_FooterButton> {
               ],
               AnimatedDefaultTextStyle(
                 duration: const Duration(milliseconds: 150),
-                curve: Curves.easeOut,
+                curve: AppCurves.fastInSlowOut,
                 style: TextStyle(
                   color: color,
                   fontSize: 12,

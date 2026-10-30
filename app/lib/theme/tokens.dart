@@ -1,5 +1,34 @@
 import 'package:flutter/material.dart';
 
+/// System animation curves.
+abstract final class AppCurves {
+  /// Shared hover easing for buttons, labels, and icons.
+  static const Curve hover = Curves.easeInOutCubic;
+
+  /// Snappy start with smooth deceleration ("fast in, slow out").
+  /// Matches standard fluid desktop curve cubic-bezier(0.16, 1, 0.3, 1).
+  static const Curve fastInSlowOut = Cubic(0.16, 1.0, 0.3, 1.0);
+}
+
+/// Standard system transition durations.
+abstract final class AppDurations {
+  /// Shared hover transition for coordinated foreground and surface changes.
+  static const Duration hover = Duration(milliseconds: 120);
+
+  /// Fast UI transitions (e.g. icon tint, text highlights).
+  static const Duration fast = Duration(milliseconds: 160);
+
+  /// Standard element transitions (e.g. hover crossfade, card surface, toggle).
+  static const Duration normal = Duration(milliseconds: 220);
+
+  /// Accordion panels and large layout expansions.
+  static const Duration expand = Duration(milliseconds: 260);
+
+  // Routing motion: balanced pace between the original and inspection speeds.
+  static const Duration routingExpand = Duration(milliseconds: 520);
+  static const Duration routingDetails = Duration(milliseconds: 440);
+}
+
 /// Design tokens ported 1:1 from `NekkoVPN/frontend/src/App.svelte` (the
 /// `:root` block). Exposed through a [ThemeExtension] so widgets can pull
 /// them from the BuildContext via `Theme.of(context).extension<NekkoTokens>()!`
@@ -7,10 +36,10 @@ import 'package:flutter/material.dart';
 @immutable
 class NekkoTokens extends ThemeExtension<NekkoTokens> {
   // ----- surfaces -----
-  final Color bg;          // page background
-  final Color surface;     // raised card / row
-  final Color surface2;    // nested card / input
-  final Color border;      // hairline
+  final Color bg; // page background
+  final Color surface; // raised card / row
+  final Color surface2; // nested card / input
+  final Color border; // hairline
   final Color borderStrong;
 
   // ----- text -----
@@ -40,19 +69,19 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
   // Единая лестница размеров, чтобы заголовки/лейблы не расходились по
   // экранам. Меняешь константу здесь — двигаются все места разом.
   static const double sizeSectionTitle = 16; // маршрутизация / профили
-  static const double sizeSubtitle = 15;     // счётчик рядом с заголовком
-  static const double sizeLabel = 13;        // чипы, вторичные подписи
-  static const double sizeBody = 12;         // строки, поиск, тело
-  static const double sizeCaption = 11;      // мелкие пометки
+  static const double sizeSubtitle = 15; // счётчик рядом с заголовком
+  static const double sizeLabel = 13; // чипы, вторичные подписи
+  static const double sizeBody = 12; // строки, поиск, тело
+  static const double sizeCaption = 11; // мелкие пометки
 
   /// Общий стиль для заголовков секций верхнего уровня. Цвет можно
   /// переопределить через copyWith (напр. hover-подсветка).
   TextStyle get sectionTitle => TextStyle(
-        color: text,
-        fontSize: sizeSectionTitle,
-        fontWeight: FontWeight.w700,
-        height: 1,
-      );
+    color: text,
+    fontSize: sizeSectionTitle,
+    fontWeight: FontWeight.w700,
+    height: 1,
+  );
 
   const NekkoTokens({
     required this.bg,
@@ -78,7 +107,7 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
     bg: Color(0xFF0E0E10),
     surface: Color(0xFF18181B),
     surface2: Color(0xFF1F1F23),
-    border: Color(0x0FFFFFFF),       // rgba(255,255,255,.06)
+    border: Color(0x0FFFFFFF), // rgba(255,255,255,.06)
     borderStrong: Color(0x1FFFFFFF), // rgba(255,255,255,.12)
     text: Color(0xFFEDEDEE),
     textSecondary: Color(0xFFC8C8CA),
@@ -112,25 +141,24 @@ class NekkoTokens extends ThemeExtension<NekkoTokens> {
     double? radius,
     double? radiusLg,
     String? monoFamily,
-  }) =>
-      NekkoTokens(
-        bg: bg ?? this.bg,
-        surface: surface ?? this.surface,
-        surface2: surface2 ?? this.surface2,
-        border: border ?? this.border,
-        borderStrong: borderStrong ?? this.borderStrong,
-        text: text ?? this.text,
-        textSecondary: textSecondary ?? this.textSecondary,
-        textMuted: textMuted ?? this.textMuted,
-        textFaint: textFaint ?? this.textFaint,
-        primary: primary ?? this.primary,
-        ok: ok ?? this.ok,
-        warn: warn ?? this.warn,
-        bad: bad ?? this.bad,
-        radius: radius ?? this.radius,
-        radiusLg: radiusLg ?? this.radiusLg,
-        monoFamily: monoFamily ?? this.monoFamily,
-      );
+  }) => NekkoTokens(
+    bg: bg ?? this.bg,
+    surface: surface ?? this.surface,
+    surface2: surface2 ?? this.surface2,
+    border: border ?? this.border,
+    borderStrong: borderStrong ?? this.borderStrong,
+    text: text ?? this.text,
+    textSecondary: textSecondary ?? this.textSecondary,
+    textMuted: textMuted ?? this.textMuted,
+    textFaint: textFaint ?? this.textFaint,
+    primary: primary ?? this.primary,
+    ok: ok ?? this.ok,
+    warn: warn ?? this.warn,
+    bad: bad ?? this.bad,
+    radius: radius ?? this.radius,
+    radiusLg: radiusLg ?? this.radiusLg,
+    monoFamily: monoFamily ?? this.monoFamily,
+  );
 
   @override
   NekkoTokens lerp(ThemeExtension<NekkoTokens>? other, double t) {
