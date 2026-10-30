@@ -1,7 +1,7 @@
 # AUTOUPDATE-ROADMAP
 
 Автообновление клиента с наших серверов, по модели Telegram, на апдейтере из Nekko.
-Сначала Windows. Статус: фазы 0–4 и 6 готовы (6 ждёт сервер). Дата: 2026-10-30.
+Сначала Windows. Статус: фазы 0–4, 6, 7 готовы; Windows-GUI вживую не проверен. Дата: 2026-10-30.
 
 ---
 
@@ -187,7 +187,7 @@ GUI:                 баннер «Доступно X — Перезапуст�
   и выпустить с ним релиз, подписанный старым; только потом подписывать новым.
 - [ ] Не проверено вживую: нет домена и сервера. Первый тег после настройки — проверка всей цепочки.
 
-### Phase 7 — macOS
+### Phase 7 — macOS ✅
 Та же модель, что на Windows: привилегированная служба, GUI без прав, пароль — один раз при установке.
 
 ```
@@ -222,14 +222,16 @@ GUI:                 баннер «Доступно X — Перезапуст�
 - **Без Developer ID пока.** `.pkg` не подписан: первый запуск — «Системные настройки →
   Конфиденциальность → Всё равно открыть». Обновления качает служба, карантина у них нет.
 
-- [ ] `core/service`: общий сервер + цикл обновлений; `winsvc` — только установка/SCM на Windows.
-- [ ] Транспорт: unix-сокет `/var/run/hikkari-service.sock`; `svcclient`/`ServiceManager` для darwin.
-- [ ] `vpn.ProcessManager` на darwin — обычный дочерний процесс службы (вместо launchd-супервизора).
-- [ ] `hikkari-service` для darwin: daemon, `install` (из postinstall), `uninstall`, проверка владельца.
-- [ ] `hikkari-updater`: раскладка macOS (`/Applications`, `Hikkari.app`, `Contents/Resources/VERSION`).
-- [ ] Движок: `RestartToUpdate` / recover / confirm на macOS.
-- [ ] CI `build-macos.yml`: `.app` → `.pkg`, smoke на раннере (sudo без пароля): установка, TUN через
+- [x] `core/service`: общий сервер + цикл обновлений; `winsvc` — только установка/SCM на Windows.
+- [x] Транспорт: unix-сокет `/var/run/hikkari-service.sock`; `svcclient`/`ServiceManager` для darwin.
+- [x] `vpn.ProcessManager` на darwin — обычный дочерний процесс службы (вместо launchd-супервизора).
+- [x] `hikkari-service` для darwin: daemon, `install` (из postinstall), `uninstall`, проверка владельца.
+- [x] `hikkari-updater`: раскладка macOS (`/Applications`, `Hikkari.app`, `Contents/Resources/VERSION`).
+- [x] Движок: `RestartToUpdate` / recover / confirm на macOS.
+- [x] CI `build-macos.yml`: `.app` → `.pkg`, smoke на раннере (sudo без пароля): установка, TUN через
       службу, обновление до +1 patch, удаление; релиз по тегу в канал `stable/macos`.
+- [x] Проверено вживую 2026-10-31 на M4: 1.0.2 (.pkg) → кнопка «Перезапустить» → 1.0.3. Скачано 6 файлов
+      из 303 (14 МБ), служба перезапустилась новой версией, GUI открылся сам, confirm через 20 с, `.old` убран.
 
 ## 4. Открытые вопросы
 
