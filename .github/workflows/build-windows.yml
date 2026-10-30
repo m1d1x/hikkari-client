@@ -398,8 +398,9 @@ jobs:
           if (Test-Path $key) { throw "the uninstall entry is still there" }
           if (Test-Path "$env:PUBLIC\Desktop\Hikkari.lnk") { throw "the desktop shortcut is still there" }
           $root = "$env:ProgramFiles\Hikkari"
-          for ($i = 0; $i -lt 30 -and (Test-Path $root); $i++) { Start-Sleep -Milliseconds 500 }
-          if (Test-Path $root) { Get-ChildItem -Recurse $root | Select-Object FullName; throw "$root was not removed" }
+          for ($i = 0; $i -lt 60 -and (Test-Path $root); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path $root) { cmd /c dir /a /s "$root"; throw "$root was not removed" }
+          Write-Host "removed after ~$([math]::Round($i / 2)) s"
 
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4

@@ -154,12 +154,25 @@ func stopProcessesUnder(dir string) {
 	}
 }
 
-// removeDirLater deletes dir a few seconds after this process exits — the
-// uninstaller runs from inside it and cannot delete its own executable.
+// removeDirLater deletes dir once this process has exited — the uninstaller
+// runs from inside it and cannot delete its own executable.
+//
+// The command line goes to cmd.exe verbatim (CmdLine): Go's own quoting
+// escapes inner quotes as \", which cmd.exe does not understand, and the
+// quoted path would reach rmdir cut in pieces. rmdir is retried for about a
+// minute, since a just-exited executable can stay open for a while (an
+// antivirus scanning it).
+//
+// Deliberately NOT queued for deletion at reboot as a fallback: a reinstall
+// before that reboot would have Windows delete the NEW install's files.
 func removeDirLater(dir string) error {
-	cmd := exec.Command("cmd", "/c", fmt.Sprintf(`ping -n 4 127.0.0.1 >nul & rmdir /s /q "%s"`, dir))
+	script := fmt.Sprintf(
+		`ping -n 3 127.0.0.1 >nul & for /l %%i in (1,1,30) do @(rmdir /s /q "%[1]s" 2>nul & if not exist "%[1]s" exit /b 0 & ping -n 3 127.0.0.1 >nul)`,
+		dir)
+	cmd := exec.Command(filepath.Join(os.Getenv("WINDIR"), "System32", "cmd.exe"))
 	cmd.Dir = os.TempDir() // never inside dir: a working directory pins it
 	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CmdLine:       `cmd.exe /d /s /c "` + script + `"`,
 		HideWindow:    true,
 		CreationFlags: createNoWindow | windows.DETACHED_PROCESS,
 	}
