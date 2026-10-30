@@ -56,15 +56,42 @@ class _BootGate extends StatefulWidget {
   State<_BootGate> createState() => _BootGateState();
 }
 
-class _BootGateState extends State<_BootGate> {
+class _BootGateState extends State<_BootGate> with WindowListener {
   NekkoboxCore? _core;
   AppState? _state;
   String? _bootError;
+  bool _shutDown = false;
+
+  static bool get _desktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
   @override
   void initState() {
     super.initState();
+    if (_desktop) {
+      // Closing the window must go through [onWindowClose]: on Windows the
+      // core lives in HikkariService, not in this process, so nothing stops
+      // the tunnel when we exit unless we do it ourselves — and State.dispose
+      // is not guaranteed to run when the window is torn down.
+      windowManager.addListener(this);
+      windowManager.setPreventClose(true);
+    }
     _boot();
+  }
+
+  @override
+  Future<void> onWindowClose() async {
+    _shutdown();
+    await windowManager.destroy();
+  }
+
+  /// Stops the engine (and with it the tunnel) exactly once.
+  void _shutdown() {
+    if (_shutDown) return;
+    _shutDown = true;
+    // AppState's own dispose cancels the health timer.
+    _state?.dispose();
+    _core?.shutdown();
   }
 
   void _boot() {
@@ -110,9 +137,8 @@ class _BootGateState extends State<_BootGate> {
 
   @override
   void dispose() {
-    // AppState's own dispose cancels the health timer.
-    _state?.dispose();
-    _core?.shutdown();
+    if (_desktop) windowManager.removeListener(this);
+    _shutdown();
     super.dispose();
   }
 

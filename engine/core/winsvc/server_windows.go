@@ -5,6 +5,7 @@
 // no longer has them) and, later, applies updates.
 //
 //	<root>\                        Program Files\Hikkari — admin-only writable
+//	    Hikkari.exe                launcher — the shortcut points here
 //	    HikkariService.exe         this service, LocalSystem
 //	    hikkari-updater.exe
 //	    app\                       GUI, engine DLL, sing-box.exe, wintun.dll
@@ -43,8 +44,10 @@ type Server struct {
 	coreDir string
 	log     *logging.Logger
 	core    *vpn.ProcessManager
+	updates *updates
 
-	// One request at a time: start/stop must not interleave.
+	// Guards the core: start/stop must not interleave. Update operations
+	// that stop the core take it inside their own lock (see updates).
 	mu sync.Mutex
 }
 
@@ -57,7 +60,7 @@ func NewServer(root string) (*Server, error) {
 	log := logging.New(filepath.Join(coreDir, "service.log"))
 	appDir := filepath.Join(root, "app")
 	log.Logf("=== HikkariService %s, root=%s ===", Version, root)
-	return &Server{
+	s := &Server{
 		root:    root,
 		coreDir: coreDir,
 		log:     log,
@@ -70,7 +73,9 @@ func NewServer(root string) (*Server, error) {
 			appDir,
 			log,
 		),
-	}, nil
+	}
+	s.updates = newUpdates(s)
+	return s, nil
 }
 
 // Serve answers the control pipe until ctx is cancelled, then stops the core.
@@ -84,6 +89,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		return fmt.Errorf("listening on %s: %w", svcproto.PipeName, err)
 	}
 	s.log.Logf("service: listening on %s", svcproto.PipeName)
+	go s.updates.loop(ctx)
 	go func() {
 		<-ctx.Done()
 		_ = l.Close()
@@ -115,16 +121,54 @@ func (s *Server) handle(conn net.Conn) {
 		_ = svcproto.WriteMessage(conn, svcproto.Response{Error: "bad request: " + err.Error()})
 		return
 	}
+	// An apply may wait behind a download in progress.
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Minute))
 	_ = svcproto.WriteMessage(conn, s.dispatch(req))
 }
 
 func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	fail := func(err error) svcproto.Response {
 		s.log.Logf("service: %s: %v", req.Op, err)
 		return svcproto.Response{Error: err.Error()}
 	}
+	u := s.updates
+	switch req.Op {
+	case svcproto.OpCheckUpdate:
+		u.requestCheck()
+		return s.status()
+	case svcproto.OpApplyUpdate:
+		from, to, err := u.apply(req.Reconnect)
+		if err != nil {
+			return fail(err)
+		}
+		resp := s.status()
+		resp.From, resp.To = from, to
+		return resp
+	case svcproto.OpRecoverUpdate:
+		result, from, to, err := u.recover()
+		if err != nil {
+			return fail(err)
+		}
+		resp := s.status()
+		resp.Recovery, resp.From, resp.To = result, from, to
+		return resp
+	case svcproto.OpConfirmUpdate:
+		if err := u.confirm(); err != nil {
+			return fail(err)
+		}
+		return s.status()
+	case svcproto.OpRollbackUpdate:
+		from, to, err := u.rollback()
+		if err != nil {
+			return fail(err)
+		}
+		resp := s.status()
+		resp.From, resp.To = from, to
+		return resp
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	switch req.Op {
 	case svcproto.OpStatus:
 		return s.status()
@@ -162,6 +206,7 @@ func (s *Server) status() svcproto.Response {
 		Pid:     pid,
 		CoreLog: s.log.Path(),
 		Version: Version,
+		Update:  s.updates.snapshot(),
 	}
 }
 

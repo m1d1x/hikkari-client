@@ -19,7 +19,7 @@ import (
 )
 
 // Files the service and updater bring with them, beside app\.
-var rootFiles = []string{"HikkariService.exe", "hikkari-updater.exe"}
+var rootFiles = []string{"HikkariService.exe", "hikkari-updater.exe", "Hikkari.exe"}
 
 // userDataFiles are the engine's state files. Before the service existed the
 // engine kept them next to nekkobox.exe (the portable zip); now they live in
@@ -36,7 +36,8 @@ func IsElevated() bool {
 }
 
 // Install puts this build into %ProgramFiles%\Hikkari and registers and
-// starts the service from there. `src` is the unpacked build (the folder
+// starts the service from there, and returns the launcher to start the app
+// with. `src` is the unpacked build (the folder
 // holding HikkariService.exe and app\); `importFrom` are folders that may
 // hold a portable install's data. Re-running it upgrades in place.
 func Install(src string, importFrom []string) (string, error) {
@@ -73,7 +74,7 @@ func Install(src string, importFrom []string) (string, error) {
 	if err := register(m, exe); err != nil {
 		return "", err
 	}
-	return filepath.Join(dest, "app", "nekkobox.exe"), nil
+	return filepath.Join(dest, "Hikkari.exe"), nil
 }
 
 // Uninstall stops and removes the service. Files are left in place.

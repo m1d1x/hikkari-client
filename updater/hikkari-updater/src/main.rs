@@ -69,6 +69,9 @@ const PLATFORM: Platform = Platform::Windows;
 const BUILT_URL: Option<&str> = option_env!("HIKKARI_UPDATE_URL");
 const BUILT_KEYS: Option<&str> = option_env!("HIKKARI_UPDATE_KEYS");
 
+/// Error code (and message prefix) of a build without an update channel.
+const NO_CHANNEL: &str = "no_channel";
+
 const USAGE: &str = "usage: hikkari-updater <status|check|update|apply|recover|confirm|rollback> \
                      [--root DIR] [--channel stable|beta] [--proxy URL]";
 
@@ -86,13 +89,13 @@ impl Options {
     }
 
     fn channel_config(&self) -> Result<ChannelConfig, String> {
-        let base_url = self.base_url.clone().ok_or(
-            "built without HIKKARI_UPDATE_URL — this binary has no update channel".to_owned(),
-        )?;
+        let base_url = self.base_url.clone().ok_or(format!(
+            "{NO_CHANNEL}: built without HIKKARI_UPDATE_URL — this binary has no update channel"
+        ))?;
         if self.trusted.is_empty() {
-            return Err(
-                "built without HIKKARI_UPDATE_KEYS — no manifest could be trusted".to_owned(),
-            );
+            return Err(format!(
+                "{NO_CHANNEL}: built without HIKKARI_UPDATE_KEYS — no manifest could be trusted"
+            ));
         }
         Ok(ChannelConfig {
             base_url,
@@ -136,7 +139,14 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
-            emit(json!({ "event": "error", "command": command, "message": message }));
+            // A build with no channel is not failing; the service shows it
+            // as "updates unavailable" rather than as an error.
+            let code = if message.starts_with(NO_CHANNEL) {
+                NO_CHANNEL
+            } else {
+                "failed"
+            };
+            emit(json!({ "event": "error", "command": command, "code": code, "message": message }));
             ExitCode::FAILURE
         }
     }

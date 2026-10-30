@@ -46,6 +46,11 @@ class AppState extends ChangeNotifier {
   Timer? _healthTimer;
 
   HealthInfo? _health;
+  // Polled every [_updatePollTicks] health ticks — it changes on the scale of
+  // minutes, and each read is a round trip to the service.
+  UpdateStatus _update = UpdateStatus.unavailable;
+  int _tickCount = 0;
+  static const _updatePollTicks = 5;
   List<ProfileInfo> _profiles = const [];
   // Lowercase ISO country code per profile name, for the flag badge next to
   // each profile's title. Populated in the background by
@@ -80,6 +85,7 @@ class AppState extends ChangeNotifier {
 
   // ----- getters -----
   HealthInfo? get health => _health;
+  UpdateStatus get update => _update;
   List<ProfileInfo> get profiles => _profiles;
   Map<String, String> get profileCountries => _profileCountries;
   /// Resolved lowercase ISO country code for [name], or null if not resolved
@@ -197,6 +203,42 @@ class AppState extends ChangeNotifier {
     _healthTimer ??=
         Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     _refreshProfileCountries();
+    if (!kEngineDryRun) {
+      // Every launch is a reason to look: the service throttles repeats.
+      unawaited(_core.checkUpdate().catchError((Object e) {
+        _elog('checkUpdate failed: $e');
+      }));
+      unawaited(_refreshUpdate());
+    }
+  }
+
+  Future<void> _refreshUpdate() async {
+    try {
+      final next = await _core.updateStatus();
+      if (next.state != _update.state ||
+          next.version != _update.version ||
+          next.bytesDone != _update.bytesDone) {
+        _update = next;
+        notifyListeners();
+      }
+    } catch (e) {
+      _elog('updateStatus failed: $e');
+    }
+  }
+
+  /// «Перезапустить»: the launcher takes over and the app exits. Returns
+  /// false (with [lastError] set) if the hand-over could not start.
+  Future<bool> restartToUpdate() async {
+    try {
+      await _core.restartToUpdate();
+      return true;
+    } on NekkoboxError catch (e) {
+      _lastError = e.message;
+    } catch (e) {
+      _lastError = '$e';
+    }
+    notifyListeners();
+    return false;
   }
 
   /// Resolves each profile's country (for the flag badge) in the background.
@@ -725,6 +767,7 @@ class AppState extends ChangeNotifier {
     }
     if (_ticking) return;
     _ticking = true;
+    if (++_tickCount % _updatePollTicks == 0) unawaited(_refreshUpdate());
     try {
       await _safeReload(() async {
         _health = await _core.health();

@@ -123,7 +123,7 @@ jobs:
           }
           Write-Host "nekkobox.dll generated successfully."
 
-      - name: Build HikkariService.exe
+      - name: Build HikkariService.exe and Hikkari.exe
         shell: pwsh
         run: |
           $env:CGO_ENABLED = "0"
@@ -132,8 +132,10 @@ jobs:
           $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
           cd engine
           go build -trimpath -ldflags "-s -w -X NekkoVPN/core/winsvc.Version=$version" -o ../HikkariService.exe ./cmd/hikkari-service
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o ../Hikkari.exe ./cmd/hikkari-launcher
           cd ..
           if (-not (Test-Path "HikkariService.exe")) { throw "HikkariService.exe was not generated!" }
+          if (-not (Test-Path "Hikkari.exe")) { throw "Hikkari.exe was not generated!" }
 
       - name: Build hikkari-updater.exe
         shell: pwsh
@@ -153,6 +155,7 @@ jobs:
           cd ..
 
       # Layout of the installed client (docs/AUTOUPDATE-ROADMAP.md §1):
+      #   Hikkari\Hikkari.exe            launcher (shortcut target)
       #   Hikkari\HikkariService.exe     install / service
       #   Hikkari\hikkari-updater.exe
       #   Hikkari\app\                   GUI, engine, core, VERSION — what updates replace
@@ -184,6 +187,7 @@ jobs:
 
           Copy-Item -Force "HikkariService.exe" -Destination "$bundle/"
           Copy-Item -Force "hikkari-updater.exe" -Destination "$bundle/"
+          Copy-Item -Force "Hikkari.exe" -Destination "$bundle/"
 
           Write-Host "Bundle ($version):"
           Get-ChildItem -Recurse -Path "bundle" | Select-Object FullName
@@ -240,11 +244,112 @@ jobs:
 
             $st = Invoke-Hikkari '{"op":"stop"}'
             if ($st.running) { throw "the core is still running after stop" }
+
+            # Updates: this CI build has no channel baked in, so the service
+            # must say "unavailable" and refuse to apply — and recovery with
+            # nothing pending must not touch anything.
+            if (-not (Test-Path "$root\Hikkari.exe")) { throw "the launcher was not installed" }
+            $rec = Invoke-Hikkari '{"op":"recover_update"}'
+            if (-not $rec.ok -or $rec.recovery -ne "nothing") { throw "unexpected recovery: $($rec.recovery)" }
+            $chk = Invoke-Hikkari '{"op":"check_update"}'
+            for ($i = 0; $i -lt 20 -and $chk.update.state -ne "unavailable"; $i++) {
+              Start-Sleep -Milliseconds 500
+              $chk = Invoke-Hikkari '{"op":"status"}'
+            }
+            if ($chk.update.state -ne "unavailable") { throw "update state: $($chk.update.state)" }
+            $app = Invoke-Hikkari '{"op":"apply_update"}'
+            if ($app.ok) { throw "apply_update succeeded with nothing staged" }
+            if (-not (Test-Path "$root\app\sing-box.exe")) { throw "a refused apply moved app\" }
           } finally {
             Write-Host "---- service.log ----"
             Get-Content "$root\core\service.log" -ErrorAction SilentlyContinue
-            & "$root\HikkariService.exe" uninstall --quiet
           }
+
+      # A real update through the service, on Windows, with the core running
+      # (so sing-box.exe holds app\ open until the service stops it): an
+      # updater built against a local channel and a throwaway key, a "1.0.1"
+      # release published from the installed tree, check → stage → apply with
+      # reconnect → trial → confirm.
+      - name: Update smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "$env:ProgramFiles\Hikkari"
+          $tmp = $env:RUNNER_TEMP
+          $port = 8731
+
+          Push-Location updater
+          cargo build --release --locked -p nekko-updater --bin nekko-manifest
+          $keygen = & target/release/nekko-manifest.exe keygen --out "$tmp\ci.key"
+          $pub = ([regex]::Match(($keygen -join "`n"), 'public key: ([0-9a-f]{64})')).Groups[1].Value
+          if (-not $pub) { throw "no public key in: $keygen" }
+          $env:HIKKARI_UPDATE_URL = "http://127.0.0.1:$port"
+          $env:HIKKARI_UPDATE_KEYS = "ci-1:$pub"
+          cargo build --release --locked -p hikkari-updater --target-dir target-ci
+          Remove-Item Env:HIKKARI_UPDATE_URL, Env:HIKKARI_UPDATE_KEYS
+          Pop-Location
+
+          Stop-Service HikkariService
+          Copy-Item -Force updater/target-ci/release/hikkari-updater.exe "$root\"
+          Start-Service HikkariService
+
+          $rel = "$tmp\release-1.0.1"
+          Copy-Item -Recurse "$root\app" $rel
+          Set-Content -NoNewline -Encoding ascii -Path "$rel\VERSION" -Value "1.0.1"
+          & updater/target/release/nekko-manifest.exe publish --dir $rel --version 1.0.1 --platform windows `
+              --base-url "http://127.0.0.1:$port" --key "$tmp\ci.key" --key-id ci-1 --out "$tmp\channel"
+          if ($LASTEXITCODE -ne 0) { throw "publish failed" }
+          $server = Start-Process python -ArgumentList "-m","http.server","$port","--bind","127.0.0.1","--directory","$tmp\channel" -PassThru -WindowStyle Hidden
+
+          function Invoke-Hikkari([string]$json) {
+            $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(".", "hikkari-service", [System.IO.Pipes.PipeDirection]::InOut)
+            $pipe.Connect(10000)
+            $w = New-Object System.IO.StreamWriter($pipe); $w.AutoFlush = $true
+            $r = New-Object System.IO.StreamReader($pipe)
+            $w.WriteLine($json)
+            $line = $r.ReadLine()
+            $pipe.Dispose()
+            Write-Host "<- $line"
+            return $line | ConvertFrom-Json
+          }
+
+          try {
+            $cfg = '{"log":{"level":"info"},"dns":{"servers":[{"tag":"local","type":"local"}]},"inbounds":[{"type":"tun","tag":"tun-in","address":["172.19.0.1/30"],"auto_route":false,"stack":"mixed"}],"outbounds":[{"type":"direct","tag":"direct"}],"route":{"final":"direct","default_domain_resolver":{"server":"local"}},"experimental":{"clash_api":{"external_controller":"127.0.0.1:9090"},"cache_file":{"enabled":true,"path":"cache.db"}}}'
+            $st = Invoke-Hikkari ('{"op":"start","config":' + $cfg + '}')
+            if (-not $st.running) { throw "the core did not start" }
+
+            $st = Invoke-Hikkari '{"op":"check_update"}'
+            for ($i = 0; $i -lt 120 -and $st.update.state -ne "ready"; $i++) {
+              if ($st.update.state -eq "error" -or $st.update.state -eq "unavailable") { throw "update state $($st.update.state): $($st.update.error)" }
+              Start-Sleep -Milliseconds 500
+              $st = Invoke-Hikkari '{"op":"status"}'
+            }
+            if ($st.update.state -ne "ready" -or $st.update.version -ne "1.0.1") { throw "1.0.1 was not staged" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne "1.0.0") { throw "staging touched the installation" }
+
+            $ap = Invoke-Hikkari '{"op":"apply_update","reconnect":true}'
+            if (-not $ap.ok -or $ap.from -ne "1.0.0" -or $ap.to -ne "1.0.1") { throw "apply failed" }
+            if (-not $ap.running) { throw "the core did not come back after the swap" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne "1.0.1") { throw "app\ is not 1.0.1" }
+            if (-not (Test-Path "$root\app.old\nekkobox.exe")) { throw "the previous version was not kept" }
+
+            $rec = Invoke-Hikkari '{"op":"recover_update"}'
+            if ($rec.recovery -ne "on_trial") { throw "expected a trial, got $($rec.recovery)" }
+            $null = Invoke-Hikkari '{"op":"confirm_update"}'
+            if (Test-Path "$root\app.old") { throw "app.old survived the confirmation" }
+            $null = Invoke-Hikkari '{"op":"stop"}'
+          } finally {
+            Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
+            Write-Host "---- service.log ----"
+            Get-Content "$root\core\service.log" -ErrorAction SilentlyContinue
+          }
+
+      - name: Remove the test install
+        if: always()
+        shell: pwsh
+        run: |
+          $exe = "$env:ProgramFiles\Hikkari\HikkariService.exe"
+          if (Test-Path $exe) { & $exe uninstall --quiet }
           if (Get-Service HikkariService -ErrorAction SilentlyContinue) { throw "the service is still registered" }
 
       - name: Upload Release Artifact

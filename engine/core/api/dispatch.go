@@ -24,6 +24,7 @@ import (
 var polledMethods = map[string]bool{
 	"IsRunning": true, "Health": true, "ExternalIP": true, "LogTail": true,
 	"Routing": true, "ServerCleanliness": true, "ListApps": true,
+	"UpdateStatus": true,
 }
 
 // traceCall writes one line per FFI call into the engine log, so a pasted log
@@ -253,6 +254,14 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 			return nil, err
 		}
 		return nil, c.RemoveCustomService(a.Name)
+	// ----- updates -----
+	case "UpdateStatus":
+		return c.UpdateStatus(), nil
+	case "CheckUpdate":
+		return nil, c.CheckUpdate()
+	case "RestartToUpdate":
+		return nil, c.RestartToUpdate()
+
 	// ----- app discovery -----
 	case "ListApps":
 		var a struct {

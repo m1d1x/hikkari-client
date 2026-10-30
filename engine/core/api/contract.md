@@ -243,6 +243,37 @@ loop.
 `ServiceUptimeHistory` keys are `"<activeTag>|<service name>"`; each value is
 a rolling window of `PingSample` (same shape as under *Uptime history*).
 
+### Updates (Windows)
+
+Delivered by HikkariService; elsewhere `UpdateStatus` is always
+`unavailable` (docs/AUTOUPDATE-ROADMAP.md).
+
+| method            | args | data          |
+|-------------------|------|---------------|
+| `UpdateStatus`    | —    | `UpdateState` |
+| `CheckUpdate`     | —    | `null`        |
+| `RestartToUpdate` | —    | `null`        |
+
+`CheckUpdate` asks the service to poll the channel now (ignored within a few
+minutes of the last check). `RestartToUpdate` hands over to the launcher; the
+UI must exit right after it returns — the launcher waits for this process,
+has the service swap the staged version in and starts the new one.
+
+`UpdateState`:
+
+```jsonc
+{
+  "state":      "ready",   // idle | downloading | ready | error | unavailable
+  "installed":  "1.0.0",
+  "version":    "1.1.0",   // staged / downloading release
+  "mandatory":  false,     // installed < the release's minimum_version
+  "bytesDone":  0,         // while downloading
+  "bytesTotal": 0,
+  "error":      "",        // last failure; retried on schedule
+  "checkedAt":  1761800000 // unix seconds of the last completed check
+}
+```
+
 ---
 
 ## Platform bindings

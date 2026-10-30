@@ -10,8 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Microsoft/go-winio"
-
+	"NekkoVPN/core/svcclient"
 	"NekkoVPN/core/svcproto"
 )
 
@@ -38,29 +37,13 @@ func NewServiceManager(configPath string, log LineLogger) *ServiceManager {
 	return &ServiceManager{configPath: configPath, log: log}
 }
 
-// errNoService is what the user sees when the pipe is not there.
-var errNoService = errors.New("служба Hikkari не запущена — переустановите приложение")
-
 func (m *ServiceManager) call(req svcproto.Request, timeout time.Duration) (svcproto.Response, error) {
-	dial := 2 * time.Second
-	conn, err := winio.DialPipe(svcproto.PipeName, &dial)
-	if err != nil {
-		m.log.Logf("vpn.service: dial %s: %v", svcproto.PipeName, err)
-		return svcproto.Response{}, errNoService
+	resp, err := svcclient.Call(req, timeout)
+	if errors.Is(err, svcclient.ErrNoService) {
+		m.log.Logf("vpn.service: %v", err)
+		return resp, svcclient.ErrNoService
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-	if err := svcproto.WriteMessage(conn, req); err != nil {
-		return svcproto.Response{}, fmt.Errorf("служба Hikkari: отправка запроса: %w", err)
-	}
-	var resp svcproto.Response
-	if err := svcproto.ReadMessage(conn, &resp); err != nil {
-		return svcproto.Response{}, fmt.Errorf("служба Hikkari: ответ: %w", err)
-	}
-	if !resp.OK {
-		return resp, errors.New(resp.Error)
-	}
-	return resp, nil
+	return resp, err
 }
 
 // followCore mirrors the service's log (which carries the core's own
