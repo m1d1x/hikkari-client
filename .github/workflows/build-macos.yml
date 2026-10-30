@@ -119,8 +119,13 @@ jobs:
                        updater/target/x86_64-apple-darwin/release/hikkari-updater -output bin/hikkari-updater
           lipo -info bin/HikkariService bin/hikkari-updater
 
+      # The Xray transport the engine bundles: official release slices,
+      # version and sha256 pinned in the script, lipo'd into archive/xray.
+      - name: Fetch pinned Xray
+        run: python3 bench/fetch_xray.py
+
       # embed_engine.sh (an Xcode build phase) builds libnekkobox.dylib for
-      # every arch and copies archive/sing-box into Resources.
+      # every arch and copies archive/sing-box and archive/xray into Resources.
       - name: Build Flutter macOS app
         run: |
           cd app
