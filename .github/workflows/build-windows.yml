@@ -3,7 +3,9 @@ name: Build Windows Client
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    # claude/** too: a working branch gets its own HikkariSetup.exe to try,
+    # and the service/update/uninstall smoke tests run before it merges.
+    branches: [ main, 'claude/**' ]
     tags: [ 'v*' ]
 
 env:
