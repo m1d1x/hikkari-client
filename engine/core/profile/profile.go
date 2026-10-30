@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,12 @@ const (
 	KindEndpoint = "endpoint"
 	KindOutbound = "outbound"
 )
+
+// Shared reports whether the profile's server is one many people use: a
+// server delivered by a provider subscription. Single links and pasted
+// configs are the user's own and stay private for the downdetector unless
+// they opt in.
+func (p Profile) Shared() bool { return p.Subscription != nil }
 
 // Profile is one server entry stored in profiles.json. Config is the
 // sing-box-shaped block (endpoint object for KindEndpoint, outbound object
@@ -603,6 +610,54 @@ func endpointPeerString(ep map[string]interface{}) string {
 	default:
 		return host
 	}
+}
+
+// ProtoSlug is a stable machine name for the profile's protocol stack,
+// e.g. "vless-reality-xhttp" or "hysteria2". Blocks hit protocols, not
+// just hosts, so the downdetector keeps them apart.
+func ProtoSlug(p Profile) string {
+	if p.Connection != nil {
+		return connectionSlug(*p.Connection)
+	}
+	t, _ := p.Config["type"].(string)
+	if t == "" {
+		return ""
+	}
+	parts := []string{strings.ToLower(t)}
+	if tls, ok := p.Config["tls"].(map[string]interface{}); ok {
+		if r, ok := tls["reality"].(map[string]interface{}); ok {
+			if on, _ := r["enabled"].(bool); on {
+				parts = append(parts, "reality")
+			}
+		}
+	}
+	if tr, ok := p.Config["transport"].(map[string]interface{}); ok {
+		if tt, _ := tr["type"].(string); tt != "" {
+			parts = append(parts, strings.ToLower(tt))
+		}
+	}
+	return strings.Join(parts, "-")
+}
+
+// connectionSlug reads the same stack out of a share link: the security
+// and transport query parameters of vless://, trojan:// and friends.
+func connectionSlug(c Connection) string {
+	if c.Protocol == "" {
+		return ""
+	}
+	parts := []string{strings.ToLower(c.Protocol)}
+	u, err := url.Parse(strings.TrimSpace(c.URI))
+	if err != nil || u.RawQuery == "" {
+		return parts[0]
+	}
+	q := u.Query()
+	if q.Get("security") == "reality" {
+		parts = append(parts, "reality")
+	}
+	if t := strings.ToLower(q.Get("type")); t != "" && t != "tcp" {
+		parts = append(parts, t)
+	}
+	return strings.Join(parts, "-")
 }
 
 func prettyProtocol(p Profile) string {

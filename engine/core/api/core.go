@@ -14,16 +14,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"NekkoVPN/core/cleanliness"
+	"NekkoVPN/core/downdetector"
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/logging"
+	"NekkoVPN/core/netinfo"
 	"NekkoVPN/core/presets"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/profile/legacy"
@@ -61,6 +64,9 @@ type Core struct {
 	// (YouTube, Discord, …) measured through the active profile — kept
 	// separate from the per-profile uptime tracker above.
 	serviceUptime *uptime.Tracker
+	// downdetector turns uptime samples into anonymous reports for the
+	// shared downdetector (queued locally only, for now).
+	downdetector *downdetector.Agent
 
 	customServicesMu   sync.RWMutex
 	customServicesPath string
@@ -163,6 +169,15 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	)
 	c.uptime = uptime.New(filepath.Join(baseDir, "uptime-history.json"))
 	c.serviceUptime = uptime.New(filepath.Join(baseDir, "service-uptime-history.json"))
+	c.downdetector = downdetector.New(
+		filepath.Join(baseDir, "downdetector.json"),
+		filepath.Join(baseDir, "downdetector-outbox.json"),
+		downdetector.Deps{
+			Servers: c.downdetectorServers,
+			History: c.uptime.Snapshot,
+			Net:     c.downdetectorNet,
+		},
+	)
 	// Server-cleanliness scoring. Gated on TunnelOK so we never score the
 	// bare ISP IP. IPQS key is optional — dropped as plain text in
 	// baseDir/ipqs-key.txt; absent → fraud-score step is simply skipped.
@@ -194,6 +209,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	}
 	c.uptime.Load()
 	c.serviceUptime.Load()
+	c.downdetector.Load()
 	c.customServicesPath = filepath.Join(baseDir, "custom-services.json")
 	c.loadCustomServices()
 	geoip.Load(filepath.Join(baseDir, "geoip-cache.json"))
@@ -201,11 +217,12 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	probe := uptime.NewLiveProbe(c.backend)
 	// Join every background observer before this Core can be initialized again.
 	// Their providers refer to Core fields, so cancellation alone is insufficient.
-	ctx, tracker, serviceTracker, checker, cleanliness, backend := c.ctx, c.uptime, c.serviceUptime, c.health, c.cleanliness, c.backend
+	ctx, tracker, serviceTracker, checker, cleanliness, backend, reporter := c.ctx, c.uptime, c.serviceUptime, c.health, c.cleanliness, c.backend, c.downdetector
 	var workers sync.WaitGroup
 	run := func(fn func()) { workers.Add(1); go func() { defer workers.Done(); fn() }() }
 	run(func() { tracker.Run(ctx, c.uptimeHosts, probe) })
 	run(func() { serviceTracker.RunServices(ctx, c.activeProfileProvider, c.allServiceTargets, backend) })
+	run(func() { reporter.Run(ctx) })
 	run(func() { checker.Run(ctx) })
 	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {
@@ -380,6 +397,43 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 		})
 	}
 	return out
+}
+
+// downdetectorServers lists every profile as a reportable server. Only
+// subscription servers are shared by default; the user's own servers
+// (single links, pasted configs) need the share_private opt-in.
+func (c *Core) downdetectorServers() []downdetector.Server {
+	pf, err := c.profiles.Read()
+	if err != nil {
+		return nil
+	}
+	out := make([]downdetector.Server, 0, len(pf.Profiles))
+	for _, p := range pf.Profiles {
+		host, port := profile.PeerHostPort(p)
+		if host == "" {
+			continue
+		}
+		proto := profile.ProtoSlug(p)
+		out = append(out, downdetector.Server{
+			Profile: p.Name,
+			ID:      downdetector.ServerID(host, port, proto),
+			Proto:   proto,
+			Private: !p.Shared(),
+		})
+	}
+	return out
+}
+
+// downdetectorNet resolves the ISP baseline IP to provider + area, locally.
+// The IP itself stays here.
+func (c *Core) downdetectorNet() downdetector.Net {
+	ip := net.ParseIP(c.health.DirectIP())
+	if ip == nil {
+		return downdetector.Net{}
+	}
+	country, _ := geoip.LookupIP(ip)
+	ni := netinfo.Lookup(ip)
+	return downdetector.Net{ASN: ni.ASN, Country: country, Region: ni.Area}
 }
 
 func (c *Core) activeProfileProvider() string {

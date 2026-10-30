@@ -18,10 +18,26 @@ import (
 // Sample is one probe of one profile. Stored as a compact JSON array per
 // profile in uptime-history.json.
 type Sample struct {
-	Ts    int64 `json:"ts"`
-	OK    bool  `json:"ok"`
-	RttMs int   `json:"rtt_ms"`
+	Ts    int64  `json:"ts"`
+	OK    bool   `json:"ok"`
+	RttMs int    `json:"rtt_ms"`
+	Src   Source `json:"src,omitempty"`
 }
+
+// Source says how a sample was measured. The signals are not equally
+// strong: only SrcTunnel proves traffic actually passes through the proxy,
+// SrcTCP proves the port accepts a handshake (DPI may still kill the
+// protocol behind it), SrcICMP only proves the host answers pings. The
+// downdetector relies on this distinction — an "ISP blocks it" verdict is
+// only meaningful from tunnel samples. Empty on samples recorded before the
+// field existed.
+type Source string
+
+const (
+	SrcTunnel Source = "tunnel"
+	SrcTCP    Source = "tcp"
+	SrcICMP   Source = "icmp"
+)
 
 const (
 	// PingInterval is the *per-profile* window — every profile is probed
@@ -55,8 +71,10 @@ type HostEntry struct {
 // must be safe to call concurrently.
 type Probe interface {
 	// Run measures one sample. Returns (true, rttMs) on success, (false, 0)
-	// on any failure (timeout, DPI block, engine off + UDP-only port).
-	Run(ctx context.Context, h HostEntry) (ok bool, rttMs int)
+	// on any failure (timeout, DPI block, engine off + UDP-only port). src
+	// is the method that produced the result; on failure, the last method
+	// tried.
+	Run(ctx context.Context, h HostEntry) (ok bool, rttMs int, src Source)
 }
 
 // Tracker is the goroutine-safe in-memory history persisted to JSON on disk.
@@ -200,8 +218,8 @@ func (t *Tracker) runWindow(ctx context.Context, hosts HostProvider, probe Probe
 		wg.Add(1)
 		go func(h HostEntry) {
 			defer wg.Done()
-			ok, rtt := probe.Run(ctx, h)
-			t.record(h.Profile, ok, rtt)
+			ok, rtt, src := probe.Run(ctx, h)
+			t.record(h.Profile, ok, rtt, src)
 		}(h)
 	}
 	// Make sure we don't shorten the window if the last slot's probe is
@@ -219,16 +237,16 @@ func (t *Tracker) runWindow(ctx context.Context, hosts HostProvider, probe Probe
 // Record appends a single sample under key. Exported wrapper over record()
 // for on-demand callers outside this package (e.g. the service-ping path in
 // core/api). Persist with Save() when done.
-func (t *Tracker) Record(key string, ok bool, rttMs int) {
-	t.record(key, ok, rttMs)
+func (t *Tracker) Record(key string, ok bool, rttMs int, src Source) {
+	t.record(key, ok, rttMs, src)
 }
 
-func (t *Tracker) record(profile string, ok bool, rtt int) {
+func (t *Tracker) record(profile string, ok bool, rtt int, src Source) {
 	now := time.Now().Unix()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	hist := t.history[profile]
-	hist = append(hist, Sample{Ts: now, OK: ok, RttMs: rtt})
+	hist = append(hist, Sample{Ts: now, OK: ok, RttMs: rtt, Src: src})
 	if len(hist) > HistoryMax {
 		hist = hist[len(hist)-HistoryMax:]
 	}
@@ -288,9 +306,9 @@ func (t *Tracker) RunServices(ctx context.Context, activeTag ActiveProfileProvid
 				defer wg.Done()
 				ms, err := probe.Delay(tag, svc.URL, PingTimeoutMs)
 				if err != nil {
-					t.record(tag+"|"+svc.Name, false, 0)
+					t.record(tag+"|"+svc.Name, false, 0, SrcTunnel)
 				} else {
-					t.record(tag+"|"+svc.Name, true, ms)
+					t.record(tag+"|"+svc.Name, true, ms, SrcTunnel)
 				}
 			}(svc)
 		}

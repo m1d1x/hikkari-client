@@ -13,6 +13,7 @@ import (
 	"NekkoVPN/core/applist"
 	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/engine"
+	"NekkoVPN/core/downdetector"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/profile"
@@ -465,6 +466,18 @@ func (c *Core) SetAutoMode(on bool) error {
 
 func (c *Core) UptimeHistory() map[string][]PingSample { return c.uptime.Snapshot() }
 
+// ----- downdetector -----
+
+func (c *Core) DowndetectorSettings() downdetector.Settings { return c.downdetector.Settings() }
+
+func (c *Core) SetDowndetectorSettings(s downdetector.Settings) error {
+	return c.downdetector.SetSettings(s)
+}
+
+// DowndetectorLastReport is the latest report exactly as it would be sent,
+// for the "what is sent" screen. nil until the first report is built.
+func (c *Core) DowndetectorLastReport() *downdetector.Report { return c.downdetector.LastReport() }
+
 // ============================================================
 //  Service uptime (on-demand pings of arbitrary user services
 //  through the active profile)
@@ -508,7 +521,7 @@ func (c *Core) PingServices(activeTag string, services []ServicePingTarget) []Se
 	wg.Wait()
 
 	for i, svc := range services {
-		c.serviceUptime.Record(activeTag+"|"+svc.Name, results[i].OK, results[i].RttMs)
+		c.serviceUptime.Record(activeTag+"|"+svc.Name, results[i].OK, results[i].RttMs, uptime.SrcTunnel)
 	}
 	c.serviceUptime.Save()
 
