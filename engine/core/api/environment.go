@@ -6,13 +6,6 @@ import (
 	"runtime/debug"
 )
 
-// diagnoser is implemented by VPN managers that can describe their own
-// install state (the macOS LaunchDaemon one). Kept optional so the mobile
-// and stub managers need nothing.
-type diagnoser interface {
-	Diagnose(reason string)
-}
-
 // logEnvironment writes one block at init describing where and how the
 // engine runs. A field report then starts with the facts we would otherwise
 // have to ask for: OS and CPU, where the app was launched from, which build
@@ -33,7 +26,5 @@ func (c *Core) logEnvironment() {
 			}
 		}
 	}
-	if d, ok := c.vpn.(diagnoser); ok {
-		go d.Diagnose("init")
-	}
+	go c.backend.Diagnose("init")
 }

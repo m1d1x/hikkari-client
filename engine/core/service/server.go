@@ -25,9 +25,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	vpn "NekkoVPN/core/engine/singbox/process"
 	"NekkoVPN/core/logging"
 	"NekkoVPN/core/svcproto"
-	"NekkoVPN/core/vpn"
 )
 
 // Version is stamped at build time (-ldflags -X).

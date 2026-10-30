@@ -14,13 +14,11 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"NekkoVPN/core/vpn"
 )
 
 // RefreshInterval is how often the background loop reprobes. Health() —
 // the public read — is now instant; the actual I/O happens here. Each pass
-// only asks the local Clash API whether the core is alive; the egress IP is
+// only asks the local engine adapter whether the core is alive; the egress IP is
 // fetched far less often (see EgressInterval).
 const RefreshInterval = 2 * time.Second
 
@@ -32,13 +30,13 @@ const RefreshInterval = 2 * time.Second
 const EgressInterval = 60 * time.Second
 
 // startupGrace is how long after the core comes up the egress probe waits:
-// the Clash API answers before sing-box has installed the TUN routes, and a
+// the engine adapter answers before sing-box has installed the TUN routes, and a
 // probe in that gap goes out through the ISP. Seen in the field as a false
 // "broken" right after start.
 const startupGrace = 3 * time.Second
 
 // Consecutive-failure thresholds. A single failed probe means nothing: the
-// Clash API can miss its 2s budget while the core is busy, and one HTTPS
+// engine adapter can miss its 2s budget while the core is busy, and one HTTPS
 // request through a loaded tunnel times out routinely. Reacting to either
 // immediately is what made the UI flap between ok/connecting/off (and, far
 // worse, let a momentary "off" poison the ISP baseline). We only believe a
@@ -56,7 +54,7 @@ const refusedBaselineInterval = 5 * time.Minute
 
 // Info is the canonical state the UI consumes.
 type Info struct {
-	Running  bool   `json:"running"`  // sing-box process answers Clash API
+	Running  bool   `json:"running"`  // engine process is running
 	TunnelOK bool   `json:"tunnelOK"` // egress IP differs from cached ISP IP
 	IP       string `json:"ip"`       // current egress IP, or "" on failure
 	Status   string `json:"status"`   // "off" | "connecting" | "ok" | "broken"
@@ -82,6 +80,7 @@ type Checker struct {
 	directIPPath string
 	log          Logger
 	vpnHosts     VPNHostProvider
+	isRunning    func() bool
 
 	mu          sync.Mutex
 	directIP    string // last-known IP captured while VPN was provably OFF
@@ -89,7 +88,7 @@ type Checker struct {
 	lastStatus  string
 	lastChecked time.Time
 
-	downStreak   int    // consecutive "Clash API silent" readings
+	downStreak   int    // consecutive "engine adapter silent" readings
 	egressStreak int    // consecutive failed egress probes
 	tunnelIP     string // last egress IP seen while the tunnel was up
 
@@ -117,8 +116,12 @@ type Checker struct {
 	upSince      time.Time // when the core was last seen coming up
 }
 
-func New(directIPPath string, log Logger, vpnHosts VPNHostProvider) *Checker {
-	return &Checker{
+func New(directIPPath string, log Logger, vpnHosts VPNHostProvider, running ...func() bool) *Checker {
+	isRunning := func() bool { return false }
+	if len(running) > 0 && running[0] != nil {
+		isRunning = running[0]
+	}
+	return &Checker{isRunning: isRunning,
 		directIPPath: directIPPath,
 		log:          log,
 		vpnHosts:     vpnHosts,
@@ -155,6 +158,15 @@ func (c *Checker) ExternalIP() string {
 		return "—"
 	}
 	return ip
+}
+
+// DirectIP returns the ISP baseline — the IP last seen while the VPN was
+// provably off — or "" if none was captured yet. The downdetector resolves
+// it to a provider (ASN) locally; the IP itself never leaves the device.
+func (c *Checker) DirectIP() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.directIP
 }
 
 // Probe returns the most recent cached health snapshot. Lock-free fast
@@ -200,7 +212,7 @@ func (c *Checker) refresh() {
 //	core up, egress != ISP → "ok"
 func (c *Checker) probeOnce() Info {
 	hi := Info{}
-	hi.Running = vpn.ClashAPIRunning()
+	hi.Running = c.isRunning()
 
 	c.mu.Lock()
 	if hi.Running {
@@ -235,7 +247,7 @@ func (c *Checker) probeOnce() Info {
 	if flipped {
 		egressTransport.CloseIdleConnections()
 	}
-	// The Clash API answers before the TUN routes are in place; an egress
+	// The engine adapter answers before the TUN routes are in place; an egress
 	// probe in that window leaves through the ISP and reads as a leak.
 	if hi.Running && upFor < startupGrace {
 		hi.Status = "connecting"

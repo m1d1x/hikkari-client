@@ -1,8 +1,12 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import 'app_discovery.dart';
 import 'envelope.dart';
 import 'models.dart';
+import 'routing_presets.dart';
+import 'routing_document.dart';
 
 /// Platform-agnostic surface to the nekkobox engine. The desktop binding
 /// (nekkobox_ffi.dart) implements [rawCall] over `dart:ffi`; mobile will
@@ -36,17 +40,30 @@ abstract class NekkoboxCore {
     return env.unwrap();
   }
 
-  Future<Object?> _callAsync(String method, [Map<String, Object?>? args]) async {
+  Future<Object?> _callAsync(
+    String method, [
+    Map<String, Object?>? args,
+  ]) async {
     final raw = await rawCallAsync(
-        method, args == null ? '' : jsonEncode(args));
+      method,
+      args == null ? '' : jsonEncode(args),
+    );
     final env = Envelope.fromJson(jsonDecode(raw) as Map<String, dynamic>);
     return env.unwrap();
   }
 
   // ----- lifecycle (sync bootstrap) -----
 
-  void init(String baseDir) {
-    _call('Init', {'baseDir': baseDir});
+  void init(
+    String baseDir, {
+    String engineId = '',
+    bool routingPreview = false,
+  }) {
+    _call('Init', {
+      'baseDir': baseDir,
+      'engineId': engineId,
+      'routingPreview': routingPreview,
+    });
   }
 
   void shutdown() {
@@ -60,10 +77,18 @@ abstract class NekkoboxCore {
   Future<void> stopVpnAsync() => _callAsync('StopVPN');
   Future<bool> isRunning() async => await _callAsync('IsRunning') as bool;
 
+  Future<EngineInfo> engineInfo() async => EngineInfo.fromJson(
+    await _callAsync('EngineInfo') as Map<String, dynamic>,
+  );
+
+  Future<void> validateConfiguration() =>
+      _callAsync('ValidateConfiguration').then((_) {});
+
   // ----- updates (Windows; see contract.md) -----
 
   Future<UpdateStatus> updateStatus() async => UpdateStatus.fromJson(
-      await _callAsync('UpdateStatus') as Map<String, dynamic>);
+    await _callAsync('UpdateStatus') as Map<String, dynamic>,
+  );
   Future<void> checkUpdate() => _callAsync('CheckUpdate');
 
   /// Hands over to the launcher; the app must exit right after this returns.
@@ -79,7 +104,8 @@ abstract class NekkoboxCore {
   /// "Whiteness" of the active egress — cached engine-side, instant read.
   Future<ServerCleanliness> serverCleanliness() async =>
       ServerCleanliness.fromJson(
-          await _callAsync('ServerCleanliness') as Map<String, dynamic>);
+        await _callAsync('ServerCleanliness') as Map<String, dynamic>,
+      );
 
   // ----- logs -----
 
@@ -87,8 +113,39 @@ abstract class NekkoboxCore {
 
   // ----- routing -----
 
-  Future<RoutingState> routing() async =>
-      RoutingState.fromJson(await _callAsync('Routing') as Map<String, dynamic>);
+  Future<RoutingApplicationSnapshot> routingStatus() async =>
+      RoutingApplicationSnapshot.fromJson(
+        await _callAsync('RoutingStatus') as Map<String, dynamic>,
+      );
+
+  Future<void> flushRouting() => _callAsync('FlushRouting');
+
+  Future<RoutingDocument> routingDocument() async => RoutingDocument.fromJson(
+    await _callAsync('RoutingDocument') as Map<String, dynamic>,
+  );
+
+  Future<RoutingDocumentPreview> previewRoutingDocument(
+    RoutingDocument document,
+  ) async => RoutingDocumentPreview.fromJson(
+    await _callAsync('PreviewRoutingDocument', {'document': document.toJson()})
+        as Map<String, dynamic>,
+  );
+
+  Future<RoutingPresets> routingPresets() async => RoutingPresets.fromJson(
+    await _callAsync('RoutingPresets') as Map<String, dynamic>,
+  );
+
+  Future<void> setPresetSync(bool on) =>
+      _callAsync('SetPresetSync', {'on': on});
+
+  Future<void> setServicePreset(RoutingMode mode, String id, bool on) =>
+      _callAsync('SetServicePreset', {'mode': mode.wire, 'id': id, 'on': on});
+
+  Future<void> refreshRoutingPresets() => _callAsync('RefreshRoutingPresets');
+
+  Future<RoutingState> routing() async => RoutingState.fromJson(
+    await _callAsync('Routing') as Map<String, dynamic>,
+  );
 
   Future<void> setRoutingEnabled(bool on) =>
       _callAsync('SetRoutingEnabled', {'on': on});
@@ -97,24 +154,29 @@ abstract class NekkoboxCore {
       _callAsync('SetRoutingMode', {'mode': mode.wire});
 
   Future<void> addRule(RoutingMode mode, String category, String value) =>
-      _callAsync(
-        'AddRule',
-        {'mode': mode.wire, 'category': category, 'value': value},
-      );
+      _callAsync('AddRule', {
+        'mode': mode.wire,
+        'category': category,
+        'value': value,
+      });
 
   Future<void> removeRule(RoutingMode mode, String category, String value) =>
-      _callAsync(
-        'RemoveRule',
-        {'mode': mode.wire, 'category': category, 'value': value},
-      );
+      _callAsync('RemoveRule', {
+        'mode': mode.wire,
+        'category': category,
+        'value': value,
+      });
 
   // ----- profiles -----
 
-  Future<List<ProfileInfo>> profiles() async => (await _callAsync('Profiles')
-          as List)
-      .cast<Map<String, dynamic>>()
-      .map(ProfileInfo.fromJson)
-      .toList();
+  /// Lifecycle hint; synchronization and throttling remain in the engine.
+  Future<void> subscriptionWake() => _callAsync('SubscriptionWake');
+
+  Future<List<ProfileInfo>> profiles() async =>
+      (await _callAsync('Profiles') as List)
+          .cast<Map<String, dynamic>>()
+          .map(ProfileInfo.fromJson)
+          .toList();
 
   Future<String> activeProfile() async =>
       await _callAsync('ActiveProfile') as String;
@@ -159,13 +221,15 @@ abstract class NekkoboxCore {
 
   Future<Map<String, List<PingSample>>> uptimeHistory() async {
     final raw = await _callAsync('UptimeHistory') as Map<String, dynamic>;
-    return raw.map((k, v) => MapEntry(
-          k,
-          (v as List)
-              .cast<Map<String, dynamic>>()
-              .map(PingSample.fromJson)
-              .toList(),
-        ));
+    return raw.map(
+      (k, v) => MapEntry(
+        k,
+        (v as List)
+            .cast<Map<String, dynamic>>()
+            .map(PingSample.fromJson)
+            .toList(),
+      ),
+    );
   }
 
   // ----- service uptime -----
@@ -174,11 +238,11 @@ abstract class NekkoboxCore {
   /// one result per service (order preserved). Also records each outcome in
   /// the service uptime history (see [serviceUptimeHistory]).
   Future<List<ServicePingResultDto>> pingServices(
-    String activeTag,
+    String profileId,
     List<ServicePingTargetDto> services,
   ) async {
     final data = await _callAsync('PingServices', {
-      'activeTag': activeTag,
+      'profileId': profileId,
       'services': services.map((s) => s.toJson()).toList(),
     });
     return (data as List)
@@ -188,16 +252,19 @@ abstract class NekkoboxCore {
   }
 
   /// Rolling history of on-demand service pings, keyed by
-  /// `"<activeTag>|<service name>"`.
+  /// `"<profileId>|<service name>"`.
   Future<Map<String, List<PingSample>>> serviceUptimeHistory() async {
-    final raw = await _callAsync('ServiceUptimeHistory') as Map<String, dynamic>;
-    return raw.map((k, v) => MapEntry(
-          k,
-          (v as List)
-              .cast<Map<String, dynamic>>()
-              .map(PingSample.fromJson)
-              .toList(),
-        ));
+    final raw =
+        await _callAsync('ServiceUptimeHistory') as Map<String, dynamic>;
+    return raw.map(
+      (k, v) => MapEntry(
+        k,
+        (v as List)
+            .cast<Map<String, dynamic>>()
+            .map(PingSample.fromJson)
+            .toList(),
+      ),
+    );
   }
 
   // ----- custom services -----
@@ -219,12 +286,27 @@ abstract class NekkoboxCore {
 
   // ----- app discovery -----
 
-  Future<List<DiscoveredApp>> listApps({bool all = false}) async {
-    final data = await _callAsync('ListApps', {'all': all});
-    if (data == null) return [];
-    return (data as List)
-        .cast<Map<String, dynamic>>()
-        .map(DiscoveredApp.fromJson)
-        .toList();
-  }
+  final _appRequests = <bool, Future<List<DiscoveredApp>>>{};
+
+  Future<List<DiscoveredApp>> listApps({bool all = false}) =>
+      _appRequests.putIfAbsent(all, () async {
+        try {
+          final raw = await rawCallAsync('ListApps', jsonEncode({'all': all}));
+          // JSON and base64 icons can be large even when FFI itself is async.
+          return await compute(_decodeApps, raw);
+        } finally {
+          _appRequests.remove(all);
+        }
+      });
+}
+
+List<DiscoveredApp> _decodeApps(String raw) {
+  final data = Envelope.fromJson(
+    jsonDecode(raw) as Map<String, dynamic>,
+  ).unwrap();
+  if (data == null) return [];
+  return (data as List)
+      .cast<Map<String, dynamic>>()
+      .map(DiscoveredApp.fromJson)
+      .toList();
 }

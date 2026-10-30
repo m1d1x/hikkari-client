@@ -111,9 +111,7 @@ class _NekkoInlineEditFieldState extends State<NekkoInlineEditField> {
       height: widget.height,
       alignment: Alignment.centerLeft,
       decoration: BoxDecoration(
-        color: _editing
-            ? t.bg
-            : (_hovered ? t.surface2 : Colors.transparent),
+        color: _editing ? t.bg : (_hovered ? t.surface2 : Colors.transparent),
         borderRadius: BorderRadius.circular(t.radius),
         border: Border.all(
           color: _editing

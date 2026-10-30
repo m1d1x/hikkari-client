@@ -12,10 +12,10 @@ import 'nekkobox_core.dart';
 //   void  NekkoboxFree(char* result);
 //   void  NekkoboxShutdown();
 
-typedef _CallC = ffi.Pointer<Utf8> Function(
-    ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
-typedef _CallDart = ffi.Pointer<Utf8> Function(
-    ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
+typedef _CallC =
+    ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
+typedef _CallDart =
+    ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
 typedef _FreeC = ffi.Void Function(ffi.Pointer<Utf8>);
 typedef _FreeDart = void Function(ffi.Pointer<Utf8>);
 
@@ -117,11 +117,10 @@ class NekkoboxCoreFfi extends NekkoboxCore {
   }
 
   Future<void> _spawnWorker() async {
-    await Isolate.spawn(
-      _workerMain,
-      [_fromWorker.sendPort, _libName()],
-      debugName: 'nekkobox-engine',
-    );
+    await Isolate.spawn(_workerMain, [
+      _fromWorker.sendPort,
+      _libName(),
+    ], debugName: 'nekkobox-engine');
     // The worker's first message is its own SendPort; [_onWorkerMessage]
     // completes [_workerReady] once it arrives.
     await _workerReady.future;

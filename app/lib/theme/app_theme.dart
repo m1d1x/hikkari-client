@@ -87,8 +87,7 @@ ThemeData buildAppTheme() {
       filled: true,
       fillColor: t.surface2,
       hintStyle: TextStyle(color: t.textFaint),
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(t.radius),
         borderSide: BorderSide(color: t.border),

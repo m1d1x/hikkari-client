@@ -18,12 +18,12 @@ class HealthInfo {
   });
 
   factory HealthInfo.fromJson(Map<String, dynamic> j) => HealthInfo(
-        running: j['running'] as bool? ?? false,
-        tunnelOK: j['tunnelOK'] as bool? ?? false,
-        ip: j['ip'] as String? ?? '',
-        status: j['status'] as String? ?? 'off',
-        message: j['message'] as String? ?? '',
-      );
+    running: j['running'] as bool? ?? false,
+    tunnelOK: j['tunnelOK'] as bool? ?? false,
+    ip: j['ip'] as String? ?? '',
+    status: j['status'] as String? ?? 'off',
+    message: j['message'] as String? ?? '',
+  );
 
   @override
   String toString() =>
@@ -144,8 +144,7 @@ class ServerCleanliness {
         verdict: j['verdict'] as String? ?? 'off',
         message: j['message'] as String? ?? '',
         reasons: (j['reasons'] as List<dynamic>? ?? const [])
-            .map((e) =>
-                CleanlinessReason.fromJson(e as Map<String, dynamic>))
+            .map((e) => CleanlinessReason.fromJson(e as Map<String, dynamic>))
             .toList(),
         checkedAt: j['checkedAt'] as String? ?? '',
       );
@@ -188,6 +187,7 @@ class ProfileInfo {
   final bool active;
   final String endpoint;
   final String protocol;
+  final SubscriptionInfo? subscription;
 
   const ProfileInfo({
     required this.name,
@@ -195,15 +195,55 @@ class ProfileInfo {
     required this.active,
     required this.endpoint,
     required this.protocol,
+    this.subscription,
   });
 
   factory ProfileInfo.fromJson(Map<String, dynamic> j) => ProfileInfo(
-        name: j['name'] as String? ?? '',
-        label: j['label'] as String? ?? '',
-        active: j['active'] as bool? ?? false,
-        endpoint: j['endpoint'] as String? ?? '',
-        protocol: j['protocol'] as String? ?? '',
-      );
+    name: j['name'] as String? ?? '',
+    label: j['label'] as String? ?? '',
+    active: j['active'] as bool? ?? false,
+    endpoint: j['endpoint'] as String? ?? '',
+    protocol: j['protocol'] as String? ?? '',
+    subscription: j['subscription'] is Map<String, dynamic>
+        ? SubscriptionInfo.fromJson(j['subscription'] as Map<String, dynamic>)
+        : null,
+  );
+}
+
+class SubscriptionInfo {
+  final String id;
+  final String title;
+  final int uploadBytes;
+  final int downloadBytes;
+  final int totalBytes;
+  final int expiresAt;
+  final int updateIntervalSeconds;
+  final String webPageUrl;
+  final String supportUrl;
+
+  const SubscriptionInfo({
+    required this.id,
+    required this.title,
+    required this.uploadBytes,
+    required this.downloadBytes,
+    required this.totalBytes,
+    required this.expiresAt,
+    required this.updateIntervalSeconds,
+    required this.webPageUrl,
+    required this.supportUrl,
+  });
+
+  factory SubscriptionInfo.fromJson(Map<String, dynamic> j) => SubscriptionInfo(
+    id: j['id'] as String? ?? '',
+    title: j['title'] as String? ?? '',
+    uploadBytes: (j['uploadBytes'] as num?)?.toInt() ?? 0,
+    downloadBytes: (j['downloadBytes'] as num?)?.toInt() ?? 0,
+    totalBytes: (j['totalBytes'] as num?)?.toInt() ?? 0,
+    expiresAt: (j['expiresAt'] as num?)?.toInt() ?? 0,
+    updateIntervalSeconds: (j['updateIntervalSeconds'] as num?)?.toInt() ?? 0,
+    webPageUrl: j['webPageUrl'] as String? ?? '',
+    supportUrl: j['supportUrl'] as String? ?? '',
+  );
 }
 
 /// Split-routing mode. Mirrors Go's `configfile.RoutingMode`.
@@ -231,9 +271,9 @@ class RouteList {
   });
 
   const RouteList.empty()
-      : domains = const [],
-        ips = const [],
-        processes = const [];
+    : domains = const [],
+      ips = const [],
+      processes = const [];
 
   factory RouteList.fromJson(Map<String, dynamic>? j) {
     if (j == null) return const RouteList.empty();
@@ -248,17 +288,17 @@ class RouteList {
     List<String>? domains,
     List<String>? ips,
     List<String>? processes,
-  }) =>
-      RouteList(
-        domains: domains ?? this.domains,
-        ips: ips ?? this.ips,
-        processes: processes ?? this.processes,
-      );
+  }) => RouteList(
+    domains: domains ?? this.domains,
+    ips: ips ?? this.ips,
+    processes: processes ?? this.processes,
+  );
 
   /// Returns a new list with [value] appended to the given [category],
   /// deduped case-insensitively. Same semantics as the Go side.
   RouteList withAdded(String category, String value) {
-    bool seen(List<String> xs) => xs.any((v) => v.toLowerCase() == value.toLowerCase());
+    bool seen(List<String> xs) =>
+        xs.any((v) => v.toLowerCase() == value.toLowerCase());
     switch (category) {
       case 'domains':
         return seen(domains) ? this : copyWith(domains: [...domains, value]);
@@ -304,18 +344,17 @@ class RoutingState {
   });
 
   const RoutingState.initial()
-      : enabled = true,
-        mode = RoutingMode.bypass,
-        bypass = const RouteList.empty(),
-        proxy = const RouteList.empty();
+    : enabled = true,
+      mode = RoutingMode.bypass,
+      bypass = const RouteList.empty(),
+      proxy = const RouteList.empty();
 
   factory RoutingState.fromJson(Map<String, dynamic> j) => RoutingState(
-        enabled: j['enabled'] as bool? ?? true,
-        mode: RoutingMode.fromWire(j['mode'] as String?),
-        bypass:
-            RouteList.fromJson(j['bypass'] as Map<String, dynamic>?),
-        proxy: RouteList.fromJson(j['proxy'] as Map<String, dynamic>?),
-      );
+    enabled: j['enabled'] as bool? ?? true,
+    mode: RoutingMode.fromWire(j['mode'] as String?),
+    bypass: RouteList.fromJson(j['bypass'] as Map<String, dynamic>?),
+    proxy: RouteList.fromJson(j['proxy'] as Map<String, dynamic>?),
+  );
 
   /// Returns the active list for the current mode.
   RouteList get active => mode == RoutingMode.bypass ? bypass : proxy;
@@ -325,13 +364,12 @@ class RoutingState {
     RoutingMode? mode,
     RouteList? bypass,
     RouteList? proxy,
-  }) =>
-      RoutingState(
-        enabled: enabled ?? this.enabled,
-        mode: mode ?? this.mode,
-        bypass: bypass ?? this.bypass,
-        proxy: proxy ?? this.proxy,
-      );
+  }) => RoutingState(
+    enabled: enabled ?? this.enabled,
+    mode: mode ?? this.mode,
+    bypass: bypass ?? this.bypass,
+    proxy: proxy ?? this.proxy,
+  );
 }
 
 class PingSample {
@@ -342,10 +380,10 @@ class PingSample {
   const PingSample({required this.ts, required this.ok, required this.rttMs});
 
   factory PingSample.fromJson(Map<String, dynamic> j) => PingSample(
-        ts: j['ts'] as int? ?? 0,
-        ok: j['ok'] as bool? ?? false,
-        rttMs: j['rtt_ms'] as int? ?? 0,
-      );
+    ts: j['ts'] as int? ?? 0,
+    ok: j['ok'] as bool? ?? false,
+    rttMs: j['rtt_ms'] as int? ?? 0,
+  );
 }
 
 /// A single user service to probe through the active profile. Mirrors Go's
@@ -387,9 +425,47 @@ class CustomService {
   const CustomService({required this.name, required this.url});
 
   factory CustomService.fromJson(Map<String, dynamic> j) => CustomService(
-        name: j['Name'] as String? ?? '',
-        url: j['URL'] as String? ?? '',
-      );
+    name: j['Name'] as String? ?? '',
+    url: j['URL'] as String? ?? '',
+  );
+}
+
+/// Adapter capabilities: feature support belongs to the selected engine.
+class EngineInfo {
+  final String id;
+  final String name;
+  final bool tun;
+  final bool domainRouting;
+  final bool ipRouting;
+  final bool autoSelect;
+  final bool liveProfileSwitch;
+  final bool profileProbe;
+  final bool processRouting;
+  const EngineInfo({
+    required this.id,
+    required this.name,
+    required this.tun,
+    required this.domainRouting,
+    required this.ipRouting,
+    required this.autoSelect,
+    required this.liveProfileSwitch,
+    required this.profileProbe,
+    required this.processRouting,
+  });
+  factory EngineInfo.fromJson(Map<String, dynamic> json) {
+    final caps = json['capabilities'] as Map<String, dynamic>? ?? const {};
+    return EngineInfo(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      tun: caps['tun'] as bool? ?? false,
+      domainRouting: caps['domainRouting'] as bool? ?? false,
+      ipRouting: caps['ipRouting'] as bool? ?? false,
+      autoSelect: caps['autoSelect'] as bool? ?? false,
+      liveProfileSwitch: caps['liveProfileSwitch'] as bool? ?? false,
+      profileProbe: caps['profileProbe'] as bool? ?? false,
+      processRouting: caps['processRouting'] as bool? ?? false,
+    );
+  }
 }
 
 /// Dart projection of Go's `svcproto.UpdateState` — what HikkariService
@@ -419,12 +495,12 @@ class UpdateStatus {
   bool get isDownloading => state == 'downloading';
 
   factory UpdateStatus.fromJson(Map<String, dynamic> j) => UpdateStatus(
-        state: j['state'] as String? ?? 'unavailable',
-        installed: j['installed'] as String? ?? '',
-        version: j['version'] as String? ?? '',
-        mandatory: j['mandatory'] as bool? ?? false,
-        bytesDone: (j['bytesDone'] as num?)?.toInt() ?? 0,
-        bytesTotal: (j['bytesTotal'] as num?)?.toInt() ?? 0,
-        error: j['error'] as String? ?? '',
-      );
+    state: j['state'] as String? ?? 'unavailable',
+    installed: j['installed'] as String? ?? '',
+    version: j['version'] as String? ?? '',
+    mandatory: j['mandatory'] as bool? ?? false,
+    bytesDone: (j['bytesDone'] as num?)?.toInt() ?? 0,
+    bytesTotal: (j['bytesTotal'] as num?)?.toInt() ?? 0,
+    error: j['error'] as String? ?? '',
+  );
 }

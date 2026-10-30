@@ -5,7 +5,7 @@ package api
 import (
 	"path/filepath"
 
-	"NekkoVPN/core/vpn"
+	vpn "NekkoVPN/core/engine/singbox/process"
 )
 
 // newDesktopVPN: the core is owned by HikkariService (LocalSystem on Windows,

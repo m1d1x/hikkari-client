@@ -31,8 +31,9 @@ class _ProfilesListState extends State<ProfilesList> {
               profile: profiles[i],
               expanded: _expanded == profiles[i].name,
               onToggleExpand: () => setState(() {
-                _expanded =
-                    _expanded == profiles[i].name ? null : profiles[i].name;
+                _expanded = _expanded == profiles[i].name
+                    ? null
+                    : profiles[i].name;
               }),
             ),
         ],

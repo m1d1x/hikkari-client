@@ -42,7 +42,7 @@ class _UpdateBannerState extends State<UpdateBanner> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final state = context.watch<AppState>();
-    final u = state.update;
+    final u = state.updateStatus;
 
     return AnimatedSize(
       duration: const Duration(milliseconds: 200),
@@ -55,7 +55,7 @@ class _UpdateBannerState extends State<UpdateBanner> {
   }
 
   Widget _card(NekkoTokens t, AppState state) {
-    final u = state.update;
+    final u = state.updateStatus;
     final mandatory = u.mandatory;
     final active = _hover && !_restarting;
     final accent = mandatory ? t.warn : t.primary;

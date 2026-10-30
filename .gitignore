@@ -53,10 +53,6 @@ profiles.json
 uptime-history.json
 direct-ip.txt
 subscription-device-id
-routing-presets.json
-xray-transport.json
-xray.json
-xray-runtime.json
 
 # === Env / Secrets (никогда не коммитим) ===
 .env
@@ -94,3 +90,8 @@ engine/cmd/*/*.syso
 /AGENTS.md
 .claude/
 .omc/
+routing-presets.json
+xray-transport.json
+xray.json
+xray-runtime.json
+.cursor/

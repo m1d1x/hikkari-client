@@ -16,12 +16,16 @@ class NekkoSegmented extends StatelessWidget {
   final List<NekkoSegment> segments;
   final String selected;
   final ValueChanged<String> onChanged;
+  final double fontSize;
+  final FontWeight fontWeight;
 
   const NekkoSegmented({
     super.key,
     required this.segments,
     required this.selected,
     required this.onChanged,
+    this.fontSize = 12,
+    this.fontWeight = FontWeight.w500,
   });
 
   @override
@@ -43,6 +47,8 @@ class NekkoSegmented extends StatelessWidget {
               child: _Pill(
                 label: segments[i].label,
                 active: selected == segments[i].value,
+                fontSize: fontSize,
+                fontWeight: fontWeight,
                 onTap: () => onChanged(segments[i].value),
               ),
             ),
@@ -57,10 +63,14 @@ class _Pill extends StatefulWidget {
   final String label;
   final bool active;
   final VoidCallback onTap;
+  final double fontSize;
+  final FontWeight fontWeight;
   const _Pill({
     required this.label,
     required this.active,
     required this.onTap,
+    required this.fontSize,
+    required this.fontWeight,
   });
 
   @override
@@ -88,8 +98,8 @@ class _PillState extends State<_Pill> {
             color: active
                 ? t.surface2
                 : (hoverInactive
-                    ? t.surface2.withValues(alpha: 0.4)
-                    : Colors.transparent),
+                      ? t.surface2.withValues(alpha: 0.4)
+                      : Colors.transparent),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Center(
@@ -102,8 +112,8 @@ class _PillState extends State<_Pill> {
                 widget.label,
                 style: TextStyle(
                   color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+                  fontSize: widget.fontSize,
+                  fontWeight: widget.fontWeight,
                   height: 1,
                 ),
               ),

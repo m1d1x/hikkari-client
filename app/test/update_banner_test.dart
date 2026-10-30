@@ -55,7 +55,7 @@ void main() {
   }
 }
 
-/// The card reads only AppState.update; nothing may reach the engine.
+/// The card reads only AppState.updateStatus; nothing may reach the engine.
 class _NoCore implements NekkoboxCore {
   @override
   dynamic noSuchMethod(Invocation invocation) =>

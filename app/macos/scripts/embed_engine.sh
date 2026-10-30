@@ -77,6 +77,24 @@ else
   echo "warning: $SINGBOX missing — the app builds but cannot start the VPN core"
 fi
 
+# --- pinned Xray transport ------------------------------------------------
+XRAY="$REPO_ROOT/archive/xray"
+if [ ! -f "$XRAY" ]; then
+  echo "error: pinned Xray missing; run python3 bench/fetch_xray.py" >&2
+  exit 1
+fi
+if ! "$XRAY" version | head -n 1 | grep -q '^Xray 26\.10\.21 '; then
+  echo "error: expected Xray 26.10.21" >&2
+  exit 1
+fi
+mkdir -p "$RESOURCES"
+cp -f "$XRAY" "$RESOURCES/xray"
+chmod +x "$RESOURCES/xray"
+codesign --force --timestamp=none --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$RESOURCES/xray"
+if [ -f "$REPO_ROOT/archive/xray.LICENSE" ]; then
+  cp -f "$REPO_ROOT/archive/xray.LICENSE" "$RESOURCES/xray.LICENSE"
+fi
+
 # Both files above land in the bundle behind Xcode's back. On a clean build
 # the CodeSign step that follows seals them; on an incremental build Xcode
 # sees no changed inputs, skips signing, and the bundle is left with a stale
@@ -84,6 +102,16 @@ fi
 # result identical either way.
 APP_BUNDLE="$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app"
 SIGN_ARGS="--force --timestamp=none --sign ${EXPANDED_CODE_SIGN_IDENTITY:--}"
+# Flutter's macOS debug configuration places the Dart VM and preview dylibs
+# beside the executable. Sign them before sealing the app bundle; otherwise
+# codesign rejects the app because these nested code objects are still unsigned.
+if [ -d "$APP_BUNDLE/Contents/MacOS" ]; then
+  for DEBUG_DYLIB in "$APP_BUNDLE"/Contents/MacOS/*.dylib; do
+    [ -f "$DEBUG_DYLIB" ] || continue
+    codesign --force --timestamp=none \
+      --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$DEBUG_DYLIB"
+  done
+fi
 if [ -n "$CODE_SIGN_ENTITLEMENTS" ]; then
   SIGN_ARGS="$SIGN_ARGS --entitlements $SRCROOT/$CODE_SIGN_ENTITLEMENTS"
 fi

@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"NekkoVPN/core/downdetector"
 )
 
 // polledMethods are the calls the UI makes on a timer. Tracing them on every
@@ -24,7 +26,8 @@ import (
 var polledMethods = map[string]bool{
 	"IsRunning": true, "Health": true, "ExternalIP": true, "LogTail": true,
 	"Routing": true, "ServerCleanliness": true, "ListApps": true,
-	"UpdateStatus": true,
+	"RoutingPresets": true,
+	"UpdateStatus":   true,
 }
 
 // traceCall writes one line per FFI call into the engine log, so a pasted log
@@ -83,16 +86,27 @@ func (c *Core) Call(method, argsJSON string) string {
 // to stay readable.
 func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 	switch method {
+	case "EngineInfo":
+		return c.EngineInfo(), nil
+	case "ValidateConfiguration":
+		return nil, c.ValidateConfiguration()
 
 	// ----- lifecycle -----
 	case "Init":
 		var a struct {
-			BaseDir string `json:"baseDir"`
+			BaseDir        string `json:"baseDir"`
+			EngineID       string `json:"engineId"`
+			RoutingPreview bool   `json:"routingPreview"`
 		}
 		if err := decodeArgs(argsJSON, &a); err != nil {
 			return nil, err
 		}
-		return nil, c.Init(a.BaseDir)
+		c.mu.Lock()
+		if c.ctx == nil {
+			c.routingPreview = a.RoutingPreview
+		}
+		c.mu.Unlock()
+		return nil, c.InitForEngine(a.BaseDir, a.EngineID)
 	case "Shutdown":
 		return nil, c.Shutdown()
 
@@ -119,6 +133,42 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return c.LogTail(), nil
 
 	// ----- routing -----
+	case "RoutingPresets":
+		return c.RoutingPresets(), nil
+	case "SetPresetSync":
+		var a struct {
+			On bool `json:"on"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetPresetSync(a.On)
+	case "SetServicePreset":
+		var a struct {
+			Mode string `json:"mode"`
+			ID   string `json:"id"`
+			On   bool   `json:"on"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetServicePreset(a.Mode, a.ID, a.On)
+	case "RefreshRoutingPresets":
+		return nil, c.RefreshRoutingPresets()
+	case "RoutingStatus":
+		return c.RoutingStatus(), nil
+	case "FlushRouting":
+		return nil, c.FlushRouting()
+	case "RoutingDocument":
+		return c.RoutingDocument()
+	case "PreviewRoutingDocument":
+		var a struct {
+			Document json.RawMessage `json:"document"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return c.PreviewRoutingDocument(string(a.Document))
 	case "Routing":
 		return c.Routing()
 	case "SetRoutingEnabled":
@@ -159,6 +209,9 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return nil, c.RemoveRule(a.Mode, a.Category, a.Value)
 
 	// ----- profiles -----
+	case "SubscriptionWake":
+		c.SubscriptionWake()
+		return nil, nil
 	case "Profiles":
 		return c.Profiles()
 	case "ActiveProfile":
@@ -221,16 +274,32 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 	case "UptimeHistory":
 		return c.UptimeHistory(), nil
 
+	// ----- downdetector -----
+	case "DowndetectorSettings":
+		return c.DowndetectorSettings(), nil
+	case "SetDowndetectorSettings":
+		var a downdetector.Settings
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetDowndetectorSettings(a)
+	case "DowndetectorLastReport":
+		return c.DowndetectorLastReport(), nil
+
 	// ----- service uptime -----
 	case "PingServices":
 		var a struct {
+			ProfileID string              `json:"profileId"`
 			ActiveTag string              `json:"activeTag"`
 			Services  []ServicePingTarget `json:"services"`
 		}
 		if err := decodeArgs(argsJSON, &a); err != nil {
 			return nil, err
 		}
-		return c.PingServices(a.ActiveTag, a.Services), nil
+		if a.ProfileID == "" {
+			a.ProfileID = strings.TrimPrefix(a.ActiveTag, "p-")
+		}
+		return c.PingServices(a.ProfileID, a.Services), nil
 	case "ServiceUptimeHistory":
 		return c.ServiceUptimeHistory(), nil
 

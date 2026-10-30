@@ -3,6 +3,7 @@
 // widgets/.
 
 import 'dart:io' show Directory, File, Platform;
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -56,7 +57,8 @@ class _BootGate extends StatefulWidget {
   State<_BootGate> createState() => _BootGateState();
 }
 
-class _BootGateState extends State<_BootGate> with WindowListener {
+class _BootGateState extends State<_BootGate>
+    with WidgetsBindingObserver, WindowListener {
   NekkoboxCore? _core;
   AppState? _state;
   String? _bootError;
@@ -68,6 +70,7 @@ class _BootGateState extends State<_BootGate> with WindowListener {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (_desktop) {
       // Closing the window must go through [onWindowClose]: on Windows the
       // core lives in HikkariService, not in this process, so nothing stops
@@ -94,11 +97,33 @@ class _BootGateState extends State<_BootGate> with WindowListener {
     _core?.shutdown();
   }
 
-  void _boot() {
+  Future<void> _boot() async {
     try {
       final core = NekkoboxCoreFfi.open();
-      core.init(_baseDir());
-      final state = AppState(core)..start();
+      final baseDir = _baseDir();
+      final selection = File('$baseDir/engine-selection.json');
+      var engineId = const String.fromEnvironment('HIKKARI_ENGINE');
+      if (await selection.exists()) {
+        try {
+          final value =
+              jsonDecode(await selection.readAsString())
+                  as Map<String, dynamic>;
+          final saved = value['engineId'];
+          if (saved == 'sing-box' || saved == 'xray') {
+            engineId = saved as String;
+          }
+        } catch (_) {
+          // Invalid preference is ignored; the selected default remains explicit.
+        }
+      }
+      if (engineId != 'xray') engineId = 'sing-box';
+      core.init(baseDir, engineId: engineId, routingPreview: kRoutingDryRun);
+      final state = AppState(
+        core,
+        baseDir: baseDir,
+        routingPreview: kRoutingDryRun,
+        engineId: engineId,
+      )..start();
       setState(() {
         _core = core;
         _state = state;
@@ -118,6 +143,12 @@ class _BootGateState extends State<_BootGate> with WindowListener {
   /// installer (HikkariService.exe install) migrates a portable install's
   /// files into it.
   String _baseDir() {
+    // Isolate real-engine desktop checks from the user's saved profiles.
+    const override = String.fromEnvironment('NEKKOBOX_DATA_DIR');
+    if (override.isNotEmpty) {
+      final dir = Directory(override)..createSync(recursive: true);
+      return dir.path;
+    }
     final Directory dir;
     if (Platform.isMacOS) {
       final home = Platform.environment['HOME'] ?? '';
@@ -136,7 +167,13 @@ class _BootGateState extends State<_BootGate> with WindowListener {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _state?.onAppResumed();
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (_desktop) windowManager.removeListener(this);
     _shutdown();
     super.dispose();
@@ -181,9 +218,14 @@ class _BootError extends StatelessWidget {
           children: [
             Icon(Icons.error_outline, color: t.bad, size: 48),
             const SizedBox(height: 12),
-            Text('FFI init failed',
-                style: TextStyle(
-                    color: t.text, fontSize: 18, fontWeight: FontWeight.w600)),
+            Text(
+              'FFI init failed',
+              style: TextStyle(
+                color: t.text,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),

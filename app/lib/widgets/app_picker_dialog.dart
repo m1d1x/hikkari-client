@@ -79,8 +79,9 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
       if (!mounted) return;
       final mainExes = _mainApps.map((a) => a.exe.toLowerCase()).toSet();
       setState(() {
-        _extraApps =
-            all.where((a) => !mainExes.contains(a.exe.toLowerCase())).toList();
+        _extraApps = all
+            .where((a) => !mainExes.contains(a.exe.toLowerCase()))
+            .toList();
       });
     }
   }
@@ -102,8 +103,9 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
     final all = await context.read<AppState>().core.listApps(all: true);
     if (!mounted) return;
     final mainExes = _mainApps.map((a) => a.exe.toLowerCase()).toSet();
-    final complement =
-        all.where((a) => !mainExes.contains(a.exe.toLowerCase())).toList();
+    final complement = all
+        .where((a) => !mainExes.contains(a.exe.toLowerCase()))
+        .toList();
     setState(() {
       _extraApps = complement;
       _extraLoading = false;
@@ -118,7 +120,7 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
       _scrollCtl.animateTo(
         target,
         duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
+        curve: AppCurves.fastInSlowOut,
       );
     });
   }
@@ -208,20 +210,21 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
   }
 
   List<_Entry> _filter(List<DiscoveredApp> apps) {
-    final addedLower =
-        widget.alreadyAdded.map((e) => e.toLowerCase()).toSet();
+    final addedLower = widget.alreadyAdded.map((e) => e.toLowerCase()).toSet();
     final result = apps
-        .map((a) => _Entry(
-              app: a,
-              added: addedLower.contains(a.exe.toLowerCase()),
-            ))
+        .map(
+          (a) =>
+              _Entry(app: a, added: addedLower.contains(a.exe.toLowerCase())),
+        )
         .toList();
     if (_query.isEmpty) return result;
     final q = _query.toLowerCase();
     return result
-        .where((d) =>
-            d.app.name.toLowerCase().contains(q) ||
-            d.app.exe.toLowerCase().contains(q))
+        .where(
+          (d) =>
+              d.app.name.toLowerCase().contains(q) ||
+              d.app.exe.toLowerCase().contains(q),
+        )
         .toList();
   }
 
@@ -234,7 +237,11 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
   }
 
   Widget _listItem(
-      NekkoTokens t, int i, List<_Entry> main, List<_Entry> extra) {
+    NekkoTokens t,
+    int i,
+    List<_Entry> main,
+    List<_Entry> extra,
+  ) {
     if (i < main.length) {
       return SizedBox(
         height: 52,
@@ -269,7 +276,8 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
             width: 16,
             height: 16,
             child: CircularProgressIndicator(
-              strokeWidth: 2, color: t.textMuted,
+              strokeWidth: 2,
+              color: t.textMuted,
             ),
           ),
         ),
@@ -334,6 +342,7 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
                 controller: _searchCtl,
                 autofocus: true,
                 hint: 'поиск…',
+                prefixIcon: Icon(Icons.search, size: 16, color: t.textFaint),
                 onChanged: (v) => setState(() => _query = v),
               ),
             ),
@@ -350,20 +359,19 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
                       ),
                     )
                   : mainItems.isEmpty && extraItems.isEmpty && !_showExtra
-                      ? Center(
-                          child: Text(
-                            'ничего не найдено',
-                            style: TextStyle(
-                                color: t.textFaint, fontSize: 12),
-                          ),
-                        )
-                      : ListView.builder(
-                          controller: _scrollCtl,
-                          padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-                          itemCount: _listLength(mainItems, extraItems),
-                          itemBuilder: (_, i) =>
-                              _listItem(t, i, mainItems, extraItems),
-                        ),
+                  ? Center(
+                      child: Text(
+                        'ничего не найдено',
+                        style: TextStyle(color: t.textFaint, fontSize: 12),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollCtl,
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                      itemCount: _listLength(mainItems, extraItems),
+                      itemBuilder: (_, i) =>
+                          _listItem(t, i, mainItems, extraItems),
+                    ),
             ),
             _manualFooter(t),
           ],
@@ -395,9 +403,7 @@ class _FooterButtonState extends State<_FooterButton> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final color = widget.primary
-        ? t.primary
-        : (_hover ? t.text : t.textMuted);
+    final color = widget.primary ? t.primary : (_hover ? t.text : t.textMuted);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
@@ -410,7 +416,7 @@ class _FooterButtonState extends State<_FooterButton> {
         // through it flashes dark on the way in.
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          curve: Curves.easeOut,
+          curve: AppCurves.fastInSlowOut,
           height: 40,
           padding: const EdgeInsets.symmetric(horizontal: 10),
           decoration: BoxDecoration(
@@ -426,7 +432,7 @@ class _FooterButtonState extends State<_FooterButton> {
               ],
               AnimatedDefaultTextStyle(
                 duration: const Duration(milliseconds: 150),
-                curve: Curves.easeOut,
+                curve: AppCurves.fastInSlowOut,
                 style: TextStyle(
                   color: color,
                   fontSize: 12,
@@ -467,8 +473,7 @@ class _AppTileState extends State<_AppTile> {
     final dim = e.added;
 
     return MouseRegion(
-      cursor:
-          dim ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      cursor: dim ? SystemMouseCursors.basic : SystemMouseCursors.click,
       onEnter: (_) {
         if (!dim) setState(() => _hover = true);
       },
@@ -478,8 +483,7 @@ class _AppTileState extends State<_AppTile> {
         behavior: HitTestBehavior.opaque,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 100),
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             color: _hover ? t.surface2 : t.surface,
             borderRadius: BorderRadius.circular(t.radius),
@@ -543,8 +547,7 @@ class _AppTileState extends State<_AppTile> {
               if (dim)
                 Text(
                   'добавлено',
-                  style:
-                      TextStyle(color: t.textFaint, fontSize: 11),
+                  style: TextStyle(color: t.textFaint, fontSize: 11),
                 ),
             ],
           ),
@@ -589,9 +592,9 @@ class _ShowAllDividerState extends State<_ShowAllDivider> {
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
-                child: Text(widget.expanded
-                    ? 'скрыть'
-                    : 'показать все процессы'),
+                child: Text(
+                  widget.expanded ? 'скрыть' : 'показать все процессы',
+                ),
               ),
               const SizedBox(width: 4),
               AnimatedRotation(

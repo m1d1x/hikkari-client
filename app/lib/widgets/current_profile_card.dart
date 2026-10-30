@@ -68,15 +68,10 @@ class _CurrentProfileCardState extends State<CurrentProfileCard> {
           // cards the same overall height.
           chartHeight: 28,
           trailing: TweenAnimationBuilder<Color?>(
-            tween: ColorTween(
-              end: _hover ? t.primary : t.textMuted,
-            ),
+            tween: ColorTween(end: _hover ? t.primary : t.textMuted),
             duration: const Duration(milliseconds: 150),
-            builder: (_, color, __) => Icon(
-              Icons.keyboard_arrow_down,
-              size: 18,
-              color: color,
-            ),
+            builder: (_, color, __) =>
+                Icon(Icons.keyboard_arrow_down, size: 18, color: color),
           ),
         ),
       ),

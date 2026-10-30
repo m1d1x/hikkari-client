@@ -136,8 +136,8 @@ class _WinButtonState extends State<_WinButton> {
     final bg = !_hover
         ? Colors.transparent
         : widget.isClose
-            ? t.bad
-            : t.surface2;
+        ? t.bad
+        : t.surface2;
     final fg = (_hover && widget.isClose) ? Colors.white : t.textMuted;
 
     return MouseRegion(

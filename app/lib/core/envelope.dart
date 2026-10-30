@@ -13,10 +13,10 @@ class Envelope {
   const Envelope({required this.ok, this.data, this.error});
 
   factory Envelope.fromJson(Map<String, dynamic> json) => Envelope(
-        ok: json['ok'] as bool? ?? false,
-        data: json['data'],
-        error: json['error'] as String?,
-      );
+    ok: json['ok'] as bool? ?? false,
+    data: json['data'],
+    error: json['error'] as String?,
+  );
 
   /// Returns `data` on success, throws [NekkoboxError] on failure.
   /// Use this when you want to treat the envelope like a normal Future.

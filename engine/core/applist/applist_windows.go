@@ -15,17 +15,17 @@ var (
 	modUser32   = syscall.NewLazyDLL("user32.dll")
 	modVersion  = syscall.NewLazyDLL("version.dll")
 
-	procCreateToolhelp32Snapshot = modKernel32.NewProc("CreateToolhelp32Snapshot")
-	procProcess32FirstW         = modKernel32.NewProc("Process32FirstW")
-	procProcess32NextW          = modKernel32.NewProc("Process32NextW")
-	procOpenProcess             = modKernel32.NewProc("OpenProcess")
-	procCloseHandle             = modKernel32.NewProc("CloseHandle")
+	procCreateToolhelp32Snapshot   = modKernel32.NewProc("CreateToolhelp32Snapshot")
+	procProcess32FirstW            = modKernel32.NewProc("Process32FirstW")
+	procProcess32NextW             = modKernel32.NewProc("Process32NextW")
+	procOpenProcess                = modKernel32.NewProc("OpenProcess")
+	procCloseHandle                = modKernel32.NewProc("CloseHandle")
 	procQueryFullProcessImageNameW = modKernel32.NewProc("QueryFullProcessImageNameW")
 
-	procEnumWindows       = modUser32.NewProc("EnumWindows")
+	procEnumWindows              = modUser32.NewProc("EnumWindows")
 	procGetWindowThreadProcessId = modUser32.NewProc("GetWindowThreadProcessId")
-	procIsWindowVisible   = modUser32.NewProc("IsWindowVisible")
-	procGetWindowTextLengthW = modUser32.NewProc("GetWindowTextLengthW")
+	procIsWindowVisible          = modUser32.NewProc("IsWindowVisible")
+	procGetWindowTextLengthW     = modUser32.NewProc("GetWindowTextLengthW")
 
 	procGetFileVersionInfoSizeW = modVersion.NewProc("GetFileVersionInfoSizeW")
 	procGetFileVersionInfoW     = modVersion.NewProc("GetFileVersionInfoW")
@@ -33,9 +33,9 @@ var (
 )
 
 const (
-	tH32CS_SNAPPROCESS     = 0x00000002
+	tH32CS_SNAPPROCESS      = 0x00000002
 	processQueryLimitedInfo = 0x1000
-	maxPath                = 260
+	maxPath                 = 260
 )
 
 type processEntry32 struct {
@@ -242,10 +242,10 @@ func friendlyName(exePath string) string {
 
 	// Try common translation code pages
 	translations := []string{
-		`\StringFileInfo\040904B0\`,  // English, Unicode
-		`\StringFileInfo\040904E4\`,  // English, Latin-1
-		`\StringFileInfo\041904B0\`,  // Russian, Unicode
-		`\StringFileInfo\000004B0\`,  // Neutral, Unicode
+		`\StringFileInfo\040904B0\`, // English, Unicode
+		`\StringFileInfo\040904E4\`, // English, Latin-1
+		`\StringFileInfo\041904B0\`, // Russian, Unicode
+		`\StringFileInfo\000004B0\`, // Neutral, Unicode
 	}
 
 	for _, trans := range translations {
@@ -302,7 +302,6 @@ func queryStringValue(block []byte, subBlock string) string {
 	s := syscall.UTF16ToString(buf)
 	return strings.TrimSpace(s)
 }
-
 
 func isSystemProcess(exeLower string) bool {
 	skip := map[string]bool{

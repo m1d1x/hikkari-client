@@ -5,7 +5,7 @@ package api
 import (
 	"path/filepath"
 
-	"NekkoVPN/core/vpn"
+	vpn "NekkoVPN/core/engine/singbox/process"
 )
 
 // newDesktopVPN: no service on this platform; the process manager here is a

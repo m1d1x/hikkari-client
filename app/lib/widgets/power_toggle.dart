@@ -5,6 +5,7 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import 'import_profile_dialog.dart';
 import 'profile_flag_badge.dart';
 import 'profiles_sheet.dart';
 import 'service_ping_sheet.dart';
@@ -44,17 +45,19 @@ class _PowerToggleState extends State<PowerToggle> {
     final recent = UptimeStats.recentAvgRtt(hist);
     final dead = !checking && (recent < 0 || recent > 1000);
 
-    final label = active?.label.toLowerCase() ?? 'выбрать профиль';
+    final noProfiles = s.profiles.isEmpty;
+    final label =
+        active?.label.toLowerCase() ??
+        (noProfiles ? 'добавить профиль' : 'выбрать профиль');
     final endpoint = active?.endpoint ?? '';
     final countryCode = active == null ? null : s.countryCodeFor(active.name);
-    final countryLoading =
-        active != null && s.isCountryLoading(active.name);
+    final countryLoading = active != null && s.isCountryLoading(active.name);
 
     final rttText = dead
         ? 'down'
         : checking
-            ? '…'
-            : '$rtt ms';
+        ? '…'
+        : '$rtt ms';
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -64,27 +67,35 @@ class _PowerToggleState extends State<PowerToggle> {
           width: 176,
           height: 176,
           child: MouseRegion(
-            onEnter: (_) { if (!busy) setState(() => _btnHover = true); },
+            onEnter: (_) {
+              if (!busy) setState(() => _btnHover = true);
+            },
             onExit: (_) => setState(() => _btnHover = false),
             child: Material(
               color: Colors.transparent,
               shape: const CircleBorder(),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
-                onTap: busy ? null : () => s.toggleVpn(),
+                onTap: busy
+                    ? null
+                    : noProfiles
+                    ? () => ImportProfileDialog.show(context)
+                    : () => s.toggleVpn(),
                 mouseCursor: busy
                     ? SystemMouseCursors.basic
                     : SystemMouseCursors.click,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOut,
+                  curve: AppCurves.fastInSlowOut,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: Colors.transparent,
                     border: Border.all(
                       color: running
                           ? t.primary.withValues(alpha: _btnHover ? 0.85 : 0.55)
-                          : (_btnHover ? t.primary.withValues(alpha: 0.4) : t.border),
+                          : (_btnHover
+                                ? t.primary.withValues(alpha: 0.4)
+                                : t.border),
                       width: running ? 3 : 1.5,
                     ),
                   ),
@@ -93,7 +104,9 @@ class _PowerToggleState extends State<PowerToggle> {
                       tween: ColorTween(
                         end: running
                             ? t.primary
-                            : (_btnHover ? t.primary.withValues(alpha: 0.7) : t.textMuted),
+                            : (_btnHover
+                                  ? t.primary.withValues(alpha: 0.7)
+                                  : t.textMuted),
                       ),
                       duration: const Duration(milliseconds: 200),
                       builder: (_, color, __) => Icon(
@@ -124,13 +137,15 @@ class _PowerToggleState extends State<PowerToggle> {
           borderRadius: BorderRadius.circular(t.radiusLg),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
-            onTap: busy ? null : () => ProfilesSheet.show(context),
+            onTap: busy
+                ? null
+                : noProfiles
+                ? () => ImportProfileDialog.show(context)
+                : () => ProfilesSheet.show(context),
             onSecondaryTap: active == null
                 ? null
                 : () => ServicePingSheet.show(context, label),
-            onHover: busy
-                ? null
-                : (h) => setState(() => _profileHover = h),
+            onHover: busy ? null : (h) => setState(() => _profileHover = h),
             borderRadius: BorderRadius.circular(t.radiusLg),
             hoverColor: t.primary.withValues(alpha: 0.05),
             mouseCursor: busy
@@ -192,7 +207,7 @@ class _PowerToggleState extends State<PowerToggle> {
                         ),
                         duration: const Duration(milliseconds: 150),
                         builder: (_, color, __) => Icon(
-                          Icons.keyboard_arrow_down,
+                          noProfiles ? Icons.add : Icons.keyboard_arrow_down,
                           size: 18,
                           color: color,
                         ),

@@ -32,15 +32,32 @@ class _HomeScreenState extends State<HomeScreen> {
           BrandHeader(onOpenLogs: _openLog),
           if (_logOpen) LogOverlay(onClose: _closeLog),
           const Expanded(
-            // Nudge the button + profile block up a touch from dead-centre so
-            // it sits higher in the empty space above the routing bar.
-            child: Align(alignment: Alignment(0, -0.22), child: PowerToggle()),
-          ),
-          const SafeArea(
-            top: false,
-            child: Padding(
-              padding: EdgeInsets.only(bottom: 16),
-              child: RouteSection(),
+            child: CustomScrollView(
+              // Keep the bottom edge anchored as routing grows past the
+              // viewport. Its header must keep moving when flex space runs out.
+              reverse: true,
+              slivers: [
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment(0, -0.22),
+                          child: PowerToggle(),
+                        ),
+                      ),
+                      SafeArea(
+                        top: false,
+                        child: Padding(
+                          padding: EdgeInsets.only(bottom: 16),
+                          child: RouteSection(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
         ],

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"NekkoVPN/core/configfile"
+	configfile "NekkoVPN/core/engine/singbox/config"
 )
 
 var paths = Paths{CacheFile: `C:\Program Files\Hikkari\core\cache.db`}

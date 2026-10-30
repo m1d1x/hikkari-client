@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_toast.dart';
 
 /// Engine log overlay. Polls `AppState.logTail()` once a second while it's
 /// on screen, strips ANSI colour codes, and paints lines in a fixed-height
@@ -24,8 +25,12 @@ class LogOverlay extends StatefulWidget {
 class _LogOverlayState extends State<LogOverlay> {
   static final _ansi = RegExp(r'\x1B\[[0-9;]*[A-Za-z]');
   static final _reConnId = RegExp(r'\[\d+\s+[^\]]+\]');
-  static final _reTs = RegExp(r'^\+?\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2}(\.\d+)?\s*');
-  static final _reIpPort = RegExp(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{4,5}\b');
+  static final _reTs = RegExp(
+    r'^\+?\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2}(\.\d+)?\s*',
+  );
+  static final _reIpPort = RegExp(
+    r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{4,5}\b',
+  );
   static const _errorMarkers = [
     'FATAL',
     'ERROR',
@@ -116,7 +121,9 @@ class _LogOverlayState extends State<LogOverlay> {
   }
 
   bool _isError(String line) {
-    if (line.contains(' INFO ') || line.contains(' DEBUG ') || line.contains(' TRACE ')) {
+    if (line.contains(' INFO ') ||
+        line.contains(' DEBUG ') ||
+        line.contains(' TRACE ')) {
       return false;
     }
     for (final m in _errorMarkers) {
@@ -128,20 +135,18 @@ class _LogOverlayState extends State<LogOverlay> {
   Future<void> _copy() async {
     await Clipboard.setData(ClipboardData(text: _lines.join('\n')));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('лог скопирован'),
-        duration: Duration(seconds: 1),
-        behavior: SnackBarBehavior.floating,
-      ),
+    NekkoToast.show(
+      context,
+      'лог скопирован',
+      icon: Icons.check_rounded,
+      hold: NekkoToast.glanceHold,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final visible =
-        _onlyErrors ? _lines.where(_isError).toList() : _lines;
+    final visible = _onlyErrors ? _lines.where(_isError).toList() : _lines;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -167,9 +172,7 @@ class _LogOverlayState extends State<LogOverlay> {
             child: visible.isEmpty
                 ? Center(
                     child: Text(
-                      _lines.isEmpty
-                          ? 'журнал пуст'
-                          : 'нет строк по фильтру',
+                      _lines.isEmpty ? 'журнал пуст' : 'нет строк по фильтру',
                       style: TextStyle(color: t.textFaint, fontSize: 11),
                     ),
                   )
@@ -200,56 +203,54 @@ class _LogOverlayState extends State<LogOverlay> {
   }
 
   Widget _toolbar(NekkoTokens t, int shown, int total) => Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
-        child: Row(
-          children: [
-            Text(
-              'журнал',
-              style: TextStyle(
-                color: t.text,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              total == shown ? '$total' : '$shown / $total',
-              style: TextStyle(
-                color: t.textFaint,
-                fontSize: 11,
-                fontFamily: t.monoFamily,
-              ),
-            ),
-            const Spacer(),
-            _chip(
-              t,
-              icon: Icons.error_outline,
-              label: 'ошибки',
-              active: _onlyErrors,
-              onTap: () => setState(() => _onlyErrors = !_onlyErrors),
-            ),
-            const SizedBox(width: 6),
-            IconButton(
-              tooltip: 'копировать',
-              iconSize: 14,
-              padding: EdgeInsets.zero,
-              constraints:
-                  const BoxConstraints(minWidth: 28, minHeight: 28),
-              onPressed: _lines.isEmpty ? null : _copy,
-              icon: Icon(Icons.copy, color: t.textMuted),
-            ),
-            IconButton(
-              tooltip: 'закрыть',
-              iconSize: 16,
-              padding: EdgeInsets.zero,
-              constraints:
-                  const BoxConstraints(minWidth: 28, minHeight: 28),
-              onPressed: widget.onClose,
-              icon: Icon(Icons.close, color: t.textMuted),
-            ),
-          ],
+    padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+    child: Row(
+      children: [
+        Text(
+          'журнал',
+          style: TextStyle(
+            color: t.text,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
         ),
-      );
+        const SizedBox(width: 8),
+        Text(
+          total == shown ? '$total' : '$shown / $total',
+          style: TextStyle(
+            color: t.textFaint,
+            fontSize: 11,
+            fontFamily: t.monoFamily,
+          ),
+        ),
+        const Spacer(),
+        _chip(
+          t,
+          icon: Icons.error_outline,
+          label: 'ошибки',
+          active: _onlyErrors,
+          onTap: () => setState(() => _onlyErrors = !_onlyErrors),
+        ),
+        const SizedBox(width: 6),
+        IconButton(
+          tooltip: 'копировать',
+          iconSize: 14,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          onPressed: _lines.isEmpty ? null : _copy,
+          icon: Icon(Icons.copy, color: t.textMuted),
+        ),
+        IconButton(
+          tooltip: 'закрыть',
+          iconSize: 16,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          onPressed: widget.onClose,
+          icon: Icon(Icons.close, color: t.textMuted),
+        ),
+      ],
+    ),
+  );
 
   Widget _chip(
     NekkoTokens t, {
@@ -257,31 +258,30 @@ class _LogOverlayState extends State<LogOverlay> {
     required String label,
     required bool active,
     required VoidCallback onTap,
-  }) =>
-      InkWell(
-        onTap: onTap,
+  }) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(t.radius),
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: active ? t.surface2 : Colors.transparent,
+        border: Border.all(color: active ? t.borderStrong : t.border),
         borderRadius: BorderRadius.circular(t.radius),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: active ? t.surface2 : Colors.transparent,
-            border: Border.all(color: active ? t.borderStrong : t.border),
-            borderRadius: BorderRadius.circular(t.radius),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: active ? t.bad : t.textMuted),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              color: active ? t.text : t.textMuted,
+              fontSize: 11,
+            ),
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 12, color: active ? t.bad : t.textMuted),
-              const SizedBox(width: 4),
-              Text(
-                label,
-                style: TextStyle(
-                  color: active ? t.text : t.textMuted,
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 }

@@ -23,9 +23,9 @@ import (
 
 	"github.com/Microsoft/go-winio"
 
+	vpn "NekkoVPN/core/engine/singbox/process"
 	"NekkoVPN/core/service"
 	"NekkoVPN/core/svcproto"
-	"NekkoVPN/core/vpn"
 )
 
 // pipeSDDL: SYSTEM and Administrators full control, interactively logged-on

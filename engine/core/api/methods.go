@@ -6,29 +6,29 @@
 package api
 
 import (
-	"context"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
 	"NekkoVPN/core/applist"
 	"NekkoVPN/core/cleanliness"
-	"NekkoVPN/core/clashapi"
-	"NekkoVPN/core/configfile"
+	"NekkoVPN/core/downdetector"
+	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/profile"
+	"NekkoVPN/core/routing"
+	"NekkoVPN/core/subscription"
 	"NekkoVPN/core/uptime"
-	"NekkoVPN/core/vpn"
+	"net/url"
 )
 
 // Re-exported types — same Go type, shorter name inside api/. JSON shape is
 // unchanged, so every UI (Flutter, gomobile) sees the same fields.
 type (
 	HealthInfo   = health.Info
-	RoutingState = configfile.RoutingState
-	RoutingMode  = configfile.RoutingMode
+	RoutingState = routing.RoutingState
+	RoutingMode  = routing.RoutingMode
 	ProfileInfo  = profile.Info
 	PingSample   = uptime.Sample
 
@@ -39,71 +39,102 @@ type (
 //  VPN control
 // ============================================================
 
-// prepareConfig runs right before the core starts, while the tunnel is
-// down. It re-applies config healing (config.json is otherwise only
-// rewritten on profile/routing changes, so fixes shipped in a new build
-// would never reach an existing install) and pins every VPN server to an
-// IP resolved now, outside the tunnel — see configfile.PinServerIPs.
-func (c *Core) prepareConfig(stage string) {
-	if err := c.rebuildConfig(); err != nil {
-		c.logger.Logf("%s: config rebuild failed (starting with existing config): %v", stage, err)
-	}
-	vpn.FlushDNS()
-	results, err := c.configs.PinServerIPs(func(host string) ([]net.IP, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return net.DefaultResolver.LookupIP(ctx, "ip4", host)
-	})
+func (c *Core) EngineInfo() engine.Info { return c.backend.Info() }
+func (c *Core) ValidateConfiguration() error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	policy, err := c.manualRouting()
 	if err != nil {
-		c.logger.Logf("%s: pin server IPs: %v", stage, err)
+		return err
 	}
-	for _, r := range results {
-		if r.Err != nil {
-			c.logger.Logf("%s: server %s (%s) not pinned, core will resolve it: %v", stage, r.Host, r.Tag, r.Err)
-		} else {
-			c.logger.Logf("%s: server %s (%s) pinned to %s", stage, r.Host, r.Tag, r.IP)
+	pf, err := c.profiles.Read()
+	if err != nil {
+		return err
+	}
+	effective, err := c.effectiveRouting(policy)
+	if err != nil {
+		return err
+	}
+	return engine.ValidateConfiguration(engine.Configuration{
+		Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, Routing: effective,
+	}, c.backend.Info().Capabilities)
+}
+func (c *Core) StartVPN() error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if err := c.flushRoutingLocked(); err != nil {
+		return err
+	}
+	err := c.startVPN()
+	if err != nil {
+		c.SubscriptionWake()
+	}
+	return err
+}
+
+func (c *Core) startVPN() error {
+	if c.routingPreview {
+		return fmt.Errorf("режим предпросмотра не запускает VPN")
+	}
+	if err := c.requireProfiles(); err != nil {
+		return err
+	}
+	if err := c.rebuildConfig(); err != nil {
+		return err
+	}
+	if !c.backend.Info().Capabilities.TUN {
+		return fmt.Errorf("выбранный адаптер не поддерживает TUN на этой ОС; требуется реализация TUN для выбранного адаптера")
+	}
+	return c.backend.Start(c.ctx)
+}
+func (c *Core) StopVPN() error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if !c.routingPreview {
+		if err := c.backend.Stop(); err != nil {
+			return err
 		}
 	}
+	return c.flushRoutingLocked()
 }
-
-func (c *Core) StartVPN() error {
-	c.prepareConfig("vpn.Start")
-	if err := c.vpn.Start(); err != nil {
-		return err
-	}
-	c.diag.AfterStart(c.ctx)
-	return nil
-}
-
-func (c *Core) StopVPN() error {
-	c.diag.Stop()
-	return c.vpn.Stop()
-}
-
-// RestartVPN stops the core before preparing the config, so the server
-// lookup in prepareConfig happens outside the tunnel.
 func (c *Core) RestartVPN() error {
-	c.logger.Logf("vpn.Restart: begin")
-	c.diag.Stop()
-	if err := c.vpn.Stop(); err != nil {
-		c.logger.Logf("vpn.Restart: stop error: %v", err)
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	wasRunning := c.backend.IsRunning()
+	pendingRestart := c.routingApp.pending != nil && wasRunning && !routing.ActiveEqual(c.routingApp.pending.effective, c.RoutingStatus().Effective)
+	if err := c.flushRoutingLocked(); err != nil {
 		return err
 	}
-	time.Sleep(1500 * time.Millisecond)
-	c.prepareConfig("vpn.Restart")
-	err := c.vpn.Start()
-	c.logger.Logf("vpn.Restart: end, err=%v", err)
+	if pendingRestart {
+		return nil
+	}
+	return c.restartVPN()
+}
+
+func (c *Core) restartVPN() error {
+	if c.routingPreview {
+		return fmt.Errorf("режим предпросмотра не перезапускает VPN")
+	}
+	if err := c.requireProfiles(); err != nil {
+		return err
+	}
+	if err := c.backend.Stop(); err != nil {
+		return err
+	}
+	return c.startVPN()
+}
+func (c *Core) IsRunning() bool { return c.backend.IsRunning() }
+
+func (c *Core) requireProfiles() error {
+	pf, err := c.profiles.Read()
 	if err != nil {
 		return err
 	}
-	c.diag.AfterStart(c.ctx)
+	if len(pf.Profiles) == 0 {
+		return fmt.Errorf("сначала добавьте сервер или подписку")
+	}
 	return nil
 }
-
-// IsRunning asks the sing-box Clash API whether the core is answering.
-// It does NOT tell you the tunnel is actually carrying traffic — use Health
-// for that.
-func (c *Core) IsRunning() bool { return vpn.ClashAPIRunning() }
 
 // ============================================================
 //  Health & egress
@@ -127,37 +158,112 @@ func (c *Core) LogTail() string { return c.logger.Tail() }
 //  Routing (split-tunnel: master toggle + mode + per-mode lists)
 // ============================================================
 
-func (c *Core) Routing() (RoutingState, error) { return c.configs.ReadRouting() }
+func (c *Core) Routing() (RoutingState, error) { return c.RoutingStatus().Manual, nil }
 
 func (c *Core) SetRoutingEnabled(on bool) error {
-	return c.configs.SetRoutingEnabled(on)
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	policy, err := c.manualRouting()
+	if err != nil {
+		return err
+	}
+	policy.Enabled = on
+	effective, err := c.effectiveRouting(policy)
+	if err != nil {
+		return err
+	}
+	if err := engine.ValidateConfiguration(engine.Configuration{Routing: effective}, c.backend.Info().Capabilities); err != nil {
+		return err
+	}
+	return c.changeManualRouting(func(state *routing.RoutingState) error { state.Enabled = on; return nil })
 }
 
 func (c *Core) SetRoutingMode(mode string) error {
-	return c.configs.SetRoutingMode(RoutingMode(mode))
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	policy, err := c.manualRouting()
+	if err != nil {
+		return err
+	}
+	policy.Mode = RoutingMode(mode)
+	effective, err := c.effectiveRouting(policy)
+	if err != nil {
+		return err
+	}
+	if err := engine.ValidateConfiguration(engine.Configuration{Routing: effective}, c.backend.Info().Capabilities); err != nil {
+		return err
+	}
+	return c.changeManualRouting(func(state *routing.RoutingState) error {
+		if mode != "bypass" && mode != "proxy" {
+			return fmt.Errorf("неизвестный режим %q", mode)
+		}
+		state.Mode = RoutingMode(mode)
+		return nil
+	})
 }
 
 func (c *Core) AddRule(mode, category, value string) error {
-	return c.configs.AddRouteRule(RoutingMode(mode), category, value)
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	caps := c.backend.Info().Capabilities
+	if category == "domains" && !caps.DomainRouting {
+		return fmt.Errorf("выбранный адаптер не поддерживает правила по доменам")
+	}
+	if category == "ips" && !caps.IPRouting {
+		return fmt.Errorf("выбранный адаптер не поддерживает правила по IP")
+	}
+	if category == "processes" && !caps.ProcessRouting {
+		return fmt.Errorf("движок не поддерживает маршрутизацию приложений")
+	}
+	if category == "folders" && !caps.FolderRouting {
+		return fmt.Errorf("движок не поддерживает правила по папкам")
+	}
+	return c.changeManualRouting(func(state *routing.RoutingState) error {
+		return state.ChangeRule(RoutingMode(mode), category, value, false)
+	})
 }
 
 func (c *Core) RemoveRule(mode, category, value string) error {
-	return c.configs.RemoveRouteRule(RoutingMode(mode), category, value)
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	return c.changeManualRouting(func(state *routing.RoutingState) error {
+		return state.ChangeRule(RoutingMode(mode), category, value, true)
+	})
 }
 
 // ============================================================
 //  Profiles
 // ============================================================
 
-func (c *Core) Profiles() ([]ProfileInfo, error)       { return c.profiles.List() }
-func (c *Core) ActiveProfile() (string, error)         { return c.profiles.Active() }
-func (c *Core) RenameProfile(name, label string) error { return c.profiles.Rename(name, label) }
+func (c *Core) Profiles() ([]ProfileInfo, error) { return c.profiles.List() }
+func (c *Core) ActiveProfile() (string, error)   { return c.profiles.Active() }
+func (c *Core) RenameProfile(name, label string) error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	return c.profiles.Rename(name, label)
+}
 
 // DeleteProfile removes a profile and also drops its uptime history so the
 // file stays tidy. Triggers a config rebuild so the deleted profile drops
 // out of the selector group; restarts the engine if it was running (sing-
 // box doesn't hot-remove outbounds either).
 func (c *Core) DeleteProfile(name string) error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	// Check existence before stopping a running connection or changing files.
+	_, found, err := c.profiles.Get(name)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("профиль %q не найден", name)
+	}
+	wasRunning := c.IsRunning()
+	if wasRunning {
+		if err := c.backend.Stop(); err != nil {
+			return err
+		}
+	}
 	if err := c.profiles.Delete(name); err != nil {
 		return err
 	}
@@ -166,8 +272,12 @@ func (c *Core) DeleteProfile(name string) error {
 	if err := c.rebuildConfig(); err != nil {
 		return err
 	}
-	if vpn.ClashAPIRunning() {
-		_ = c.vpn.Restart()
+	pf, err := c.profiles.Read()
+	if err != nil {
+		return err
+	}
+	if wasRunning && len(pf.Profiles) > 0 {
+		return c.startVPN()
 	}
 	return nil
 }
@@ -177,47 +287,83 @@ func (c *Core) DeleteProfile(name string) error {
 //   - config.json: selector default = profile tag (used on next start)
 //   - running engine (if any): instant Clash-API select, no restart
 func (c *Core) SwitchProfile(name string) error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
 	if err := c.profiles.SetActive(name); err != nil {
 		return err
 	}
 	if err := c.rebuildConfig(); err != nil {
 		return err
 	}
-	if !vpn.ClashAPIRunning() {
+	if !c.backend.IsRunning() {
 		return nil
 	}
-	cl := clashapi.New("")
-	return cl.SelectProxy(profile.SelectorTag, profile.ProfileTag(name))
+	if c.backend.Info().Capabilities.LiveProfileSwitch {
+		return c.backend.SelectProfile(name)
+	}
+	return c.restartVPN()
 }
 
 // AddProfileFromURI parses a server URI or subscription URL and appends
 // the resulting profile(s). The new profile(s) are added to config.json's
 // selector group so they can be probed for liveness immediately.
 func (c *Core) AddProfileFromURI(uri string) (string, error) {
-	drafts, err := profile.ParseURIs(uri)
+	deviceID, err := c.subscriptionDeviceID()
 	if err != nil {
 		return "", err
 	}
-	if len(drafts) == 0 {
-		return "", fmt.Errorf("профили не найдены в ссылке")
+	ctx := c.subscriptionContext()
+	imports, err := subscription.ParseDetailedContext(ctx, uri, deviceID, c.backend.Decode)
+	if err != nil {
+		return "", err
 	}
-	var firstName string
-	for _, d := range drafts {
-		name, err := c.profiles.Add(d.Label, d.Kind, d.Config)
-		if err != nil {
-			return "", err
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	before, err := c.profiles.Read()
+	if err != nil {
+		return "", err
+	}
+	after, err := cloneProfiles(before)
+	if err != nil {
+		return "", err
+	}
+	first := ""
+	for _, imported := range imports {
+		drafts := subscriptionDrafts(imported.Items)
+		var names []string
+		if imported.SourceURL != "" {
+			index, err := ensureSubscription(after, imported.SourceURL, drafts)
+			if err != nil {
+				return "", err
+			}
+			source := &after.Subscriptions[index]
+			source.Info = subscriptionInfo(source.ID, imported.Metadata)
+			source.LastAttempt = time.Now().Unix()
+			source.LastSuccess = source.LastAttempt
+			source.NextAttempt = source.LastSuccess + int64(subscriptionPollInterval/time.Second)
+			source.Failures = 0
+			source.Revision++
+			names, err = profile.ReconcileSubscription(after, source, drafts)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			names, err = profile.AppendConnections(after, drafts)
+			if err != nil {
+				return "", err
+			}
 		}
-		if firstName == "" {
-			firstName = name
+		if first == "" && len(names) > 0 {
+			first = names[0]
 		}
 	}
-	if err := c.rebuildConfig(); err != nil {
-		return firstName, err
+	if err := c.commitProfiles(ctx, before, after); err != nil {
+		return "", err
 	}
-	if vpn.ClashAPIRunning() {
-		_ = c.vpn.Restart()
-	}
-	return firstName, nil
+	return first, nil
 }
 
 // ExportProfileURI serialises a stored profile back into a shareable import
@@ -230,7 +376,15 @@ func (c *Core) ExportProfileURI(name string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("профиль %q не найден", name)
 	}
-	return profile.ExportURI(p)
+	if p.Connection != nil {
+		uri := p.Connection.URI
+		if u, err := url.Parse(uri); err == nil && u.Scheme != "" {
+			u.Fragment = p.Label
+			return u.String(), nil
+		}
+		return uri, nil
+	}
+	return c.backend.Export(p)
 }
 
 // ProfileCountries resolves the lowercase ISO 3166-1 alpha-2 country code
@@ -271,15 +425,15 @@ func (c *Core) ProfileCountries() (map[string]string, error) {
 // shaped config.json. Call it after any mutation that adds, removes, or
 // changes the active profile (or toggles auto-mode).
 func (c *Core) rebuildConfig() error {
-	specs, activeTag, autoMode, err := c.profiles.Snapshot()
+	policy, err := c.manualRouting()
 	if err != nil {
 		return err
 	}
-	cfg := make([]configfile.ProfileSpec, len(specs))
-	for i, s := range specs {
-		cfg[i] = configfile.ProfileSpec{Tag: s.Tag, Kind: s.Kind, Config: s.Config}
+	effective, err := c.effectiveRouting(policy)
+	if err != nil {
+		return err
 	}
-	return c.configs.RebuildActive(cfg, activeTag, autoMode, profile.LegacyActiveTags)
+	return c.configureRouting(effective)
 }
 
 // AutoMode reports whether auto-fastest selection is enabled.
@@ -289,14 +443,19 @@ func (c *Core) AutoMode() (bool, error) { return c.profiles.AutoMode() }
 // profiles.json, rebuilds config.json (selector ± urltest, route.final
 // adjusts), restarts the engine if running so sing-box picks it up.
 func (c *Core) SetAutoMode(on bool) error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if on && !c.backend.Info().Capabilities.AutoSelect {
+		return fmt.Errorf("движок не поддерживает автоматический выбор сервера")
+	}
 	if err := c.profiles.SetAutoMode(on); err != nil {
 		return err
 	}
 	if err := c.rebuildConfig(); err != nil {
 		return err
 	}
-	if vpn.ClashAPIRunning() {
-		_ = c.vpn.Restart()
+	if c.backend.IsRunning() {
+		return c.restartVPN()
 	}
 	return nil
 }
@@ -306,6 +465,18 @@ func (c *Core) SetAutoMode(on bool) error {
 // ============================================================
 
 func (c *Core) UptimeHistory() map[string][]PingSample { return c.uptime.Snapshot() }
+
+// ----- downdetector -----
+
+func (c *Core) DowndetectorSettings() downdetector.Settings { return c.downdetector.Settings() }
+
+func (c *Core) SetDowndetectorSettings(s downdetector.Settings) error {
+	return c.downdetector.SetSettings(s)
+}
+
+// DowndetectorLastReport is the latest report exactly as it would be sent,
+// for the "what is sent" screen. nil until the first report is built.
+func (c *Core) DowndetectorLastReport() *downdetector.Report { return c.downdetector.LastReport() }
 
 // ============================================================
 //  Service uptime (on-demand pings of arbitrary user services
@@ -332,14 +503,13 @@ type ServicePingResult struct {
 // This is an on-demand, one-shot call — no background loop, no staggering.
 func (c *Core) PingServices(activeTag string, services []ServicePingTarget) []ServicePingResult {
 	results := make([]ServicePingResult, len(services))
-	cl := clashapi.New("")
 
 	var wg sync.WaitGroup
 	for i, svc := range services {
 		wg.Add(1)
 		go func(i int, svc ServicePingTarget) {
 			defer wg.Done()
-			ms, err := cl.Delay(activeTag, svc.URL, uptime.PingTimeoutMs)
+			ms, err := c.backend.Delay(activeTag, svc.URL, uptime.PingTimeoutMs)
 			res := ServicePingResult{Name: svc.Name}
 			if err == nil {
 				res.OK = true
@@ -351,7 +521,7 @@ func (c *Core) PingServices(activeTag string, services []ServicePingTarget) []Se
 	wg.Wait()
 
 	for i, svc := range services {
-		c.serviceUptime.Record(activeTag+"|"+svc.Name, results[i].OK, results[i].RttMs)
+		c.serviceUptime.Record(activeTag+"|"+svc.Name, results[i].OK, results[i].RttMs, uptime.SrcTunnel)
 	}
 	c.serviceUptime.Save()
 

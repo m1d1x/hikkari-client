@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "mode": "bypass",
+  "sources": [
+    {
+      "id": "manual",
+      "kind": "manual",
+      "name": "Свои правила",
+      "bypass": {
+        "domains": ["example.com"],
+        "ips": ["192.0.2.0/24"],
+        "processes": {
+          "darwin": ["Game"],
+          "windows": ["game.exe"],
+          "linux": ["game"]
+        }
+      },
+      "proxy": {"domains": ["vpn.example"], "ips": [], "processes": {}}
+    },
+    {
+      "id": "catalog-games",
+      "kind": "catalog",
+      "name": "Игры",
+      "bypass": {"domains": ["example.com", "games.example"], "ips": [], "processes": {}},
+      "proxy": {"domains": [], "ips": [], "processes": {}}
+    }
+  ]
+}

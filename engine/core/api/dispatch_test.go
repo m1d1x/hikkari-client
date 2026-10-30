@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -175,7 +177,7 @@ func TestCall_SwitchProfile_UpdatesConfigAndActive(t *testing.T) {
 		t.Fatalf("expected active next, got %q", profiles.Active)
 	}
 
-	cfg, err := c.configs.Read()
+	cfg, err := readBuiltConfig(c)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
@@ -264,4 +266,64 @@ func TestEnvelope_AlwaysValidJSON(t *testing.T) {
 
 func writeFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0644)
+}
+
+// Verify the full import path persists every server separately, including
+// repeated display labels, and makes all of them selectable in sing-box.
+func TestCall_ImportSubscriptionsKeepsEveryServer(t *testing.T) {
+	if vpnClashAPIRunningProbe() {
+		t.Skip("real VPN is running")
+	}
+	c := initCore(t)
+	body := "vless://id@fi.example:443#Server\nvless://id@de.example:443#Server"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(body))))
+	}))
+	defer server.Close()
+	args, _ := json.Marshal(map[string]string{"uri": "[one](" + server.URL + "/one)\n[second](" + server.URL + "/two)"})
+	result := decode(t, c.Call("AddProfileFromURI", string(args)))
+	if !result.Ok {
+		t.Fatal(result.Error)
+	}
+	profiles, err := c.profiles.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles.Profiles) != 4 {
+		t.Fatalf("got %d profiles, want 4", len(profiles.Profiles))
+	}
+	names := map[string]bool{}
+	for _, p := range profiles.Profiles {
+		if names[p.Name] {
+			t.Fatalf("duplicate profile name %q", p.Name)
+		}
+		names[p.Name] = true
+	}
+	cfg, err := readBuiltConfig(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var servers, selectable int
+	for _, raw := range cfg["outbounds"].([]interface{}) {
+		ob := raw.(map[string]interface{})
+		if ob["type"] == "vless" {
+			servers++
+		}
+		if ob["tag"] == "proxy" {
+			selectable = len(ob["outbounds"].([]interface{}))
+		}
+	}
+	if servers != 4 || selectable != 4 {
+		t.Fatalf("outbounds=%d selector=%d, want 4 each", servers, selectable)
+	}
+}
+
+func readBuiltConfig(c *Core) (map[string]interface{}, error) {
+	data, err := os.ReadFile(filepath.Join(c.BaseDir(), "config.json"))
+	if err != nil {
+		return nil, err
+	}
+	var cfg map[string]interface{}
+	err = json.Unmarshal(data, &cfg)
+	return cfg, err
 }

@@ -5,6 +5,8 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_toast.dart';
+import '../ui/nekko_dialog.dart';
 import '../ui/nekko_inline_edit_field.dart';
 import 'profile_flag_badge.dart';
 import 'profile_share_sheet.dart';
@@ -38,9 +40,7 @@ class _ProfileTileState extends State<ProfileTile> {
     if (!mounted) return;
     final error = context.read<AppState>().lastError;
     if (error == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error)),
-    );
+    NekkoToast.show(context, error);
   }
 
   Future<void> _rename(String v) async {
@@ -48,32 +48,18 @@ class _ProfileTileState extends State<ProfileTile> {
   }
 
   Future<void> _confirmDelete() async {
-    final t = context.tokens;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: t.surface,
-        title: const Text('Удалить профиль?'),
-        content: Text(widget.profile.label),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Отмена'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(
-              foregroundColor: t.bad,
-              overlayColor: Colors.transparent,
-            ),
-            child: const Text('Удалить'),
-          ),
-        ],
-      ),
+    final ok = await NekkoDialog.confirm(
+      context,
+      title: 'удалить профиль?',
+      message: widget.profile.label,
+      confirmLabel: 'удалить',
     );
     if (ok != true) return;
     if (!mounted) return;
-    await context.read<AppState>().deleteProfile(widget.profile.name);
+    final state = context.read<AppState>();
+    await state.deleteProfile(widget.profile.name);
+    if (!mounted || state.lastError == null) return;
+    NekkoToast.show(context, state.lastError!);
   }
 
   @override
@@ -131,15 +117,21 @@ class _ProfileTileState extends State<ProfileTile> {
             context,
             t,
             'аптайм',
-            pct < 0
-                ? '—'
-                : '$pct%  ·  ${rtt < 0 ? "—" : "$rtt ms"}',
+            pct < 0 ? '—' : '$pct%  ·  ${rtt < 0 ? "—" : "$rtt ms"}',
           ),
-          _kv(context, t, 'сервер',
-              widget.profile.endpoint.isEmpty ? '—' : widget.profile.endpoint,
-              mono: true),
-          _kv(context, t, 'протокол',
-              widget.profile.protocol.isEmpty ? '—' : widget.profile.protocol),
+          _kv(
+            context,
+            t,
+            'сервер',
+            widget.profile.endpoint.isEmpty ? '—' : widget.profile.endpoint,
+            mono: true,
+          ),
+          _kv(
+            context,
+            t,
+            'протокол',
+            widget.profile.protocol.isEmpty ? '—' : widget.profile.protocol,
+          ),
           _labelRow(context, t),
           Padding(
             padding: const EdgeInsets.only(top: 18),
@@ -226,8 +218,13 @@ class _ProfileTileState extends State<ProfileTile> {
   // по одному ритму, чтобы отступы читались симметрично.
   static const double _rowHeight = 32;
 
-  Widget _kv(BuildContext context, NekkoTokens t, String k, String v,
-      {bool mono = false}) {
+  Widget _kv(
+    BuildContext context,
+    NekkoTokens t,
+    String k,
+    String v, {
+    bool mono = false,
+  }) {
     return SizedBox(
       height: _rowHeight,
       child: Row(
@@ -235,8 +232,7 @@ class _ProfileTileState extends State<ProfileTile> {
         children: [
           SizedBox(
             width: 80,
-            child: Text(k,
-                style: TextStyle(color: t.textMuted, fontSize: 12)),
+            child: Text(k, style: TextStyle(color: t.textMuted, fontSize: 12)),
           ),
           Expanded(
             child: Text(
@@ -264,8 +260,10 @@ class _ProfileTileState extends State<ProfileTile> {
           // остальные значения в строках выше.
           SizedBox(
             width: 71,
-            child: Text('профиль',
-                style: TextStyle(color: t.textMuted, fontSize: 12)),
+            child: Text(
+              'профиль',
+              style: TextStyle(color: t.textMuted, fontSize: 12),
+            ),
           ),
           Expanded(
             child: NekkoInlineEditField(
