@@ -177,10 +177,11 @@ GUI:                 баннер «Доступно X — Перезапуст�
       проба/манифест/блоб с публичного адреса.
 - Настройка (Settings → Secrets and variables → Actions):
   - переменные: `HIKKARI_UPDATE_URL` (`https://update.<домен>`), `HIKKARI_UPDATE_KEYS` (`release-1:<pub>`),
-    `HIKKARI_RELEASE_KEY_ID` (`release-1`), `HIKKARI_DEPLOY_HOST` (`user@host`), `HIKKARI_UPDATE_DIR`;
+    `HIKKARI_RELEASE_KEY_ID` (`release-1`), `HIKKARI_DEPLOY_HOST` (`deploy@31.57.158.79`);
   - секреты: `HIKKARI_RELEASE_KEY` (hex приватного ключа), `HIKKARI_DEPLOY_SSH_KEY`,
     `HIKKARI_DEPLOY_KNOWN_HOSTS` (`ssh-keyscan host`).
-  - Сервер: статическая раздача `HIKKARI_UPDATE_DIR` по HTTPS (Caddy `file_server`), больше ничего.
+  - Сервер (main, Рига, 31.57.158.79): Caddy `file_server` для `/srv/hikkari/update` на `update.hikkari.net`.
+    Ключ CI у пользователя `deploy` прибит к `rrsync /srv/hikkari/update`: только запись файлов канала.
 - ⚠️ Ключ подписи отдельный от Nekko. Потеря ключа = все установки перестают принимать обновления,
   пока их не переустановят руками. Ротация: новый ключ сначала добавить вторым в `HIKKARI_UPDATE_KEYS`
   и выпустить с ним релиз, подписанный старым; только потом подписывать новым.

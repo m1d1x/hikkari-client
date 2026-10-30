@@ -15,10 +15,14 @@
 # The server only has to serve that directory as static files over HTTPS; an
 # update must keep working when anything else on the box is down.
 #
+# The deploy key on the server is pinned to rsync inside the channel root
+# (authorized_keys: command="/usr/bin/rrsync /srv/hikkari/update",restrict),
+# so the CI secret can write channel files and nothing else; remote paths
+# below are relative to that root.
+#
 # Environment (all required):
 #   HIKKARI_UPDATE_URL   public base URL, the one baked into hikkari-updater
-#   HIKKARI_DEPLOY_HOST  ssh destination (user@host), key already in ssh-agent
-#   HIKKARI_UPDATE_DIR   directory on that host the web server serves
+#   HIKKARI_DEPLOY_HOST  ssh destination (deploy@host), key already in ssh-agent
 set -euo pipefail
 
 CHANNEL_DIR="${1:-}"
@@ -34,11 +38,10 @@ die() {
 [[ -d "$CHANNEL_DIR/blobs" && -f "$CHANNEL_DIR/stable/$PLATFORM/latest.json" ]] ||
 	die "usage: $0 CHANNEL_DIR VERSION — $CHANNEL_DIR is not a channel tree"
 [[ -n "$VERSION" ]] || die "usage: $0 CHANNEL_DIR VERSION"
-: "${HIKKARI_UPDATE_URL:?is not set}" "${HIKKARI_DEPLOY_HOST:?is not set}" "${HIKKARI_UPDATE_DIR:?is not set}"
+: "${HIKKARI_UPDATE_URL:?is not set}" "${HIKKARI_DEPLOY_HOST:?is not set}"
 
 BASE_URL="${HIKKARI_UPDATE_URL%/}"
 HOST="$HIKKARI_DEPLOY_HOST"
-TARGET="$HIKKARI_UPDATE_DIR"
 PREFIX="stable/$PLATFORM"
 
 # ⚠️ Order is load-bearing: bodies, then manifests, then the probe. The probe
@@ -51,15 +54,16 @@ PREFIX="stable/$PLATFORM"
 # same directory. The tree only grows; pruning is a separate, deliberate act.
 RSYNC=(rsync -a --delay-updates --human-readable -e "ssh -o BatchMode=yes")
 
-say "publishing hikkari $VERSION for $PLATFORM to $HOST:$TARGET ($BASE_URL)"
-ssh -o BatchMode=yes "$HOST" "mkdir -p '$TARGET/blobs' '$TARGET/$PREFIX'" || die "cannot create $TARGET on $HOST"
+say "publishing hikkari $VERSION for $PLATFORM to $HOST ($BASE_URL)"
 
+# rsync creates only the last path component; stable/ must exist first.
+"${RSYNC[@]}" --include '*/' --exclude '*' "$CHANNEL_DIR/" "$HOST:"
 say "1/3 blobs"
-"${RSYNC[@]}" "$CHANNEL_DIR/blobs/" "$HOST:$TARGET/blobs/"
+"${RSYNC[@]}" "$CHANNEL_DIR/blobs/" "$HOST:blobs/"
 say "2/3 manifests"
-"${RSYNC[@]}" --exclude latest.json "$CHANNEL_DIR/$PREFIX/" "$HOST:$TARGET/$PREFIX/"
+"${RSYNC[@]}" --exclude latest.json "$CHANNEL_DIR/$PREFIX/" "$HOST:$PREFIX/"
 say "3/3 probe"
-"${RSYNC[@]}" "$CHANNEL_DIR/$PREFIX/latest.json" "$HOST:$TARGET/$PREFIX/latest.json"
+"${RSYNC[@]}" "$CHANNEL_DIR/$PREFIX/latest.json" "$HOST:$PREFIX/latest.json"
 
 # Prove it from the public edge, not from "rsync exited 0": the claim is that a
 # client polling this URL is told about this version and can fetch its files.
@@ -77,5 +81,5 @@ blob_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE_URL/bl
 [[ "$blob_code" == 200 ]] || die "blob $first_blob came back $blob_code from $BASE_URL/blobs/"
 
 say "published: $BASE_URL serves hikkari $VERSION for $PLATFORM"
-say "rollback is a file copy on the box, no key and no rebuild:"
-say "  ssh $HOST 'cd $TARGET/$PREFIX && cp manifest-<older>.json manifest.json'"
+say "rollback is a file copy on the box (as root), no key and no rebuild:"
+say "  cd /srv/hikkari/update/$PREFIX && cp manifest-<older>.json manifest.json"
