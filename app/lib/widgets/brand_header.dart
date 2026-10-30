@@ -28,8 +28,8 @@ class BrandHeader extends StatelessWidget {
     final h = context.watch<AppState>().health;
     final state = context.read<AppState>();
     final status = h?.status ?? 'off';
-    final ip = (h?.ip as String?) ?? '';
-    final msg = (h?.message as String?) ?? '';
+    final ip = h?.ip ?? '';
+    final msg = h?.message ?? '';
     final details = [
       'настройки',
       if (ip.isNotEmpty) ip,
@@ -104,8 +104,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     final t = context.tokens;
     final h = context.watch<AppState>().health;
     final status = h?.status ?? 'off';
-    final ip = (h?.ip as String?) ?? '';
-    final msg = (h?.message as String?) ?? '';
+    final ip = h?.ip ?? '';
+    final msg = h?.message ?? '';
     final statusLabel = switch (status) {
       'ok' => 'подключено',
       'connecting' => 'подключаюсь',
