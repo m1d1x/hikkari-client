@@ -14,6 +14,7 @@
 package service
 
 import (
+	"NekkoVPN/core/fsutil"
 	"context"
 	"errors"
 	"fmt"
@@ -347,7 +348,7 @@ func writeAtomic(path string, data []byte) error {
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", tmp, err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := fsutil.Replace(tmp, path); err != nil {
 		return fmt.Errorf("placing %s: %w", path, err)
 	}
 	return nil

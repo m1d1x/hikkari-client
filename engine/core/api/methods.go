@@ -65,9 +65,13 @@ func (c *Core) StartVPN() error {
 	if err := c.flushRoutingLocked(); err != nil {
 		return err
 	}
+	started := time.Now()
 	err := c.startVPN()
 	if err != nil {
 		c.SubscriptionWake()
+	}
+	if !c.routingPreview {
+		c.reportConnect(started, err)
 	}
 	return err
 }
@@ -471,7 +475,7 @@ func (c *Core) UptimeHistory() map[string][]PingSample { return c.uptime.Snapsho
 func (c *Core) DowndetectorSettings() downdetector.Settings { return c.downdetector.Settings() }
 
 func (c *Core) SetDowndetectorSettings(s downdetector.Settings) error {
-	return c.downdetector.SetSettings(s)
+	return c.downdetector.SetSettings(c.downdetectorSettingsFollowingSwitch(s))
 }
 
 // DowndetectorLastReport is the latest report exactly as it would be sent,

@@ -22,6 +22,7 @@ import (
 
 	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/downdetector"
+	"NekkoVPN/core/telemetry"
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
@@ -67,6 +68,9 @@ type Core struct {
 	// downdetector turns uptime samples into anonymous reports for the
 	// shared downdetector (queued locally only, for now).
 	downdetector *downdetector.Agent
+	// telemetry queues product events and scrubbed errors for the hub
+	// (docs/TELEMETRY.md). Its switch also governs the downdetector.
+	telemetry *telemetry.Agent
 
 	customServicesMu   sync.RWMutex
 	customServicesPath string
@@ -210,6 +214,10 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	c.uptime.Load()
 	c.serviceUptime.Load()
 	c.downdetector.Load()
+	c.telemetry = c.newTelemetry()
+	c.telemetry.Load()
+	c.syncDowndetectorSwitch()
+	c.telemetry.Start(true)
 	c.customServicesPath = filepath.Join(baseDir, "custom-services.json")
 	c.loadCustomServices()
 	geoip.Load(filepath.Join(baseDir, "geoip-cache.json"))
@@ -217,12 +225,13 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	probe := uptime.NewLiveProbe(c.backend)
 	// Join every background observer before this Core can be initialized again.
 	// Their providers refer to Core fields, so cancellation alone is insufficient.
-	ctx, tracker, serviceTracker, checker, cleanliness, backend, reporter := c.ctx, c.uptime, c.serviceUptime, c.health, c.cleanliness, c.backend, c.downdetector
+	ctx, tracker, serviceTracker, checker, cleanliness, backend, reporter, tel := c.ctx, c.uptime, c.serviceUptime, c.health, c.cleanliness, c.backend, c.downdetector, c.telemetry
 	var workers sync.WaitGroup
 	run := func(fn func()) { workers.Add(1); go func() { defer workers.Done(); fn() }() }
 	run(func() { tracker.Run(ctx, c.uptimeHosts, probe) })
 	run(func() { serviceTracker.RunServices(ctx, c.activeProfileProvider, c.allServiceTargets, backend) })
 	run(func() { reporter.Run(ctx) })
+	run(func() { tel.Run(ctx) })
 	run(func() { checker.Run(ctx) })
 	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {
@@ -276,7 +285,7 @@ func (c *Core) Shutdown() error {
 	if stopErr != nil {
 		c.logger.Logf("shutdown: engine stop/flush failed: %v", stopErr)
 	}
-	logger := c.logger
+	logger, tel := c.logger, c.telemetry
 	subscriptionDone, presetDone, workerDone := c.subscriptionDone, c.presetDone, c.workerDone
 	c.subscriptionWake = nil
 	c.ctx, c.cancel = nil, nil
@@ -291,6 +300,9 @@ func (c *Core) Shutdown() error {
 	}
 	if workerDone != nil {
 		<-workerDone
+	}
+	if err := tel.Close(); err != nil {
+		logger.Logf("shutdown: telemetry queue: %v", err)
 	}
 	_ = logger.Close()
 	c.mu.Lock()

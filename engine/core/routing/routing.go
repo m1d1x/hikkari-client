@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"NekkoVPN/core/fsutil"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -184,7 +185,7 @@ func (s *Store) WriteRouting(state RoutingState) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), s.path)
+	return fsutil.Replace(file.Name(), s.path)
 }
 
 // SetRoutingEnabled flips the master toggle and recompiles config.json.

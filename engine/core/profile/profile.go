@@ -6,6 +6,7 @@
 package profile
 
 import (
+	"NekkoVPN/core/fsutil"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,7 +162,7 @@ type PendingWrite struct {
 	destination string
 }
 
-func (w *PendingWrite) Commit() error { return os.Rename(w.temporary, w.destination) }
+func (w *PendingWrite) Commit() error { return fsutil.Replace(w.temporary, w.destination) }
 func (w *PendingWrite) Discard()      { _ = os.Remove(w.temporary) }
 
 func (s *Store) Stage(pf *File) (*PendingWrite, error) {

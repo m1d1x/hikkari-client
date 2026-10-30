@@ -1,6 +1,7 @@
 package presets
 
 import (
+	"NekkoVPN/core/fsutil"
 	"context"
 	"encoding/json"
 	"errors"
@@ -234,7 +235,7 @@ func (m *Manager) persist(s State) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), m.path)
+	return fsutil.Replace(f.Name(), m.path)
 }
 
 // Caller holds tx. Readers continue seeing old state until persistence and

@@ -1,6 +1,7 @@
 package xray
 
 import (
+	"NekkoVPN/core/fsutil"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -113,7 +114,7 @@ func writeConfig(path string, raw []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return fsutil.Replace(tmp, path)
 }
 func (b *Backend) Start(ctx context.Context) error {
 	b.mu.Lock()

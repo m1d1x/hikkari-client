@@ -5,6 +5,7 @@
 package uptime
 
 import (
+	"NekkoVPN/core/fsutil"
 	"context"
 	"encoding/json"
 	"os"
@@ -144,7 +145,7 @@ func (t *Tracker) Save() {
 	if err = f.Close(); err != nil {
 		return
 	}
-	_ = os.Rename(name, t.path)
+	_ = fsutil.Replace(name, t.path)
 }
 
 // Snapshot returns a deep copy of the history for handing off to the UI.

@@ -286,6 +286,39 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 	case "DowndetectorLastReport":
 		return c.DowndetectorLastReport(), nil
 
+	// ----- telemetry -----
+	case "TelemetrySettings":
+		return c.TelemetrySettings(), nil
+	case "SetTelemetryEnabled":
+		var a struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetTelemetryEnabled(a.Enabled)
+	case "TelemetryLastBatch":
+		return c.TelemetryLastBatch(), nil
+	case "TelemetryEvent":
+		var a struct {
+			Name   string         `json:"name"`
+			Fields map[string]any `json:"fields"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.TelemetryEvent(a.Name, a.Fields)
+	case "TelemetryError":
+		var a struct {
+			Code      string `json:"code"`
+			Component string `json:"component"`
+			Message   string `json:"message"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.TelemetryError(a.Code, a.Component, a.Message)
+
 	// ----- service uptime -----
 	case "PingServices":
 		var a struct {
