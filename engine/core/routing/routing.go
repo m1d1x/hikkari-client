@@ -27,7 +27,7 @@ func NewMemory() *Store {
 
 func (state RoutingState) Clone() RoutingState {
 	clone := func(list RouteList) RouteList {
-		return RouteList{Domains: append([]string{}, list.Domains...), IPs: append([]string{}, list.IPs...), Processes: append([]string{}, list.Processes...)}
+		return RouteList{Domains: append([]string{}, list.Domains...), IPs: append([]string{}, list.IPs...), Processes: append([]string{}, list.Processes...), Folders: append([]string{}, list.Folders...)}
 	}
 	state.Bypass, state.Proxy = clone(state.Bypass), clone(state.Proxy)
 	return state
@@ -60,11 +60,14 @@ const (
 	ModeProxy  RoutingMode = "proxy"
 )
 
-// RouteList holds the three category lists the UI exposes per mode.
+// RouteList holds the category lists the UI exposes per mode. Folders are
+// path fragments (see normalizeFolderValue); omitted when empty so files
+// written before folder rules existed keep reading the same.
 type RouteList struct {
 	Domains   []string `json:"domains"`
 	IPs       []string `json:"ips"`
 	Processes []string `json:"processes"`
+	Folders   []string `json:"folders,omitempty"`
 }
 
 // RoutingState is the authoritative split-routing config. Persisted to
@@ -84,8 +87,8 @@ func DefaultRoutingState() RoutingState {
 	return RoutingState{
 		Enabled: true,
 		Mode:    ModeBypass,
-		Bypass:  RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}},
-		Proxy:   RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}},
+		Bypass:  RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}, Folders: []string{}},
+		Proxy:   RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}, Folders: []string{}},
 	}
 }
 
@@ -104,6 +107,7 @@ func sanitizeList(l RouteList) RouteList {
 	l.Domains = keepValid("domains", l.Domains)
 	l.IPs = keepValid("ips", l.IPs)
 	l.Processes = keepValid("processes", l.Processes)
+	l.Folders = keepValid("folders", l.Folders)
 	return l
 }
 
@@ -288,6 +292,10 @@ func addToList(list *RouteList, category, value string) error {
 		if !containsCI(list.Processes, value) {
 			list.Processes = append(list.Processes, value)
 		}
+	case "folders":
+		if !containsCI(list.Folders, value) {
+			list.Folders = append(list.Folders, value)
+		}
 	default:
 		return fmt.Errorf("неизвестная категория: %s", category)
 	}
@@ -311,6 +319,8 @@ func removeFromList(list *RouteList, category, value string) error {
 		list.IPs = drop(list.IPs)
 	case "processes":
 		list.Processes = drop(list.Processes)
+	case "folders":
+		list.Folders = drop(list.Folders)
 	default:
 		return fmt.Errorf("неизвестная категория: %s", category)
 	}

@@ -139,7 +139,7 @@ Semantics:
 | `AddRule`           | `{"mode":"...","category":"...","value":"..."}`           | `null`         |
 | `RemoveRule`        | `{"mode":"...","category":"...","value":"..."}`           | `null`         |
 
-Valid `category` values: `"domains"`, `"ips"`, `"processes"`.
+Valid `category` values: `"domains"`, `"ips"`, `"processes"`, `"folders"` (path fragments such as `steamapps/common/`; requires the `folderRouting` capability).
 
 `RoutingState`:
 
@@ -147,8 +147,8 @@ Valid `category` values: `"domains"`, `"ips"`, `"processes"`.
 {
   "enabled": true,
   "mode":    "bypass",
-  "bypass":  { "domains": [...], "ips": [...], "processes": [...] },
-  "proxy":   { "domains": [...], "ips": [...], "processes": [...] }
+  "bypass":  { "domains": [...], "ips": [...], "processes": [...], "folders": [...] },
+  "proxy":   { "domains": [...], "ips": [...], "processes": [...], "folders": [...] }
 }
 ```
 

@@ -1,6 +1,9 @@
 package routing
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 func TestNormalizeIPValue(t *testing.T) {
 	ok := map[string]string{
@@ -153,4 +156,58 @@ func equal(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestNormalizeFolderValue(t *testing.T) {
+	ok := map[string]string{
+		"steamapps/common/":                       "steamapps/common/",
+		`steamapps\common\`:                       "steamapps/common/",
+		`C:\Program Files (x86)\Steam\steamapps\`: "Program Files (x86)/Steam/steamapps/",
+		`"D:\Games\Epic Games\"`:                  "Games/Epic Games/",
+		"/Applications/Discord.app/":              "Applications/Discord.app/",
+		"Discord.app/":                            "Discord.app/",
+		"steamapps//common/":                      "steamapps/common/",
+	}
+	for in, want := range ok {
+		got, err := normalizeRouteValue("folders", in)
+		if err != nil {
+			t.Errorf("folders %q: unexpected error %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("folders %q: got %q, want %q", in, got, want)
+		}
+	}
+
+	// A bare word would match any path containing it; an empty or
+	// root-only value would match everything.
+	bad := []string{"steam", "/", `C:\`, "", "  ", "games/*/bin/"}
+	for _, in := range bad {
+		if got, err := normalizeRouteValue("folders", in); err == nil {
+			t.Errorf("folders %q: accepted as %q, want rejection", in, got)
+		}
+	}
+}
+
+func TestFolderRegexesMatchOnEveryMachine(t *testing.T) {
+	cases := []struct {
+		frag  string
+		path  string
+		match bool
+	}{
+		{"steamapps/common/", `C:\Program Files (x86)\Steam\steamapps\common\Game\game.exe`, true},
+		{"steamapps/common/", `E:\SteamLibrary\steamapps\common\Game\bin\x64\game.exe`, true},
+		{"steamapps/common/", `/Users/a/Library/Application Support/Steam/steamapps/common/Game/game`, true},
+		{"steamapps/common/", `C:\SteamApps\Common\Game\game.exe`, true}, // case-insensitive
+		{"steamapps/common/", `C:\Steam\steam.exe`, false},
+		{"common/", `C:\uncommon\x.exe`, false}, // anchored at a segment
+		{"Discord.app/", `/Applications/Discord.app/Contents/Frameworks/Discord Helper (Renderer).app/Contents/MacOS/Discord Helper (Renderer)`, true},
+		{"Discord.app/", `/Applications/DiscordXapp/x`, false}, // the dot is literal
+	}
+	for _, c := range cases {
+		re := regexp.MustCompile(FolderRegexes([]string{c.frag})[0])
+		if got := re.MatchString(c.path); got != c.match {
+			t.Errorf("%q vs %q: match=%v, want %v (re %s)", c.frag, c.path, got, c.match, re)
+		}
+	}
 }

@@ -282,66 +282,217 @@ export function donations(w: Win) {
 	};
 }
 
-// ---------- presets ----------
+// ---------- groups & presets ----------
+//
+// A group bundles every rule about one thing: steam, discord, banks. Domains
+// and ips hold everywhere; apps and folders are written per OS, in that OS's
+// own form: an exe on windows, the binary inside the .app on macos, a package
+// on android. Every client gets the whole preset and takes the shared rules
+// plus its own OS's, so a preset needs no per-platform targeting.
+//
+// A preset is a set of groups, each put on one side: past the vpn or through
+// it, which fills the client's bypass and proxy lists. Presets are what gets
+// rolled out: a release freezes the groups as they are into a version, which
+// goes to testers first, then a growing share, while the rest keep the
+// current one.
 
-export type RoutingMode = 'bypass' | 'proxy';
+export interface Rules {
+	domains: string[];
+	ips: string[];
+	/** process names: the exe */
+	winApps: string[];
+	/** path fragments: every binary under them, wherever installed */
+	winFolders: string[];
+	/** process names: the binary in Contents/MacOS */
+	macApps: string[];
+	macFolders: string[];
+	/** package names */
+	androidApps: string[];
+}
+
+export type RuleKind = keyof Rules;
+
+export const RULE_SECTIONS: { label: string; kinds: { key: RuleKind; label: string; hint: string }[] }[] = [
+	{
+		label: 'везде',
+		kinds: [
+			{ key: 'domains', label: 'домены', hint: '+ домен' },
+			{ key: 'ips', label: 'ip / подсети', hint: '+ ip или подсеть' },
+		],
+	},
+	{
+		label: 'windows',
+		kinds: [
+			{ key: 'winApps', label: 'приложения', hint: '+ имя exe' },
+			{ key: 'winFolders', label: 'папки', hint: '+ кусок пути' },
+		],
+	},
+	{
+		label: 'macos',
+		kinds: [
+			{ key: 'macApps', label: 'приложения', hint: '+ имя бинаря из .app' },
+			{ key: 'macFolders', label: 'папки', hint: '+ кусок пути' },
+		],
+	},
+	{
+		label: 'android',
+		kinds: [{ key: 'androidApps', label: 'приложения', hint: '+ пакет' }],
+	},
+];
+
+/** Every rule list, with the OS it belongs to; null for the shared ones. */
+export const RULE_KINDS = RULE_SECTIONS.flatMap((s, i) =>
+	s.kinds.map((k) => ({ ...k, os: i === 0 ? null : s.label })),
+);
+
+export interface Group {
+	id: string;
+	name: string;
+	rules: Rules;
+}
+
+export type Side = 'bypass' | 'proxy';
+export const SIDES: { key: Side; label: string }[] = [
+	{ key: 'bypass', label: 'мимо vpn' },
+	{ key: 'proxy', label: 'через vpn' },
+];
+
+/** A released preset: the groups frozen as they were at release. */
+export interface PresetVersion {
+	v: number;
+	bypass: Group[];
+	proxy: Group[];
+}
 
 export interface Preset {
 	id: string;
 	name: string;
-	version: number;
-	mode: RoutingMode;
-	domains: string[];
-	apps: string[];
-	percent: number;
-	platforms: Platform[];
-	users: string[];
+	/** group ids, what is being edited, not on any device yet */
+	bypass: string[];
+	proxy: string[];
+	/** what everyone has; null for a preset never fully rolled out */
+	current: PresetVersion | null;
+	/** the version being rolled out; null when nothing is */
+	next: PresetVersion | null;
+	/** index into STAGES */
+	stage: number;
+	testers: string[];
 	paused: boolean;
 	received: number;
+	/** share of devices with an error since they got it, next vs current */
+	errPct: { next: number; current: number };
 }
 
-/** Devices one percent of the audience is: what the rollout is measured against. */
+/** Rollout stages, percent of the audience; 0 is testers only. */
+export const STAGES = [0, 5, 25, 50, 100];
+
+/** Active devices: what a percent of the audience is measured against. */
 export const ACTIVE_DEVICES = 6800;
+
+export const emptyRules = (r: Partial<Rules> = {}): Rules => ({
+	domains: [],
+	ips: [],
+	winApps: [],
+	winFolders: [],
+	macApps: [],
+	macFolders: [],
+	androidApps: [],
+	...r,
+});
+
+export const groups: Group[] = [
+	{
+		id: 'steam',
+		name: 'steam',
+		rules: emptyRules({
+			domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com', 'steamserver.net'],
+			winApps: ['steam.exe', 'steamwebhelper.exe'],
+			winFolders: ['steamapps/common/'],
+			macApps: ['steam_osx'],
+			macFolders: ['steamapps/common/'],
+			androidApps: ['com.valvesoftware.android.steam.community'],
+		}),
+	},
+	{
+		id: 'discord',
+		name: 'discord',
+		rules: emptyRules({
+			domains: ['discord.com', 'discord.gg', 'discordapp.com', 'discordapp.net', 'discord.media'],
+			winApps: ['Discord.exe'],
+			macApps: ['Discord'],
+			macFolders: ['Discord.app/'],
+			androidApps: ['com.discord'],
+		}),
+	},
+	{
+		id: 'banks',
+		name: 'госуслуги и банки',
+		rules: emptyRules({
+			domains: ['gosuslugi.ru', 'nalog.gov.ru', 'sberbank.ru', 'tbank.ru', 'vtb.ru', 'alfabank.ru'],
+			androidApps: ['ru.rostel', 'ru.sberbankmobile', 'com.idamob.tinkoff.android'],
+		}),
+	},
+	{
+		id: 'youtube',
+		name: 'youtube',
+		rules: emptyRules({
+			domains: ['youtube.com', 'googlevideo.com', 'ytimg.com', 'youtu.be', 'ggpht.com'],
+			androidApps: ['com.google.android.youtube'],
+		}),
+	},
+	{
+		id: 'telegram',
+		name: 'telegram',
+		rules: emptyRules({
+			domains: ['telegram.org', 't.me'],
+			ips: ['91.108.4.0/22', '149.154.160.0/20'],
+			winApps: ['Telegram.exe'],
+			macApps: ['Telegram'],
+			androidApps: ['org.telegram.messenger'],
+		}),
+	},
+];
+
+const freeze = (ids: string[]) => structuredClone(groups.filter((g) => ids.includes(g.id)));
+
+/** steam as it was before steamserver.net, the web helper and the games folder went in */
+const OLD_STEAM: Group = {
+	id: 'steam',
+	name: 'steam',
+	rules: emptyRules({
+		domains: ['steampowered.com', 'steamcommunity.com', 'steamcontent.com'],
+		winApps: ['steam.exe'],
+		macApps: ['steam_osx'],
+		androidApps: ['com.valvesoftware.android.steam.community'],
+	}),
+};
 
 export const presets: Preset[] = [
 	{
-		id: 'ru-base',
-		name: 'ru базовый',
-		version: 3,
-		mode: 'bypass',
-		domains: ['gosuslugi.ru', 'sberbank.ru', 'vk.com', 'yandex.ru', 'ozon.ru', 'wildberries.ru', 'mos.ru'],
-		apps: [],
-		percent: 100,
-		platforms: ['windows', 'macos', 'android'],
-		users: [],
-		paused: false,
-		received: 6512,
-	},
-	{
-		id: 'ru-base-4',
-		name: 'ru базовый',
-		version: 4,
-		mode: 'bypass',
-		domains: ['gosuslugi.ru', 'sberbank.ru', 'vk.com', 'yandex.ru', 'ozon.ru', 'wildberries.ru', 'mos.ru', 'tbank.ru', 'avito.ru'],
-		apps: ['Steam.exe'],
-		percent: 25,
-		platforms: ['windows', 'macos'],
-		users: [],
+		id: 'ru',
+		name: 'россия · стандарт',
+		bypass: ['banks', 'steam'],
+		proxy: ['discord', 'youtube', 'telegram'],
+		current: { v: 3, bypass: [...freeze(['banks']), OLD_STEAM], proxy: freeze(['discord', 'youtube']) },
+		next: { v: 4, bypass: freeze(['banks', 'steam']), proxy: freeze(['discord', 'youtube', 'telegram']) },
+		stage: 2,
+		testers: ['@kirill_v', '7f3a…c1'],
 		paused: false,
 		received: 1104,
+		errPct: { next: 0.4, current: 0.3 },
 	},
 	{
-		id: 'games',
-		name: 'игры через прокси',
-		version: 1,
-		mode: 'proxy',
-		domains: ['discord.com', 'discord.gg', 'discordapp.net'],
-		apps: ['Discord.exe', 'Discord'],
-		percent: 0,
-		platforms: ['windows', 'macos'],
-		users: ['7f3a…c1', 'b20e…9d', '@kirill_v'],
+		id: 'gamer',
+		name: 'геймер',
+		bypass: ['steam'],
+		proxy: ['discord'],
+		current: { v: 1, bypass: [OLD_STEAM], proxy: freeze(['discord']) },
+		next: null,
+		stage: STAGES.length - 1,
+		testers: [],
 		paused: false,
-		received: 2,
+		received: 2410,
+		errPct: { next: 0, current: 0.2 },
 	},
 ];
 

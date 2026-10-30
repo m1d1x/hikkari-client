@@ -45,6 +45,7 @@ type Rules struct {
 	Domains   []string            `json:"domains"`
 	IPs       []string            `json:"ips"`
 	Processes map[string][]string `json:"processes"`
+	Folders   map[string][]string `json:"folders,omitempty"`
 }
 
 var sourceID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,95}$`)
@@ -96,6 +97,14 @@ func validateRules(r Rules) error {
 			return fmt.Errorf("неизвестная платформа %q", platform)
 		}
 		if _, err := ValidateValues("processes", values); err != nil {
+			return err
+		}
+	}
+	for platform, values := range r.Folders {
+		if !ValidPlatform(platform) {
+			return fmt.Errorf("неизвестная платформа %q", platform)
+		}
+		if _, err := ValidateValues("folders", values); err != nil {
 			return err
 		}
 	}
@@ -223,7 +232,7 @@ func validateDocumentShape(data []byte) error {
 			return err
 		}
 		for _, mode := range []string{"bypass", "proxy"} {
-			if _, err := exactObject(source[mode], nil, []string{"domains", "ips", "processes"}); err != nil {
+			if _, err := exactObject(source[mode], nil, []string{"domains", "ips", "processes", "folders"}); err != nil {
 				return err
 			}
 		}
@@ -277,6 +286,7 @@ func mergeRules(dst *RouteList, src Rules, platform string) {
 	dst.Domains = union(dst.Domains, src.Domains)
 	dst.IPs = union(dst.IPs, src.IPs)
 	dst.Processes = union(dst.Processes, src.Processes[platform])
+	dst.Folders = union(dst.Folders, src.Folders[platform])
 }
 
 func union(base, more []string) []string {
@@ -295,10 +305,14 @@ func union(base, more []string) []string {
 }
 
 // ManualDocument adapts existing local policy without changing its disk format.
-// Legacy unscoped processes belong to the OS of the installation reading them.
+// Legacy unscoped processes and folders belong to the OS of the installation reading them.
 func ManualDocument(state RoutingState, platform string) Document {
 	rules := func(list RouteList) Rules {
-		return Rules{Domains: append([]string{}, list.Domains...), IPs: append([]string{}, list.IPs...), Processes: map[string][]string{platform: append([]string{}, list.Processes...)}}
+		r := Rules{Domains: append([]string{}, list.Domains...), IPs: append([]string{}, list.IPs...), Processes: map[string][]string{platform: append([]string{}, list.Processes...)}}
+		if len(list.Folders) > 0 {
+			r.Folders = map[string][]string{platform: append([]string{}, list.Folders...)}
+		}
+		return r
 	}
 	return Document{SchemaVersion: SchemaVersion, Enabled: state.Enabled, Mode: state.Mode,
 		Sources: []Source{{ID: "manual", Kind: SourceManual, Name: "Свои правила", Bypass: rules(state.Bypass), Proxy: rules(state.Proxy)}}}

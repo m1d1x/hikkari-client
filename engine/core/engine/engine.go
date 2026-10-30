@@ -24,6 +24,7 @@ type Capabilities struct {
 	LiveProfileSwitch bool `json:"liveProfileSwitch"`
 	ProfileProbe      bool `json:"profileProbe"`
 	ProcessRouting    bool `json:"processRouting"`
+	FolderRouting     bool `json:"folderRouting"`
 }
 
 type Info struct {
@@ -81,6 +82,9 @@ func ValidateConfiguration(c Configuration, caps Capabilities) error {
 	list := c.Routing.Policy().Rules
 	if len(list.Processes) > 0 && !caps.ProcessRouting {
 		return fmt.Errorf("выбранный адаптер не поддерживает исключения приложений на этой ОС")
+	}
+	if len(list.Folders) > 0 && !caps.FolderRouting {
+		return fmt.Errorf("выбранный адаптер не поддерживает правила по папкам на этой ОС")
 	}
 	if len(list.Domains) > 0 && !caps.DomainRouting {
 		return fmt.Errorf("выбранный адаптер не поддерживает правила по доменам")

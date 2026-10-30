@@ -214,6 +214,9 @@ func (c *Core) AddRule(mode, category, value string) error {
 	if category == "processes" && !caps.ProcessRouting {
 		return fmt.Errorf("движок не поддерживает маршрутизацию приложений")
 	}
+	if category == "folders" && !caps.FolderRouting {
+		return fmt.Errorf("движок не поддерживает правила по папкам")
+	}
 	return c.changeManualRouting(func(state *routing.RoutingState) error {
 		return state.ChangeRule(RoutingMode(mode), category, value, false)
 	})

@@ -51,7 +51,8 @@ func (s *Store) RemoveRouteRule(mode RoutingMode, category, value string) error 
 //   - preserves any sniff/hijack-dns prelude rules, the ICMP/LAN→direct rules and the QUIC reject
 //   - drops every other rule (they're owned by us)
 //   - inserts one rule per non-empty category (domain_suffix / ip_cidr /
-//     process_name) for the active mode's list, pointed at the right outbound
+//     process_name / process_path_regex) for the active mode's list, pointed
+//     at the right outbound
 //   - sets route.final to "direct" (proxy mode + enabled) or head (otherwise)
 func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 	state = state.Sanitize()
@@ -105,6 +106,7 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		appendRule("domain_suffix", list.Domains)
 		appendRule("ip_cidr", list.IPs)
 		appendRule("process_name", list.Processes)
+		appendRule("process_path_regex", routing.FolderRegexes(list.Folders))
 	}
 
 	// Bypass rules go ahead of the QUIC reject: an app the user sent direct
@@ -166,6 +168,12 @@ func applyBypassDNS(cfg map[string]interface{}, bypass RouteList) {
 			"server":       "dns-direct",
 		})
 	}
+	if len(bypass.Folders) > 0 {
+		kept = append(kept, map[string]interface{}{
+			"process_path_regex": toAnySlice(routing.FolderRegexes(bypass.Folders)),
+			"server":             "dns-direct",
+		})
+	}
 	for _, r := range rules {
 		if m, ok := r.(map[string]interface{}); ok && isBypassDNSRule(m) {
 			continue
@@ -176,13 +184,16 @@ func applyBypassDNS(cfg map[string]interface{}, bypass RouteList) {
 }
 
 // isBypassDNSRule recognises the rules applyBypassDNS owns: any
-// process_name → dns-direct rule, and a domain_suffix → dns-direct rule
+// process_name or process_path_regex → dns-direct rule, and a domain_suffix → dns-direct rule
 // other than the fixed one that keeps the VPN servers' own names real.
 func isBypassDNSRule(m map[string]interface{}) bool {
 	if m["server"] != "dns-direct" {
 		return false
 	}
 	if _, has := m["process_name"]; has {
+		return true
+	}
+	if _, has := m["process_path_regex"]; has {
 		return true
 	}
 	suf, has := m["domain_suffix"].([]interface{})

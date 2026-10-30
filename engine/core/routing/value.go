@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strings"
 )
 
@@ -24,7 +25,7 @@ func NormalizeValue(category, value string) (string, error) {
 // the point the user types it, where an error message can still explain
 // itself.
 //
-// The categories match addToList: "domains", "ips", "processes".
+// The categories match addToList: "domains", "ips", "processes", "folders".
 func normalizeRouteValue(category, value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if len(value) > 512 || strings.ContainsAny(value, "\x00\r\n") {
@@ -40,6 +41,8 @@ func normalizeRouteValue(category, value string) (string, error) {
 		return normalizeDomainValue(value)
 	case "processes":
 		return normalizeProcessValue(value)
+	case "folders":
+		return normalizeFolderValue(value)
 	default:
 		return "", fmt.Errorf("неизвестная категория: %s", category)
 	}
@@ -91,6 +94,53 @@ func normalizeProcessValue(value string) (string, error) {
 		return "", fmt.Errorf("%q — не похоже на имя приложения", value)
 	}
 	return name, nil
+}
+
+// normalizeFolderValue reduces a pasted path to the fragment form folders
+// are stored in: forward slashes, no repeated or leading ones, no drive
+// letter. A drive or a home directory would tie the rule to one machine,
+// which is exactly what a fragment is there to avoid. At least one directory
+// boundary is required: a bare word ("steam") would match any path that
+// merely contains it, which routes far more than anyone meant to.
+func normalizeFolderValue(value string) (string, error) {
+	frag := strings.TrimSpace(strings.Trim(value, `"'`))
+	frag = strings.ReplaceAll(frag, `\`, "/")
+	if len(frag) >= 2 && frag[1] == ':' {
+		frag = frag[2:] // drop a drive letter, "C:"
+	}
+	for strings.Contains(frag, "//") {
+		frag = strings.ReplaceAll(frag, "//", "/")
+	}
+	frag = strings.TrimPrefix(frag, "/")
+	if strings.Trim(frag, "/") == "" {
+		return "", fmt.Errorf("%q — пустой путь", value)
+	}
+	if !strings.Contains(frag, "/") {
+		return "", fmt.Errorf(
+			"%q — нужен кусок пути со слешем, например %q", value, frag+"/")
+	}
+	if strings.ContainsAny(frag, `*?<>|"`) {
+		return "", fmt.Errorf("%q — не похоже на путь", value)
+	}
+	return frag, nil
+}
+
+// FolderRegexes compiles folder fragments into process_path_regex patterns:
+// case-insensitive, since Windows paths are, with either slash matching a
+// boundary, since sing-box sees backslashes on Windows, and anchored at the
+// start of a path segment, so "common/" does not match "uncommon/". Every fragment is
+// quoted, so no stored value can produce an invalid pattern — which would
+// stop sing-box at startup like an unparseable ip_cidr does.
+func FolderRegexes(frags []string) []string {
+	out := make([]string, len(frags))
+	for i, f := range frags {
+		parts := strings.Split(f, "/")
+		for j, p := range parts {
+			parts[j] = regexp.QuoteMeta(p)
+		}
+		out[i] = `(?i)(^|[\\/])` + strings.Join(parts, `[\\/]`)
+	}
+	return out
 }
 
 // normalizeDomainValue reduces whatever the user pasted to the bare host

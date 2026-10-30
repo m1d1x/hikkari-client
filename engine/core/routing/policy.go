@@ -10,7 +10,7 @@ const (
 
 // Policy is the common execution plan. Category matchers are alternatives
 // (domain OR subnet OR process), not an intersection. Domains match the named
-// host and its subdomains, IPs are CIDRs, processes are exact executable names.
+// host and its subdomains, IPs are CIDRs, processes are exact executable names, folders are path fragments.
 // System DNS/TUN rules are supplied by each adapter independently.
 type Policy struct {
 	Rules         RouteList `json:"rules"`
@@ -19,7 +19,7 @@ type Policy struct {
 }
 
 func (s RoutingState) Policy() Policy {
-	p := Policy{Rules: RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}}, Target: TargetDirect, DefaultTarget: TargetVPN}
+	p := Policy{Rules: RouteList{Domains: []string{}, IPs: []string{}, Processes: []string{}, Folders: []string{}}, Target: TargetDirect, DefaultTarget: TargetVPN}
 	if !s.Enabled {
 		return p
 	}
@@ -40,7 +40,7 @@ func ActiveEqual(a, b RoutingState) bool {
 	if ap.DefaultTarget != bp.DefaultTarget {
 		return false
 	}
-	empty := func(r RouteList) bool { return len(r.Domains)+len(r.IPs)+len(r.Processes) == 0 }
+	empty := func(r RouteList) bool { return len(r.Domains)+len(r.IPs)+len(r.Processes)+len(r.Folders) == 0 }
 	if empty(ap.Rules) && empty(bp.Rules) {
 		return true
 	}
@@ -62,5 +62,5 @@ func ActiveEqual(a, b RoutingState) bool {
 		}
 		return len(set) == 0
 	}
-	return same(ap.Rules.Domains, bp.Rules.Domains) && same(ap.Rules.IPs, bp.Rules.IPs) && same(ap.Rules.Processes, bp.Rules.Processes)
+	return same(ap.Rules.Domains, bp.Rules.Domains) && same(ap.Rules.IPs, bp.Rules.IPs) && same(ap.Rules.Processes, bp.Rules.Processes) && same(ap.Rules.Folders, bp.Rules.Folders)
 }
