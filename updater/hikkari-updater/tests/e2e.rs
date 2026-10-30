@@ -347,8 +347,13 @@ fn a_version_that_never_confirms_is_rolled_back_and_not_offered_again() {
     up.ok("update", "ready");
     up.ok("apply", "applied");
 
+    assert_eq!(up.ok("status", "status")["recover_moves"], false);
     assert_eq!(up.ok("recover", "recovered")["attempt"], 1);
+    assert_eq!(up.ok("status", "status")["recover_moves"], false);
     assert_eq!(up.ok("recover", "recovered")["attempt"], 2);
+    // The next start is the one that rolls back: only now does recover move
+    // directories (and the service take the core down for it).
+    assert_eq!(up.ok("status", "status")["recover_moves"], true);
     let rolled = up.ok("recover", "recovered");
     assert_eq!(rolled["result"], "rolled_back");
     assert_eq!(read(&up.app().join("VERSION")), "1.0.0");

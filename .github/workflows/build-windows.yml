@@ -335,6 +335,7 @@ jobs:
 
             $rec = Invoke-Hikkari '{"op":"recover_update"}'
             if ($rec.recovery -ne "on_trial") { throw "expected a trial, got $($rec.recovery)" }
+            if ($rec.pid -ne $ap.pid) { throw "counting a trial start restarted the core" }
             $null = Invoke-Hikkari '{"op":"confirm_update"}'
             if (Test-Path "$root\app.old") { throw "app.old survived the confirmation" }
             $null = Invoke-Hikkari '{"op":"stop"}'

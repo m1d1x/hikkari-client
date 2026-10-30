@@ -225,11 +225,20 @@ fn installed_version(layout: &Layout) -> Result<Version, String> {
 
 fn status(opts: &Options) -> Result<(), String> {
     let layout = opts.layout();
+    let pending = swap::read_pending(&layout);
+    // Whether the next `recover` renames directories (a rollback), as
+    // opposed to only counting a start. The service stops the core around
+    // a recover only in the first case: a counted start must not drop the
+    // tunnel.
+    let recover_moves = pending
+        .as_ref()
+        .is_some_and(|p| p.attempts + 1 > swap::MAX_ATTEMPTS);
     emit(json!({
         "event": "status",
         "installed": installed_version(&layout)?.to_string(),
         "ready": stage::read_ready(&layout).map(|r| r.version.to_string()),
-        "pending": swap::read_pending(&layout),
+        "pending": pending,
+        "recover_moves": recover_moves,
     }));
     Ok(())
 }

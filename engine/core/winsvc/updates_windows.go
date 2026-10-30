@@ -225,16 +225,19 @@ func (u *updates) apply(reconnect bool) (from, to string, err error) {
 	return from, to, nil
 }
 
-// recover runs at every launch. It only takes the core down when a swap or a
-// rollback is actually pending, so an ordinary launch never drops the tunnel.
+// recover runs at every launch. It only takes the core down when directories
+// are about to move, so an ordinary launch never drops the tunnel.
 func (u *updates) recover() (result, from, to string, err error) {
 	u.opMu.Lock()
 	defer u.opMu.Unlock()
-	pending := false
+	// Only a recover that renames directories (a rollback, or repairing an
+	// interrupted swap) needs the core down; one that just counts a start of
+	// a version on trial must not drop the tunnel.
+	moves := false
 	if statusErr := u.run("status", func(ev map[string]interface{}) {
-		pending = ev["event"] == "status" && ev["pending"] != nil
+		moves, _ = ev["recover_moves"].(bool)
 	}); statusErr != nil {
-		pending = true // app\ unreadable: an interrupted swap to repair
+		moves = true // app\ unreadable: an interrupted swap to repair
 	}
 	do := func() error {
 		return u.run("recover", func(ev map[string]interface{}) {
@@ -243,7 +246,7 @@ func (u *updates) recover() (result, from, to string, err error) {
 			}
 		})
 	}
-	if pending {
+	if moves {
 		err = u.withCoreDown(false, do)
 	} else {
 		err = do()
