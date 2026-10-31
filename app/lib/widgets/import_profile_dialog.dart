@@ -209,20 +209,11 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
           onPressed: () => Navigator.of(context).maybePop(),
         ),
         NekkoDialogAction(
-          label: _submitting ? null : 'добавить',
+          label: 'добавить',
           enabled: !_submitting,
+          busy: _submitting,
           primary: true,
           onPressed: _submit,
-          child: _submitting
-              ? SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.5,
-                    valueColor: AlwaysStoppedAnimation(t.bg),
-                  ),
-                )
-              : null,
         ),
       ],
     );
