@@ -129,6 +129,49 @@ func (a *Agent) Outbox() []Report {
 	return append([]Report(nil), a.outbox...)
 }
 
+// DrainOutbox returns a copy of up to count queued reports from the head of the outbox.
+// Reports remain in the outbox until acknowledged via AckOutbox.
+func (a *Agent) DrainOutbox(count int) []Report {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if count <= 0 || len(a.outbox) == 0 {
+		return nil
+	}
+	if count > len(a.outbox) {
+		count = len(a.outbox)
+	}
+	out := make([]Report, count)
+	for i := 0; i < count; i++ {
+		out[i] = a.outbox[i]
+		out[i].Servers = append([]ServerStat(nil), a.outbox[i].Servers...)
+	}
+	return out
+}
+
+// AckOutbox removes the first count reports from the outbox and persists the remainder.
+func (a *Agent) AckOutbox(count int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if count <= 0 || len(a.outbox) == 0 {
+		return
+	}
+	if count > len(a.outbox) {
+		count = len(a.outbox)
+	}
+	if a.last != nil {
+		lastCopy := *a.last
+		lastCopy.Servers = append([]ServerStat(nil), a.last.Servers...)
+		a.last = &lastCopy
+	}
+	a.outbox = append([]Report(nil), a.outbox[count:]...)
+	if len(a.outbox) > 0 {
+		a.last = &a.outbox[len(a.outbox)-1]
+	} else {
+		a.outbox = nil
+	}
+	_ = a.saveOutboxLocked()
+}
+
 // Run builds one report per Window, right after each window closes. Blocks
 // until ctx is done.
 func (a *Agent) Run(ctx context.Context) {
