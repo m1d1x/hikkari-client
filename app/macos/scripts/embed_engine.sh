@@ -31,6 +31,8 @@ if command -v go >/dev/null 2>&1; then
   # without it the engine queues locally and sends nothing.
   LDFLAGS=""
   [ -n "${HIKKARI_TELEMETRY_URL:-}" ] && LDFLAGS="-X NekkoVPN/core/telemetry.EventsURL=$HIKKARI_TELEMETRY_URL"
+  # Likewise the routing presets catalog and its change stream.
+  [ -n "${HIKKARI_PRESET_CATALOG_URL:-}" ] && LDFLAGS="$LDFLAGS -X NekkoVPN/core/presets.CatalogURL=$HIKKARI_PRESET_CATALOG_URL -X NekkoVPN/core/presets.EventsURL=${HIKKARI_PRESET_EVENTS_URL:-}"
   for ARCH in ${ARCHS:-$(uname -m)}; do
     case "$ARCH" in
       arm64)  GOARCH=arm64 ;;

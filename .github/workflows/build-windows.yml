@@ -16,6 +16,10 @@ env:
   RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
   # docs/TELEMETRY.md §9: only releases send; branch builds keep it local.
   HIKKARI_TELEMETRY_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/events' || '' }}
+  # Routing presets (engine/core/presets): releases follow the hub's catalog;
+  # branch builds keep the bundled one.
+  HIKKARI_PRESET_CATALOG_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/presets/catalog' || '' }}
+  HIKKARI_PRESET_EVENTS_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/presets/events' || '' }}
 
 jobs:
   # sing-box-lx with our patches (core-patches/sing-box-lx/*.patch) applied —
@@ -151,6 +155,7 @@ jobs:
           $env:CC = "gcc"
           cd engine
           $ldflags = if ($env:HIKKARI_TELEMETRY_URL) { "-X NekkoVPN/core/telemetry.EventsURL=$env:HIKKARI_TELEMETRY_URL" } else { "" }
+          if ($env:HIKKARI_PRESET_CATALOG_URL) { $ldflags += " -X NekkoVPN/core/presets.CatalogURL=$env:HIKKARI_PRESET_CATALOG_URL -X NekkoVPN/core/presets.EventsURL=$env:HIKKARI_PRESET_EVENTS_URL" }
           go build -buildmode=c-shared -ldflags "$ldflags" -o ../nekkobox.dll ./cmd/nekkobox-ffi
           cd ..
           if (-not (Test-Path "nekkobox.dll")) {

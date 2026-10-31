@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -29,6 +30,10 @@ type State struct {
 	Catalog     Catalog `json:"catalog"`
 	Choices     Choices `json:"choices"`
 	Source      string  `json:"source"`
+	// Bucket places the install in a staged rollout: 0-99, drawn once from
+	// this install's own randomness and sent with each catalog request. It
+	// is not the telemetry id and says nothing about the device.
+	Bucket *int `json:"bucket,omitempty"`
 }
 
 type Snapshot struct {
@@ -117,6 +122,16 @@ func New(path string, options Options) (*Manager, error) {
 			}
 		} else if !os.IsNotExist(err) {
 			return nil, err
+		}
+	}
+	if m.state.Bucket == nil {
+		// Kept at once: a bucket redrawn on every start would hop the
+		// install in and out of a rollout. If the write fails, the next
+		// commit keeps it.
+		bucket := rand.IntN(100)
+		m.state.Bucket = &bucket
+		if err := m.persist(m.state); err != nil {
+			m.lastError = "не удалось сохранить настройки пресетов"
 		}
 	}
 	return m, nil
@@ -291,7 +306,14 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	if !m.Snapshot().SyncEnabled || m.options.URL == "" {
 		return nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.options.URL, nil)
+	endpoint, err := url.Parse(m.options.URL)
+	if err != nil {
+		return m.report(err)
+	}
+	query := endpoint.Query()
+	query.Set("bucket", fmt.Sprint(*m.Snapshot().Bucket))
+	endpoint.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return m.report(err)
 	}
@@ -307,7 +329,8 @@ func (m *Manager) Refresh(ctx context.Context) error {
 		return m.report(fmt.Errorf("не удалось обновить пресеты: %w", err))
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotModified {
+	// 204: nothing is released for this install yet; it keeps its catalog.
+	if resp.StatusCode == http.StatusNotModified || resp.StatusCode == http.StatusNoContent {
 		return m.report(nil)
 	}
 	if resp.StatusCode != http.StatusOK {

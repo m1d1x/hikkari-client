@@ -15,6 +15,10 @@ env:
   RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
   # docs/TELEMETRY.md §9: only releases send; branch builds keep it local.
   HIKKARI_TELEMETRY_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/events' || '' }}
+  # Routing presets (engine/core/presets): releases follow the hub's catalog;
+  # branch builds keep the bundled one.
+  HIKKARI_PRESET_CATALOG_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/presets/catalog' || '' }}
+  HIKKARI_PRESET_EVENTS_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/presets/events' || '' }}
 
 jobs:
   build:

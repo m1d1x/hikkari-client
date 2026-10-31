@@ -367,3 +367,87 @@ func TestCatalogFoldersReachTheirPlatformOnly(t *testing.T) {
 		}
 	}
 }
+
+// The install draws its rollout bucket once, keeps it across restarts and
+// sends only that number; a 204 (nothing released for it) keeps the
+// catalog it has and is not an error.
+func TestTheBucketIsDrawnOnceAndSentWithEachRequest(t *testing.T) {
+	var mu sync.Mutex
+	var buckets []string
+	status := http.StatusNoContent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		buckets = append(buckets, r.URL.Query().Get("bucket"))
+		w.WriteHeader(status)
+		if status == 200 {
+			_, _ = w.Write(testCatalog(3, "new.example"))
+		}
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "presets.json")
+
+	m := newManager(t, path, Options{URL: server.URL})
+	bucket := m.Snapshot().Bucket
+	if bucket == nil || *bucket < 0 || *bucket > 99 {
+		t.Fatalf("bucket %v", bucket)
+	}
+	if err := m.Refresh(context.Background()); err != nil {
+		t.Fatalf("204 is an error: %v", err)
+	}
+	if got := m.Snapshot(); got.Source != "bundled" || got.Error != "" {
+		t.Fatalf("204 changed the catalog: %+v", got)
+	}
+
+	restarted := newManager(t, path, Options{URL: server.URL})
+	if *restarted.Snapshot().Bucket != *bucket {
+		t.Fatal("the bucket was redrawn on restart")
+	}
+	mu.Lock()
+	status = 200
+	mu.Unlock()
+	if err := restarted.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, b := range buckets {
+		if b != fmt.Sprint(*bucket) {
+			t.Fatalf("sent buckets %v, want %d", buckets, *bucket)
+		}
+	}
+}
+
+// A group the user switched off stays off when the server moves the
+// install to a catalog that turns it on by default, and the manual layer is
+// never part of the catalog at all.
+func TestAnExplicitChoiceOutlivesANewPreset(t *testing.T) {
+	c, err := Parse(bundled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := c.Services[0].ID
+	c.Version = 5
+	c.Services[0].DefaultModes = []routing.RoutingMode{routing.ModeBypass, routing.ModeProxy}
+	body, _ := json.Marshal(c)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
+	defer server.Close()
+
+	m := newManager(t, filepath.Join(t.TempDir(), "presets.json"), Options{URL: server.URL})
+	if err := m.Select(routing.ModeBypass, id, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := m.Snapshot()
+	if got.Catalog.Version != 5 {
+		t.Fatal("the new catalog was not taken")
+	}
+	if Selected(got.Catalog, got.Choices, routing.ModeBypass, id) {
+		t.Fatal("the new preset switched back on a group the user turned off")
+	}
+	if !Selected(got.Catalog, got.Choices, routing.ModeProxy, id) {
+		t.Fatal("a mode the user never touched did not follow the new default")
+	}
+}
