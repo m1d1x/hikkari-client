@@ -10,22 +10,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
 
 	"NekkoVPN/core/engine"
-	"NekkoVPN/core/hostprocess"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/profile/legacy"
 )
 
+// Host runs the core for the backend. It owns the privileges TUN needs; the
+// backend only compiles and validates the config.
 type Host interface {
 	Start(context.Context) error
 	Stop() error
 	IsRunning() bool
 }
+
+// HostFactory makes the host for one run of the core: binary is the bundled
+// Xray the backend validated the config with, config the compiled config and
+// ports the SOCKS listeners whose answer shows the core ready.
+type HostFactory func(binary, config string, ports map[string]int) Host
+
 type Backend struct {
 	mu                sync.Mutex
 	dir, path, binary string
@@ -33,14 +39,16 @@ type Backend struct {
 	host              Host
 	ports             map[string]int
 	active            string
-	newHost           func(string, string, map[string]int) Host
+	newHost           HostFactory
 }
 
-func New(dir string, log engine.Logger) (engine.Backend, error) {
-	if runtime.GOOS != "darwin" {
-		return nil, fmt.Errorf("адаптер Xray пока поддержан только на macOS")
+// New is the Xray adapter whose core is run by hosts — on the desktop, the
+// Hikkari service (see ServiceHost); the platform's composition root picks.
+func New(dir string, log engine.Logger, hosts HostFactory) (engine.Backend, error) {
+	if hosts == nil {
+		return nil, fmt.Errorf("Xray: не задан процесс ядра")
 	}
-	b := &Backend{dir: dir, path: filepath.Join(dir, "xray.json"), log: log, ports: map[string]int{}}
+	b := &Backend{dir: dir, path: filepath.Join(dir, "xray.json"), log: log, ports: map[string]int{}, newHost: hosts}
 	if raw, err := os.ReadFile(filepath.Join(dir, "xray-runtime.json")); err == nil {
 		if err := json.Unmarshal(raw, &b.ports); err != nil {
 			return nil, fmt.Errorf("повреждено состояние портов Xray: %w", err)
@@ -58,11 +66,13 @@ func New(dir string, log engine.Logger) (engine.Backend, error) {
 	if b.ports == nil {
 		b.ports = map[string]int{}
 	}
-	b.host = &hostprocess.Daemon{Name: "xray", Directory: dir, Args: []string{"run", "-c", b.path}, Ready: func() bool { return listenersReady(b.ports) }, DNSAddress: "172.31.7.1"}
+	// A core left running by a previous GUI is still this backend's: the
+	// host answers for it with the ports recorded above.
+	b.host = hosts("", b.path, b.ports)
 	return b, nil
 }
 func (b *Backend) Info() engine.Info {
-	return engine.Info{ID: "xray", Name: "Xray " + Version, Capabilities: engine.Capabilities{TUN: runtime.GOOS == "darwin", DomainRouting: true, IPRouting: true, AutoSelect: true, ProfileProbe: true, ProcessRouting: true}}
+	return engine.Info{ID: "xray", Name: "Xray " + Version, Capabilities: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, ProfileProbe: true, ProcessRouting: true}}
 }
 func (b *Backend) Configure(c engine.Configuration) error {
 	b.mu.Lock()
@@ -148,22 +158,10 @@ func (b *Backend) Start(ctx context.Context) error {
 	for id, port := range b.ports {
 		ports[id] = port
 	}
-	var host Host
-	if b.newHost != nil {
-		host = b.newHost(binary, b.path, ports)
-	} else {
-		host = &hostprocess.Daemon{Name: "xray", Binary: binary, Directory: b.dir, Args: []string{"run", "-c", b.path}, Ready: func() bool { return listenersReady(ports) }, DNSAddress: "172.31.7.1"}
-	}
+	host := b.newHost(binary, b.path, ports)
 	b.host = host
 	if err := host.Start(ctx); err != nil {
 		cleanup := host.Stop()
-		if b.log != nil {
-			raw, _ := os.ReadFile(filepath.Join(b.dir, "xray.log"))
-			if len(raw) > 8192 {
-				raw = raw[len(raw)-8192:]
-			}
-			b.log.Logf("[engine.stderr] %s", raw)
-		}
 		return fmt.Errorf("%w (остановка: %v)", err, cleanup)
 	}
 	return nil
@@ -277,6 +275,6 @@ func (b *Backend) Export(p profile.Profile) (string, error) {
 func (b *Backend) Baseline() {}
 func (b *Backend) Diagnose(reason string) {
 	if b.log != nil {
-		b.log.Logf("[xray] %s: running=%v, log=%s", reason, b.IsRunning(), filepath.Join(b.dir, "xray.log"))
+		b.log.Logf("[xray] %s: running=%v", reason, b.IsRunning())
 	}
 }

@@ -103,16 +103,15 @@ func availablePort(t *testing.T) int {
 func TestStandaloneXrayPolicySelectionAndProbes(t *testing.T) {
 	bin := engineBinary(t)
 	dir := t.TempDir()
-	value, err := New(dir, nil)
+	ingress := availablePort(t)
+	value, err := New(dir, nil, func(binary, path string, ports map[string]int) Host {
+		return &localNativeHost{p: &Process{Binary: binary, Config: path, Directory: dir}, ports: ports, ingress: ingress}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	b := value.(*Backend)
 	defer b.Stop()
-	ingress := availablePort(t)
-	b.newHost = func(binary, path string, ports map[string]int) Host {
-		return &localNativeHost{p: &Process{Binary: binary, Config: path, Directory: dir}, ports: ports, ingress: ingress}
-	}
 	// ResolveBinary must see Xray only; this directory contains no sing-box.
 	if err := os.Symlink(bin, filepath.Join(dir, "xray")); err != nil {
 		t.Fatal(err)

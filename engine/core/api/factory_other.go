@@ -3,7 +3,10 @@
 package api
 
 import (
+	"fmt"
 	"path/filepath"
+
+	"NekkoVPN/core/engine"
 
 	vpn "NekkoVPN/core/engine/singbox/process"
 )
@@ -17,4 +20,10 @@ func newDesktopVPN(baseDir string, log vpn.LineLogger) vpn.Manager {
 		baseDir,
 		log,
 	)
+}
+
+// newDesktopXray: Xray needs a privileged host for TUN, and only the
+// Hikkari service on Windows and macOS is one.
+func newDesktopXray(string, engine.Logger) (engine.Backend, error) {
+	return nil, fmt.Errorf("Xray на этой платформе не поддержан")
 }

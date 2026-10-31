@@ -162,9 +162,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           selected: context.watch<AppState>().engineId,
                           onChanged: (id) =>
                               context.read<AppState>().switchEngine(id),
-                          segments: const [
-                            NekkoSegment('sing-box', 'sing-box'),
-                            NekkoSegment('xray', 'xray'),
+                          segments: [
+                            const NekkoSegment('sing-box', 'sing-box'),
+                            NekkoSegment(
+                              'xray',
+                              'xray',
+                              enabled: xrayAvailable,
+                              hint: xrayAvailable
+                                  ? null
+                                  : 'Xray на Windows пока недоступен',
+                            ),
                           ],
                           fontSize: 13,
                           fontWeight: FontWeight.w600,

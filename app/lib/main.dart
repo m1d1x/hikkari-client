@@ -117,7 +117,7 @@ class _BootGateState extends State<_BootGate>
           // Invalid preference is ignored; the selected default remains explicit.
         }
       }
-      if (engineId != 'xray') engineId = 'sing-box';
+      if (engineId != 'xray' || !xrayAvailable) engineId = 'sing-box';
       core.init(baseDir, engineId: engineId, routingPreview: kRoutingDryRun);
       final state = AppState(
         core,

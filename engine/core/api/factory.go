@@ -6,7 +6,6 @@ import (
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/engine/singbox"
 	vpn "NekkoVPN/core/engine/singbox/process"
-	"NekkoVPN/core/engine/xray"
 	"fmt"
 )
 
@@ -16,6 +15,11 @@ import (
 var DefaultEngineFactory engine.Factory = func(baseDir string, log engine.Logger) (engine.Backend, error) {
 	return singbox.NewWithProcess(baseDir, log, newDesktopVPN(baseDir, log)), nil
 }
+
+// XrayEngineFactory is Xray driven the platform's way: its core runs in
+// HikkariService on Windows and macOS (factory_service.go); there is no
+// privileged host elsewhere.
+var XrayEngineFactory engine.Factory = newDesktopXray
 
 // VPNFactory and InitWithVPN preserve the previous platform injection API.
 // New integrations should inject a full adapter with InitWithEngine instead.
@@ -47,7 +51,7 @@ func (c *Core) InitForEngine(baseDir, id string) error {
 	case "", "sing-box":
 		return c.Init(baseDir)
 	case "xray":
-		return c.InitWithEngine(baseDir, xray.New)
+		return c.InitWithEngine(baseDir, XrayEngineFactory)
 	default:
 		return fmt.Errorf("неизвестный движок %q", id)
 	}

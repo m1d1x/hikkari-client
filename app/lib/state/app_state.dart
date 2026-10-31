@@ -11,6 +11,11 @@ import '../core/routing_presets.dart';
 import '../core/routing_document.dart';
 import '../core/nekkobox_core.dart';
 
+/// Xray is not offered on Windows yet: the installer does not ship it and
+/// its TUN there has no answer for DNS and traffic leaking past the tunnel
+/// (plans/2026-10-31-xray-windows.md).
+final bool xrayAvailable = !Platform.isWindows;
+
 /// Debug routing uses the real Go domain/queue with an in-memory store and
 /// preview executor. It never configures or restarts a native engine.
 const bool kRoutingDryRun = kDebugMode;
@@ -117,6 +122,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> switchEngine(String id) async {
     if (_switchingEngine || id == _engineId || _baseDir == null) return;
+    if (id == 'xray' && !xrayAvailable) return;
     final startedAt = DateTime.now();
     _switchingEngine = true;
     _routingEpoch++;

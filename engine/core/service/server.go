@@ -1,7 +1,8 @@
 // Package service is the privileged half of the desktop client: HikkariService
 // on Windows (LocalSystem, core/winsvc registers it with the SCM) and on macOS
 // (root, a LaunchDaemon, core/macsvc). It owns the sing-box core — TUN needs
-// those rights and the GUI does not have them — and applies updates.
+// those rights and the GUI does not have them — and applies updates. The core
+// is sing-box or Xray, whichever engine the GUI runs; one at a time.
 //
 // The GUI reaches it through one local endpoint (a named pipe on Windows, a
 // unix socket on macOS) and sends config CONTENT, never a path: the service
@@ -44,6 +45,12 @@ type Config struct {
 	// modify; an update replaces them while the core is stopped.
 	CoreBin     string
 	CoreWorkDir string
+	// XrayBin is the bundled Xray, run in CoreDir on CoreDir/xray.json.
+	// Empty: this installation has no Xray and refuses to start it.
+	XrayBin string
+	// SystemDNS points the system resolver at the running core while Xray
+	// runs (sing-box takes DNS over by itself). Required with XrayBin.
+	SystemDNS SystemDNS
 
 	// Updater is hikkari-updater; UpdaterArgs go after the command (root
 	// and layout).
@@ -86,16 +93,31 @@ type Config struct {
 	SyncBinaries func() (restart bool)
 }
 
+// SystemDNS owns the system resolver setting on the service's behalf. Its
+// backup outlives the process: Restore after a crash puts back what the user
+// had before the core ran.
+type SystemDNS interface {
+	// Override points every network service's resolver at addr, keeping
+	// the user's setting to restore.
+	Override(addr string) error
+	// Restore puts the user's setting back; a no-op when nothing is
+	// overridden.
+	Restore() error
+}
+
 // ErrRestart: Serve returned because an update replaced the service.
 var ErrRestart = errors.New("service: restarting into the updated version")
 
 type Server struct {
-	cfg     Config
-	log     *logging.Logger
-	core    *vpn.ProcessManager
+	cfg Config
+	log *logging.Logger
+	// cores by engine; engine names the one the GUI last started, which is
+	// the one that runs while it is wanted up.
+	cores   map[string]*vpn.ProcessManager
+	engine  string
 	updates *updates
 
-	// Guards the core: start/stop must not interleave. Update operations
+	// Guards the cores: start/stop must not interleave. Update operations
 	// that stop the core take it inside their own lock (see updates).
 	mu sync.Mutex
 
@@ -110,13 +132,22 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.RestartAfterApply {
 		cfg.ResumeCore = true
 	}
+	if cfg.XrayBin != "" && cfg.SystemDNS == nil {
+		return nil, errors.New("service: Xray needs SystemDNS")
+	}
 	log := logging.New(filepath.Join(cfg.CoreDir, "service.log"))
 	log.Logf("=== HikkariService %s, core=%s ===", Version, cfg.CoreBin)
 	s := &Server{
-		cfg:     cfg,
-		log:     log,
-		core:    vpn.NewProcessManager(cfg.CoreBin, filepath.Join(cfg.CoreDir, "config.json"), cfg.CoreWorkDir, log),
+		cfg: cfg,
+		log: log,
+		cores: map[string]*vpn.ProcessManager{
+			svcproto.EngineSingBox: vpn.NewProcessManager(cfg.CoreBin, filepath.Join(cfg.CoreDir, "config.json"), cfg.CoreWorkDir, log),
+		},
+		engine:  svcproto.EngineSingBox,
 		restart: make(chan struct{}, 1),
+	}
+	if cfg.XrayBin != "" {
+		s.cores[svcproto.EngineXray] = vpn.NewProcessManager(cfg.XrayBin, filepath.Join(cfg.CoreDir, "xray.json"), cfg.CoreDir, log)
 	}
 	s.updates = newUpdates(s)
 	return s, nil
@@ -136,6 +167,13 @@ func (s *Server) Serve(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go s.updates.loop(ctx)
+	if s.cfg.SystemDNS != nil {
+		// A previous service that died with Xray up left the resolver
+		// pointed at a core that is gone.
+		if err := s.cfg.SystemDNS.Restore(); err != nil {
+			s.log.Logf("service: restoring system DNS: %v", err)
+		}
+	}
 	if s.cfg.ResumeCore {
 		s.resume()
 	}
@@ -169,11 +207,10 @@ func (s *Server) Serve(ctx context.Context) error {
 		// Keep the run marker: the new service brings the core back. (After
 		// a swap the core is already down.)
 		s.log.Logf("service: restarting into the updated version")
-		_ = s.core.Stop()
 	} else {
 		s.log.Logf("service: stopping, taking the core down")
-		_ = s.core.Stop()
 	}
+	_ = s.stopCores()
 	s.mu.Unlock()
 	_ = s.log.Close()
 	if restarting.Load() {
@@ -263,17 +300,17 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 	case svcproto.OpStatus:
 		return s.status()
 	case svcproto.OpStart:
-		cfg, err := svcproto.Sanitize(req.Config, svcproto.Paths{
-			CacheFile: filepath.Join(s.cfg.CoreDir, "cache.db"),
-		})
-		if err != nil {
-			return fail(fmt.Errorf("конфиг отклонён службой: %w", err))
+		engine := req.Engine
+		if engine == "" {
+			engine = svcproto.EngineSingBox
 		}
-		if err := writeAtomic(filepath.Join(s.cfg.CoreDir, "config.json"), cfg); err != nil {
+		if s.cores[engine] == nil {
+			return fail(fmt.Errorf("движок %q не поставляется в этой установке", engine))
+		}
+		if err := s.writeConfig(engine, req.Config); err != nil {
 			return fail(err)
 		}
-		s.log.Logf("service: start (config %d bytes)", len(cfg))
-		if err := s.startCore(); err != nil {
+		if err := s.startCore(engine); err != nil {
 			return fail(err)
 		}
 		return s.status()
@@ -294,47 +331,151 @@ func (s *Server) onVersion(v string) {
 	}
 }
 
+// configPath is where the service keeps its sanitised copy of an engine's
+// config.
+func (s *Server) configPath(engine string) string {
+	if engine == svcproto.EngineXray {
+		return filepath.Join(s.cfg.CoreDir, "xray.json")
+	}
+	return filepath.Join(s.cfg.CoreDir, "config.json")
+}
+
+// writeConfig sanitises a config from the GUI for engine and stores it
+// where that engine's core reads it. Callers hold mu.
+func (s *Server) writeConfig(engine string, raw []byte) error {
+	var cfg []byte
+	var err error
+	if engine == svcproto.EngineXray {
+		var dns string
+		cfg, dns, err = svcproto.SanitizeXray(raw)
+		if err == nil {
+			err = writeAtomic(s.dnsMarker(), []byte(dns))
+		}
+	} else {
+		cfg, err = svcproto.Sanitize(raw, svcproto.Paths{
+			CacheFile: filepath.Join(s.cfg.CoreDir, "cache.db"),
+		})
+	}
+	if err != nil {
+		return fmt.Errorf("конфиг отклонён службой: %w", err)
+	}
+	s.log.Logf("service: %s config (%d bytes)", engine, len(cfg))
+	return writeAtomic(s.configPath(engine), cfg)
+}
+
 // runMarker exists while the GUI wants the core up: what ResumeCore reads.
+// It holds the engine.
 func (s *Server) runMarker() string { return filepath.Join(s.cfg.CoreDir, "run") }
+
+// dnsMarker holds the resolver address the stored Xray config answers on.
+func (s *Server) dnsMarker() string { return filepath.Join(s.cfg.CoreDir, "xray.dns") }
 
 // startCore and stopCore are the GUI's start and stop: they also record the
 // wish, which outlives this process. Callers hold mu.
-func (s *Server) startCore() error {
-	if err := s.core.Start(); err != nil {
+func (s *Server) startCore(engine string) error {
+	if err := s.runCore(engine); err != nil {
 		return err
 	}
-	_ = os.WriteFile(s.runMarker(), nil, 0o644)
+	_ = os.WriteFile(s.runMarker(), []byte(engine), 0o644)
 	return nil
 }
 
 func (s *Server) stopCore() error {
 	_ = os.Remove(s.runMarker())
-	return s.core.Stop()
+	return s.stopCores()
+}
+
+// runCore starts engine's core on its stored config, stopping the other
+// one first. Xray gets the system resolver pointed at it; sing-box hijacks
+// DNS by itself. Callers hold mu.
+func (s *Server) runCore(engine string) error {
+	for name, core := range s.cores {
+		if name != engine && core.Pid() != 0 {
+			s.log.Logf("service: stopping %s for %s", name, engine)
+			_ = core.Stop()
+		}
+	}
+	s.engine = engine
+	if engine == svcproto.EngineXray {
+		addr, err := os.ReadFile(s.dnsMarker())
+		if err != nil {
+			return fmt.Errorf("Xray: нет адреса DNS для конфига: %w", err)
+		}
+		if err := s.cfg.SystemDNS.Override(string(addr)); err != nil {
+			_ = s.cfg.SystemDNS.Restore()
+			return fmt.Errorf("Xray: не удалось настроить системный DNS: %w", err)
+		}
+	} else if s.cfg.SystemDNS != nil {
+		if err := s.cfg.SystemDNS.Restore(); err != nil {
+			return fmt.Errorf("не удалось вернуть системный DNS: %w", err)
+		}
+	}
+	if err := s.cores[engine].Start(); err != nil {
+		if engine == svcproto.EngineXray {
+			_ = s.cfg.SystemDNS.Restore()
+		}
+		return err
+	}
+	return nil
+}
+
+// stopCores takes every core down and gives the system resolver back.
+// Callers hold mu.
+func (s *Server) stopCores() error {
+	var first error
+	for _, core := range s.cores {
+		if err := core.Stop(); err != nil && first == nil {
+			first = err
+		}
+	}
+	if s.cfg.SystemDNS != nil {
+		if err := s.cfg.SystemDNS.Restore(); err != nil && first == nil {
+			first = fmt.Errorf("не удалось вернуть системный DNS: %w", err)
+		}
+	}
+	return first
+}
+
+// running is the engine whose core is up, or "".
+func (s *Server) running() (string, int) {
+	for name, core := range s.cores {
+		if pid := core.Pid(); pid != 0 {
+			return name, pid
+		}
+	}
+	return "", 0
 }
 
 // resume brings the core back if the previous service left it wanted up.
 func (s *Server) resume() {
-	if _, err := os.Stat(s.runMarker()); err != nil {
+	raw, err := os.ReadFile(s.runMarker())
+	if err != nil {
 		return
 	}
-	if _, err := os.Stat(filepath.Join(s.cfg.CoreDir, "config.json")); err != nil {
+	engine := string(raw)
+	if engine == "" {
+		// A marker from before Xray: sing-box.
+		engine = svcproto.EngineSingBox
+	}
+	if _, err := os.Stat(s.configPath(engine)); err != nil || s.cores[engine] == nil {
 		_ = os.Remove(s.runMarker())
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.log.Logf("service: resuming the core (it was up before the restart)")
-	if err := s.core.Start(); err != nil {
+	s.log.Logf("service: resuming %s (it was up before the restart)", engine)
+	if err := s.runCore(engine); err != nil {
 		s.log.Logf("service: resume failed: %v", err)
 	}
 }
 
 func (s *Server) status() svcproto.Response {
-	pid := s.core.Pid()
+	engine, pid := s.running()
 	return svcproto.Response{
 		OK:      true,
 		Running: pid != 0,
 		Pid:     pid,
+		Engine:  engine,
 		CoreLog: s.log.Path(),
 		Version: Version,
 		Update:  s.updates.snapshot(),

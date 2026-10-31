@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -295,20 +294,21 @@ func (u *updates) rollback() (from, to string, err error) {
 }
 
 // withCoreDown stops the core around f and starts it again afterwards if it
-// was running before or if start is set. Restarting reuses core\config.json —
-// the last config the GUI sent — with whatever sing-box.exe app\ now holds.
+// was running before or if start is set. Restarting reuses the last config
+// the GUI sent for the last engine it ran, with whatever binary the
+// installation now holds.
 func (u *updates) withCoreDown(start bool, f func() error) error {
 	s := u.srv
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	wasRunning := s.core.Pid() != 0
-	if wasRunning {
-		_ = s.core.Stop()
+	running, _ := s.running()
+	if running != "" {
+		_ = s.stopCores()
 	}
 	err := f()
-	if wasRunning || start {
-		if _, statErr := os.Stat(filepath.Join(s.cfg.CoreDir, "config.json")); statErr == nil {
-			if startErr := s.core.Start(); startErr != nil {
+	if running != "" || start {
+		if _, statErr := os.Stat(s.configPath(s.engine)); statErr == nil {
+			if startErr := s.runCore(s.engine); startErr != nil {
 				s.log.Logf("updates: core did not come back: %v", startErr)
 			}
 		}
@@ -322,8 +322,8 @@ func (u *updates) withCoreLeftDown(_ bool, f func() error) error {
 	s := u.srv
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.core.Pid() != 0 {
-		_ = s.core.Stop()
+	if running, _ := s.running(); running != "" {
+		_ = s.stopCores()
 	}
 	return f()
 }

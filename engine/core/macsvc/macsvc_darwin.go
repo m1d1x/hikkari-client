@@ -7,10 +7,10 @@
 //	    Contents/MacOS/nekkobox                replaced whole by an update
 //	    Contents/MacOS/HikkariService          this daemon (net.hikkari.service)
 //	    Contents/MacOS/hikkari-updater
-//	    Contents/Resources/sing-box, VERSION
+//	    Contents/Resources/sing-box, xray, VERSION
 //	/Library/LaunchDaemons/net.hikkari.service.plist
-//	/var/db/hikkari/                           the daemon's own: config.json, cache.db,
-//	                                           service.log, run
+//	/var/db/hikkari/                           the daemon's own: config.json, xray.json,
+//	                                           cache.db, service.log, run, dns-state/
 //	/var/run/hikkari-service.sock              the GUI's way in (svcproto)
 //
 // The daemon executes binaries from the bundle as root, so it refuses to run
@@ -48,6 +48,7 @@ const (
 	serviceBin = Bundle + "/Contents/MacOS/HikkariService"
 	updaterBin = Bundle + "/Contents/MacOS/hikkari-updater"
 	coreBin    = Bundle + "/Contents/Resources/sing-box"
+	xrayBin    = Bundle + "/Contents/Resources/xray"
 
 	// A new version swapped in and not confirmed this long after is rolled
 	// back by the daemon: the GUI confirms ~20 s after it starts, and the
@@ -61,6 +62,12 @@ const (
 	legacyLabel = "com.nekkobox.singbox"
 	legacyPlist = "/Library/LaunchDaemons/" + legacyLabel + ".plist"
 	legacyDir   = "/Library/Application Support/nekkobox"
+
+	// Before Xray ran in the service, the GUI installed a LaunchDaemon of
+	// its own per data directory: com.hikkari.xray.<hash>, supervising a
+	// root copy of Xray from legacyXrayDir/<label>.
+	legacyXrayPlists = "/Library/LaunchDaemons/com.hikkari.xray.*.plist"
+	legacyXrayDir    = "/Library/Application Support/hikkari"
 )
 
 // Run serves until launchd stops the daemon (SIGTERM) or an update replaced
@@ -79,6 +86,8 @@ func Run() error {
 		// sing-box resolves relative paths against its working directory;
 		// the sanitiser allows none, and the daemon's own dir is the safe one.
 		CoreWorkDir: CoreDir,
+		XrayBin:     xrayBin,
+		SystemDNS:   systemDNS{dir: filepath.Join(CoreDir, "dns-state")},
 		Updater:     updaterBin,
 		UpdaterArgs: []string{"--root", filepath.Dir(Bundle), "--layout", "macos"},
 		Listen:      listen,
@@ -134,7 +143,7 @@ func signalContext() (context.Context, context.CancelFunc) {
 func checkBundle() error {
 	for _, p := range []string{
 		Bundle, Bundle + "/Contents", Bundle + "/Contents/MacOS", Bundle + "/Contents/Resources",
-		serviceBin, updaterBin, coreBin,
+		serviceBin, updaterBin, coreBin, xrayBin,
 	} {
 		if err := rootOnly(p); err != nil {
 			return fmt.Errorf("%w — reinstall Hikkari from the .pkg", err)
@@ -233,12 +242,21 @@ func stopProcessesUnder(dir string) {
 }
 
 func removeLegacy() {
-	if _, err := os.Stat(legacyPlist); err != nil {
-		return
+	if _, err := os.Stat(legacyPlist); err == nil {
+		_ = launchctl("bootout", "system/"+legacyLabel)
+		_ = os.Remove(legacyPlist)
+		_ = os.RemoveAll(legacyDir)
 	}
-	_ = launchctl("bootout", "system/"+legacyLabel)
-	_ = os.Remove(legacyPlist)
-	_ = os.RemoveAll(legacyDir)
+	// Its supervisor puts the user's DNS back when launchd stops it.
+	plists, _ := filepath.Glob(legacyXrayPlists)
+	for _, plist := range plists {
+		label := strings.TrimSuffix(filepath.Base(plist), ".plist")
+		_ = launchctl("bootout", "system/"+label)
+		_ = os.Remove(plist)
+	}
+	if len(plists) > 0 {
+		_ = os.RemoveAll(legacyXrayDir)
+	}
 }
 
 func launchctl(args ...string) error {

@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
 
-/// Один сегмент [NekkoSegmented]: значение (id) + подпись.
+/// Один сегмент [NekkoSegmented]: значение (id) + подпись. Выключенный
+/// сегмент виден, но не выбирается; [hint] объясняет почему.
 class NekkoSegment {
   final String value;
   final String label;
-  const NekkoSegment(this.value, this.label);
+  final bool enabled;
+  final String? hint;
+  const NekkoSegment(this.value, this.label, {this.enabled = true, this.hint});
 }
 
 /// Мультитогл-переключатель (segmented control) — тёмный трек с равными
@@ -49,7 +52,10 @@ class NekkoSegmented extends StatelessWidget {
                 active: selected == segments[i].value,
                 fontSize: fontSize,
                 fontWeight: fontWeight,
-                onTap: () => onChanged(segments[i].value),
+                hint: segments[i].hint,
+                onTap: segments[i].enabled
+                    ? () => onChanged(segments[i].value)
+                    : null,
               ),
             ),
           ],
@@ -62,15 +68,17 @@ class NekkoSegmented extends StatelessWidget {
 class _Pill extends StatefulWidget {
   final String label;
   final bool active;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final double fontSize;
   final FontWeight fontWeight;
+  final String? hint;
   const _Pill({
     required this.label,
     required this.active,
     required this.onTap,
     required this.fontSize,
     required this.fontWeight,
+    this.hint,
   });
 
   @override
@@ -84,9 +92,10 @@ class _PillState extends State<_Pill> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final active = widget.active;
-    final hoverInactive = _hover && !active;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
+    final enabled = widget.onTap != null;
+    final hoverInactive = enabled && _hover && !active;
+    final pill = MouseRegion(
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
@@ -108,10 +117,10 @@ class _PillState extends State<_Pill> {
                 end: active ? t.text : (hoverInactive ? t.text : t.textMuted),
               ),
               duration: const Duration(milliseconds: 150),
-              builder: (_, color, __) => Text(
+              builder: (_, color, _) => Text(
                 widget.label,
                 style: TextStyle(
-                  color: color,
+                  color: enabled ? color : color?.withValues(alpha: 0.4),
                   fontSize: widget.fontSize,
                   fontWeight: widget.fontWeight,
                   height: 1,
@@ -122,5 +131,7 @@ class _PillState extends State<_Pill> {
         ),
       ),
     );
+    final hint = widget.hint;
+    return hint == null ? pill : Tooltip(message: hint, child: pill);
   }
 }

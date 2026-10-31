@@ -29,3 +29,21 @@ func TestDefaultEngineDrivesTheCoreThroughTheService(t *testing.T) {
 		t.Fatalf("default engine runs the core through %s", got)
 	}
 }
+
+// Xray needs the same rights for TUN and system DNS. Before it ran in the
+// service, the GUI forked it (or installed a root LaunchDaemon of its own),
+// and the installed app never got a tunnel.
+func TestXrayEngineDrivesTheCoreThroughTheService(t *testing.T) {
+	dir := t.TempDir()
+	backend, err := XrayEngineFactory(dir, logging.New(dir+"/test.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := reflect.ValueOf(backend).Elem().FieldByName("host")
+	if !host.IsValid() {
+		t.Fatal("xray backend has no host field; update this test with the adapter")
+	}
+	if got := host.Elem().Type().String(); got != "*xray.serviceHost" {
+		t.Fatalf("xray engine runs the core through %s", got)
+	}
+}
