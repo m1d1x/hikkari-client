@@ -10,7 +10,12 @@ import (
 	"fmt"
 )
 
-var DefaultEngineFactory engine.Factory = singbox.New
+// DefaultEngineFactory is sing-box driven the platform's way: through
+// HikkariService on Windows and macOS (the GUI runs unelevated and must not
+// start the core itself), a local process elsewhere (factory_*.go).
+var DefaultEngineFactory engine.Factory = func(baseDir string, log engine.Logger) (engine.Backend, error) {
+	return singbox.NewWithProcess(baseDir, log, newDesktopVPN(baseDir, log)), nil
+}
 
 // VPNFactory and InitWithVPN preserve the previous platform injection API.
 // New integrations should inject a full adapter with InitWithEngine instead.
