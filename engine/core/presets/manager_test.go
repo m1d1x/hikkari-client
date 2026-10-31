@@ -306,8 +306,14 @@ func TestBundledDefaultsAndUpgradePreserveExplicitChoices(t *testing.T) {
 	fresh := newManager(t, "", Options{}).Snapshot()
 	for _, mode := range []routing.RoutingMode{routing.ModeBypass, routing.ModeProxy} {
 		for _, service := range fresh.Catalog.Services {
-			if !Selected(fresh.Catalog, fresh.Choices, mode, service.ID) {
-				t.Fatalf("%s not enabled by default in %s", service.ID, mode)
+			want := false
+			for _, m := range service.DefaultModes {
+				if m == mode {
+					want = true
+				}
+			}
+			if got := Selected(fresh.Catalog, fresh.Choices, mode, service.ID); got != want {
+				t.Fatalf("%s in %s: Selected = %v, want %v (defaultModes=%v)", service.ID, mode, got, want, service.DefaultModes)
 			}
 		}
 	}
@@ -327,11 +333,11 @@ func TestBundledDefaultsAndUpgradePreserveExplicitChoices(t *testing.T) {
 	if upgraded.SyncEnabled || Selected(upgraded.Catalog, upgraded.Choices, routing.ModeBypass, "steam") {
 		t.Fatal("upgrade overwrote explicit opt-outs")
 	}
-	if !Selected(upgraded.Catalog, upgraded.Choices, routing.ModeBypass, "discord") {
-		t.Fatal("bundled defaults were not upgraded")
+	if !Selected(upgraded.Catalog, upgraded.Choices, routing.ModeBypass, "ru") {
+		t.Fatal("bundled bypass defaults were not upgraded")
 	}
-	if !Selected(upgraded.Catalog, upgraded.Choices, routing.ModeProxy, "steam") {
-		t.Fatal("bypass opt-out leaked to proxy")
+	if !Selected(upgraded.Catalog, upgraded.Choices, routing.ModeProxy, "discord") {
+		t.Fatal("bundled proxy defaults were not upgraded")
 	}
 	legacy.Source = "cache"
 	data, _ = json.Marshal(legacy)

@@ -143,6 +143,30 @@ func FolderRegexes(frags []string) []string {
 	return out
 }
 
+// allowedZoneSuffixes are top-level domain zones (such as .ru, .рф, .su) that
+// may be used directly as domain_suffix / domain: routing rules without a
+// second label. Arbitrary single words like "localhost" remain rejected.
+var allowedZoneSuffixes = map[string]string{
+	"ru":           "ru",
+	"su":           "su",
+	"xn--p1ai":     "xn--p1ai",
+	"рф":           "xn--p1ai",
+	"xn--p1acf":    "xn--p1acf",
+	"рус":          "xn--p1acf",
+	"xn--80adxhks": "xn--80adxhks",
+	"москва":       "xn--80adxhks",
+	"xn--d1acj3b":  "xn--d1acj3b",
+	"дети":         "xn--d1acj3b",
+	"moscow":       "moscow",
+	"tatar":        "tatar",
+	"by":           "by",
+	"xn--90ais":    "xn--90ais",
+	"бел":          "xn--90ais",
+	"kz":           "kz",
+	"xn--80ao21a":  "xn--80ao21a",
+	"қаз":          "xn--80ao21a",
+}
+
 // normalizeDomainValue reduces whatever the user pasted to the bare host
 // sing-box's domain_suffix matches against. A pasted link is the common case
 // — the list is usually built by copying addresses out of a browser or a
@@ -156,6 +180,9 @@ func normalizeDomainValue(value string) (string, error) {
 	host = strings.TrimSuffix(strings.TrimPrefix(host, "*."), ".")
 	host = strings.TrimPrefix(host, ".")
 	host = strings.ToLower(strings.TrimSpace(host))
+	if canonical, ok := allowedZoneSuffixes[host]; ok {
+		host = canonical
+	}
 	if host == "" {
 		return "", fmt.Errorf("%q — не удалось извлечь домен", value)
 	}
@@ -166,7 +193,7 @@ func normalizeDomainValue(value string) (string, error) {
 	if strings.ContainsAny(host, " \t/\\?#@") {
 		return "", fmt.Errorf("%q — не похоже на домен", value)
 	}
-	if !strings.Contains(host, ".") {
+	if !strings.Contains(host, ".") && allowedZoneSuffixes[host] == "" {
 		return "", fmt.Errorf("%q — домен без точки, нужен вид example.com", host)
 	}
 	if len(host) > 253 {

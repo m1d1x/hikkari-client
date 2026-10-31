@@ -17,7 +17,8 @@ var updateParity = flag.Bool("update-parity", false, "rewrite testdata/rule-pari
 var parityInputs = map[string][]string{
 	"domains": {
 		"example.com", "Example.COM", "https://www.example.com/path?q=1", "*.example.com",
-		".example.com", "example.com.", "example.com:443", "localhost", "1.2.3.4",
+		".example.com", "example.com.", "example.com:443", "ru", ".ru", "su", "xn--p1ai", ".рф",
+		"localhost", "1.2.3.4",
 		"exa mple.com", "-bad.com", "xn--80ak6aa92e.com", "a..b.com", "user@example.com", "",
 	},
 	"ips": {

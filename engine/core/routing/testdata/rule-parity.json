@@ -43,6 +43,36 @@
 	},
 	{
 		"category": "domains",
+		"value": "ru",
+		"normal": "ru",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": ".ru",
+		"normal": "ru",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "su",
+		"normal": "su",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "xn--p1ai",
+		"normal": "xn--p1ai",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": ".рф",
+		"normal": "xn--p1ai",
+		"ok": true
+	},
+	{
+		"category": "domains",
 		"value": "localhost",
 		"normal": "",
 		"ok": false

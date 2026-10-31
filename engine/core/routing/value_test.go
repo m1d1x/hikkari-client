@@ -71,6 +71,12 @@ func TestNormalizeDomainValue(t *testing.T) {
 		".example.com":                 "example.com",
 		"example.com.":                 "example.com",
 		"https://sub.example.com/?q=1": "sub.example.com",
+		"ru":                           "ru",
+		".ru":                          "ru",
+		"*.ru":                         "ru",
+		"su":                           "su",
+		"xn--p1ai":                     "xn--p1ai",
+		".рф":                          "xn--p1ai",
 	}
 	for in, want := range ok {
 		got, err := normalizeRouteValue("domains", in)

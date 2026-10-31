@@ -5,14 +5,20 @@
 package singbox
 
 import (
-	"NekkoVPN/core/profile"
-	"NekkoVPN/core/subscription"
+	"bytes"
+	"compress/zlib"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"NekkoVPN/core/profile"
+	"NekkoVPN/core/subscription"
 )
 
 // Draft is the parsed result of an import URI. Kind/Config are what
@@ -36,6 +42,9 @@ func ParseURI(uri string) (Draft, error) {
 	if looksLikeWireGuardIni(uri) {
 		return parseAmneziaWGIni(uri)
 	}
+	if strings.HasPrefix(strings.ToLower(uri), "vpn://") {
+		return parseAmneziaVPN(uri)
+	}
 	u, err := url.Parse(uri)
 	if err != nil {
 		return Draft{}, fmt.Errorf("не удалось разобрать ссылку: %w", err)
@@ -49,6 +58,8 @@ func ParseURI(uri string) (Draft, error) {
 		return parseTrojan(u)
 	case "ss":
 		return parseShadowsocks(uri, u)
+	case "vpn":
+		return parseAmneziaVPN(uri)
 	}
 	return Draft{}, fmt.Errorf("неподдерживаемая схема: %s", u.Scheme)
 }
@@ -528,19 +539,19 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 
 	// AmneziaWG obfuscation params — presence of Jc marks this as "awg"
 	// rather than plain WireGuard.
-	if jc := iface["Jc"]; jc != "" {
+	if jc := getIniField(iface, "Jc"); jc != "" {
 		cfg["type"] = "awg"
 		if n, err := strconv.Atoi(jc); err == nil {
 			cfg["jc"] = n
 		}
-		if n, err := strconv.Atoi(iface["Jmin"]); err == nil {
+		if n, err := strconv.Atoi(getIniField(iface, "Jmin")); err == nil {
 			cfg["jmin"] = n
 		}
-		if n, err := strconv.Atoi(iface["Jmax"]); err == nil {
+		if n, err := strconv.Atoi(getIniField(iface, "Jmax")); err == nil {
 			cfg["jmax"] = n
 		}
 		for _, key := range []string{"S1", "S2", "S3", "S4"} {
-			if v := iface[key]; v != "" {
+			if v := getIniField(iface, key); v != "" {
 				if n, err := strconv.Atoi(v); err == nil {
 					cfg[strings.ToLower(key)] = n
 				}
@@ -549,7 +560,7 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 		// H1-H4 and I1-I5 are opaque tokens (plain numbers or "n-n" ranges,
 		// or magic-header specs for I*) — pass through as strings verbatim.
 		for _, key := range []string{"H1", "H2", "H3", "H4", "I1", "I2", "I3", "I4", "I5"} {
-			if v := iface[key]; v != "" {
+			if v := getIniField(iface, key); v != "" {
 				cfg[strings.ToLower(key)] = v
 			}
 		}
@@ -626,4 +637,922 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return out
+}
+
+func getIniField(m map[string]string, key string) string {
+	if m == nil {
+		return ""
+	}
+	if v, ok := m[key]; ok {
+		return v
+	}
+	for k, v := range m {
+		if strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
+}
+
+const maxAmneziaDecompressedSize = 1024 * 1024 // 1 MiB
+
+// parseAmneziaVPN decodes native Amnezia VPN "vpn://..." configuration links.
+// Amnezia format:
+// 1. "vpn://" prefix followed by Base64URL string (padded or unpadded).
+// 2. Binary payload compressed via Qt qCompress:
+//    - Bytes 0..3: big-endian uint32 uncompressed size.
+//    - Bytes 4..: standard zlib stream.
+//    - Fallbacks: raw zlib from byte 0, or uncompressed JSON.
+// 3. Decompression limit: capped at 1 MiB via io.LimitReader against zip-bombs.
+// 4. JSON container:
+//    - description or hostName used as profile label.
+//    - awg / wireguard container: extracts INI from last_config supplemented
+//      with Jc/Jmin/Jmax/S1/S2/H1..H4 from container JSON.
+//    - xray / vless container: converts to sing-box vless outbound with reality / TLS / transport.
+//    - shadowsocks container: converts to sing-box shadowsocks outbound.
+func parseAmneziaVPN(rawURI string) (Draft, error) {
+	uri := strings.TrimSpace(rawURI)
+	var uriFragment string
+	if hash := strings.Index(uri, "#"); hash >= 0 {
+		uriFragment = uri[hash+1:]
+		if unescaped, err := url.QueryUnescape(uriFragment); err == nil {
+			uriFragment = unescaped
+		}
+		uri = uri[:hash]
+	}
+	if q := strings.Index(uri, "?"); q >= 0 {
+		uri = uri[:q]
+	}
+	lower := strings.ToLower(uri)
+	if !strings.HasPrefix(lower, "vpn://") {
+		return Draft{}, fmt.Errorf("amnezia: ссылка должна начинаться с vpn://")
+	}
+	encoded := uri[6:]
+	encoded = strings.TrimRight(encoded, "/")
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return Draft{}, fmt.Errorf("amnezia: пустые данные ссылки")
+	}
+
+	payload, err := decodeAmneziaBase64(encoded)
+	if err != nil {
+		return Draft{}, fmt.Errorf("amnezia: ошибка base64: %w", err)
+	}
+
+	decomp, err := decompressAmneziaPayload(payload)
+	if err != nil {
+		return Draft{}, err
+	}
+
+	return parseAmneziaJSON(decomp, uriFragment)
+}
+
+func decodeAmneziaBase64(s string) ([]byte, error) {
+	if strings.Contains(s, "%") {
+		if unescaped, err := url.QueryUnescape(s); err == nil {
+			s = unescaped
+		}
+	}
+	s = strings.TrimSpace(s)
+	// 1. RawURLEncoding (standard Amnezia format)
+	if b, err := base64.RawURLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	// 2. URLEncoding with padding
+	pad := func(in string) string {
+		if m := len(in) % 4; m != 0 {
+			return in + strings.Repeat("=", 4-m)
+		}
+		return in
+	}
+	if b, err := base64.URLEncoding.DecodeString(pad(s)); err == nil {
+		return b, nil
+	}
+	// 3. RawStdEncoding
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	// 4. StdEncoding with padding
+	if b, err := base64.StdEncoding.DecodeString(pad(s)); err == nil {
+		return b, nil
+	}
+	return nil, fmt.Errorf("неверная base64 строка")
+}
+
+func decompressAmneziaPayload(data []byte) ([]byte, error) {
+	tryZlib := func(input []byte) ([]byte, error) {
+		zr, err := zlib.NewReader(bytes.NewReader(input))
+		if err != nil {
+			return nil, err
+		}
+		defer zr.Close()
+
+		limited := io.LimitReader(zr, int64(maxAmneziaDecompressedSize)+1)
+		out, err := io.ReadAll(limited)
+		if err != nil {
+			return nil, err
+		}
+		if len(out) > maxAmneziaDecompressedSize {
+			return nil, fmt.Errorf("amnezia: распакованный конфиг превышает лимит 1 МиБ")
+		}
+		return out, nil
+	}
+
+	var qtSizeHuge bool
+	var claimedQtSize uint32
+
+	// 1. Try Qt qCompress format: 4-byte big-endian uncompressed size + zlib stream
+	if len(data) >= 4 {
+		claimedQtSize = binary.BigEndian.Uint32(data[:4])
+		if claimedQtSize > maxAmneziaDecompressedSize {
+			qtSizeHuge = true
+		} else {
+			if decomp, err := tryZlib(data[4:]); err == nil {
+				return decomp, nil
+			} else if strings.Contains(err.Error(), "1 МиБ") {
+				return nil, err
+			}
+		}
+	}
+
+	// 2. Try raw zlib from 1st byte (without Qt length header)
+	if decomp, err := tryZlib(data); err == nil {
+		return decomp, nil
+	} else if strings.Contains(err.Error(), "1 МиБ") {
+		return nil, err
+	}
+
+	// 3. Try plain JSON without compression
+	trimmed := bytes.TrimSpace(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf")))
+	if len(trimmed) <= maxAmneziaDecompressedSize && json.Valid(trimmed) {
+		return trimmed, nil
+	}
+
+	if qtSizeHuge {
+		return nil, fmt.Errorf("amnezia: распакованный размер (%d байт) превышает лимит 1 МиБ", claimedQtSize)
+	}
+
+	return nil, fmt.Errorf("amnezia: не удалось распаковать или распознать данные конфига")
+}
+
+func parseAmneziaJSON(decomp []byte, fragment string) (Draft, error) {
+	var root map[string]interface{}
+	if err := json.Unmarshal(decomp, &root); err != nil {
+		var list []map[string]interface{}
+		if errList := json.Unmarshal(decomp, &list); errList == nil && len(list) > 0 {
+			root = list[0]
+		} else {
+			return Draft{}, fmt.Errorf("amnezia: неверный JSON конфига: %w", err)
+		}
+	}
+
+	if sl, ok := root["serversList"].([]interface{}); ok && len(sl) > 0 {
+		if firstServer, ok := sl[0].(map[string]interface{}); ok {
+			root = firstServer
+		}
+	}
+
+	description := getMapString(root, "description")
+	hostName := getMapString(root, "hostName", "hostname", "ip", "host")
+
+	label := description
+	if label == "" {
+		label = hostName
+	}
+	if label == "" {
+		label = fragment
+	}
+
+	defaultContainer := getMapString(root, "defaultContainer", "default_container")
+	containersRaw, _ := root["containers"].([]interface{})
+
+	containerItem, cType := selectAmneziaContainer(containersRaw, defaultContainer, root)
+	if containerItem == nil {
+		return Draft{}, fmt.Errorf("amnezia: не найден поддерживаемый контейнер (поддерживаются awg, wireguard, xray, shadowsocks)")
+	}
+
+	var draft Draft
+	var err error
+
+	switch cType {
+	case "awg", "wireguard":
+		draft, err = parseAmneziaContainerAWG(containerItem, hostName)
+	case "xray", "vless":
+		draft, err = parseAmneziaContainerXray(containerItem, hostName)
+	case "shadowsocks", "ss":
+		draft, err = parseAmneziaContainerShadowsocks(containerItem, hostName)
+	default:
+		return Draft{}, fmt.Errorf("amnezia: контейнер %q не поддерживается (поддерживаются awg, wireguard, xray, shadowsocks)", cType)
+	}
+	if err != nil {
+		return Draft{}, err
+	}
+
+	if label != "" {
+		draft.Label = label
+	}
+	return draft, nil
+}
+
+func selectAmneziaContainer(containers []interface{}, defaultContainer string, root map[string]interface{}) (map[string]interface{}, string) {
+	normalizedDefault := normalizeContainerName(defaultContainer)
+
+	if normalizedDefault != "" {
+		for _, raw := range containers {
+			if m, ok := raw.(map[string]interface{}); ok {
+				cType, _ := identifyContainerType(m)
+				if cType == normalizedDefault {
+					return m, cType
+				}
+			}
+		}
+	}
+
+	supportedPriority := []string{"awg", "wireguard", "xray", "shadowsocks"}
+	for _, pref := range supportedPriority {
+		for _, raw := range containers {
+			if m, ok := raw.(map[string]interface{}); ok {
+				cType, _ := identifyContainerType(m)
+				if cType == pref {
+					return m, cType
+				}
+			}
+		}
+	}
+
+	for _, raw := range containers {
+		if m, ok := raw.(map[string]interface{}); ok {
+			cType, _ := identifyContainerType(m)
+			if cType != "" {
+				return m, cType
+			}
+		}
+	}
+
+	if rootType, _ := identifyContainerType(root); rootType != "" {
+		return root, rootType
+	}
+
+	return nil, ""
+}
+
+func identifyContainerType(item map[string]interface{}) (string, map[string]interface{}) {
+	if item == nil {
+		return "", nil
+	}
+	name := normalizeContainerName(getMapString(item, "container"))
+	if name != "" {
+		if sub, ok := item[name].(map[string]interface{}); ok {
+			return name, sub
+		}
+		return name, item
+	}
+	for _, t := range []string{"awg", "wireguard", "xray", "shadowsocks"} {
+		if sub, ok := item[t].(map[string]interface{}); ok {
+			return t, sub
+		}
+	}
+	if lc := getMapString(item, "last_config", "lastConfig"); lc != "" {
+		if looksLikeWireGuardIni(lc) || strings.Contains(lc, "[Interface]") {
+			return "awg", item
+		}
+		if strings.HasPrefix(lc, "vless://") {
+			return "xray", item
+		}
+		if strings.HasPrefix(lc, "ss://") {
+			return "shadowsocks", item
+		}
+	}
+	return "", item
+}
+
+func normalizeContainerName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = strings.TrimPrefix(name, "amnezia-")
+	if name == "vless" {
+		return "xray"
+	}
+	if name == "ss" {
+		return "shadowsocks"
+	}
+	return name
+}
+
+func parseAmneziaContainerAWG(item map[string]interface{}, rootHost string) (Draft, error) {
+	var sub map[string]interface{}
+	for _, k := range []string{"awg", "wireguard"} {
+		if s, ok := item[k].(map[string]interface{}); ok {
+			sub = s
+			break
+		}
+	}
+
+	lastConfigRaw := item["last_config"]
+	if lastConfigRaw == nil && sub != nil {
+		lastConfigRaw = sub["last_config"]
+	}
+	if lastConfigRaw == nil {
+		lastConfigRaw = item["lastConfig"]
+		if lastConfigRaw == nil && sub != nil {
+			lastConfigRaw = sub["lastConfig"]
+		}
+	}
+
+	var lastConfigMap map[string]interface{}
+	var iniText string
+
+	switch lc := lastConfigRaw.(type) {
+	case string:
+		lc = strings.TrimSpace(lc)
+		if strings.HasPrefix(lc, "{") {
+			if err := json.Unmarshal([]byte(lc), &lastConfigMap); err == nil {
+				if cfgStr := getMapString(lastConfigMap, "config"); cfgStr != "" {
+					iniText = cfgStr
+				}
+			}
+		}
+		if iniText == "" && strings.Contains(lc, "[Interface]") {
+			iniText = lc
+		}
+	case map[string]interface{}:
+		lastConfigMap = lc
+		if cfgStr := getMapString(lastConfigMap, "config"); cfgStr != "" {
+			iniText = cfgStr
+		}
+	}
+
+	if iniText == "" {
+		if cfgStr := getMapString(item, "config"); cfgStr != "" && strings.Contains(cfgStr, "[Interface]") {
+			iniText = cfgStr
+		} else if sub != nil {
+			if cfgStr := getMapString(sub, "config"); cfgStr != "" && strings.Contains(cfgStr, "[Interface]") {
+				iniText = cfgStr
+			}
+		}
+	}
+
+	if iniText == "" {
+		privKey := getMapStringFromSources([]map[string]interface{}{lastConfigMap, sub, item}, "PrivateKey", "private_key", "privkey")
+		pubKey := getMapStringFromSources([]map[string]interface{}{lastConfigMap, sub, item}, "PublicKey", "public_key", "pubkey")
+		addr := getMapStringFromSources([]map[string]interface{}{lastConfigMap, sub, item}, "Address", "address", "client_ip")
+		port := getMapIntFromSources([]map[string]interface{}{lastConfigMap, sub, item}, "port", "Port")
+		host := getMapStringFromSources([]map[string]interface{}{lastConfigMap, sub, item}, "hostName", "hostname", "server", "endpoint")
+		if host == "" {
+			host = rootHost
+		}
+		if privKey != "" && pubKey != "" && addr != "" {
+			endpoint := host
+			if port > 0 {
+				endpoint = net.JoinHostPort(host, strconv.Itoa(port))
+			}
+			iniText = fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = %s\n\n[Peer]\nPublicKey = %s\nEndpoint = %s\nAllowedIPs = 0.0.0.0/0\n",
+				privKey, addr, pubKey, endpoint)
+		}
+	}
+
+	if iniText == "" {
+		return Draft{}, fmt.Errorf("amnezia: в контейнере awg/wireguard не найден конфиг")
+	}
+
+	awgParams := extractAWGParams(item, sub, lastConfigMap)
+	iniText = injectAwgParamsIntoIni(iniText, awgParams)
+	iniText = ensureIniEndpointHost(iniText, rootHost, item, sub, lastConfigMap)
+
+	return parseAmneziaWGIni(iniText)
+}
+
+func extractAWGParams(sources ...map[string]interface{}) map[string]string {
+	keys := []string{
+		"Jc", "Jmin", "Jmax",
+		"S1", "S2", "S3", "S4",
+		"H1", "H2", "H3", "H4",
+		"I1", "I2", "I3", "I4", "I5",
+		"MTU",
+	}
+	res := make(map[string]string)
+	for _, src := range sources {
+		if src == nil {
+			continue
+		}
+		for _, k := range keys {
+			val := getAnyString(src, k, strings.ToLower(k))
+			if val != "" && res[k] == "" {
+				res[k] = val
+			}
+		}
+	}
+	return res
+}
+
+func injectAwgParamsIntoIni(iniText string, params map[string]string) string {
+	if len(params) == 0 {
+		return iniText
+	}
+	iface, _, _ := splitIniSections(iniText)
+	if iface == nil {
+		iface = map[string]string{}
+	}
+	lowerIface := map[string]bool{}
+	for k := range iface {
+		lowerIface[strings.ToLower(k)] = true
+	}
+
+	var toAdd []string
+	for k, v := range params {
+		if !lowerIface[strings.ToLower(k)] && strings.TrimSpace(v) != "" {
+			toAdd = append(toAdd, fmt.Sprintf("%s = %s", k, strings.TrimSpace(v)))
+		}
+	}
+	if len(toAdd) == 0 {
+		return iniText
+	}
+
+	lines := strings.Split(iniText, "\n")
+	var out []string
+	inserted := false
+	for _, line := range lines {
+		out = append(out, line)
+		trimmed := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(line, "\r")))
+		if trimmed == "[interface]" && !inserted {
+			out = append(out, toAdd...)
+			inserted = true
+		}
+	}
+	if !inserted {
+		out = append([]string{"[Interface]"}, append(toAdd, iniText)...)
+	}
+	return strings.Join(out, "\n")
+}
+
+func ensureIniEndpointHost(iniText, rootHost string, sources ...map[string]interface{}) string {
+	if rootHost == "" {
+		return iniText
+	}
+	lines := strings.Split(iniText, "\n")
+	hasEndpoint := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		eq := strings.Index(trimmed, "=")
+		if eq > 0 {
+			key := strings.ToLower(strings.TrimSpace(trimmed[:eq]))
+			if key == "endpoint" {
+				hasEndpoint = true
+				val := strings.TrimSpace(trimmed[eq+1:])
+				if strings.HasPrefix(val, ":") {
+					lines[i] = fmt.Sprintf("Endpoint = %s%s", rootHost, val)
+				} else if h, p, err := net.SplitHostPort(val); err == nil && (h == "" || h == "0.0.0.0") {
+					lines[i] = fmt.Sprintf("Endpoint = %s:%s", rootHost, p)
+				}
+			}
+		}
+	}
+	if !hasEndpoint {
+		port := getMapIntFromSources(sources, "port", "Port")
+		if port > 0 {
+			for i, line := range lines {
+				if strings.ToLower(strings.TrimSpace(line)) == "[peer]" {
+					lines = append(lines[:i+1], append([]string{fmt.Sprintf("Endpoint = %s:%d", rootHost, port)}, lines[i+1:]...)...)
+					break
+				}
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func parseAmneziaContainerXray(item map[string]interface{}, rootHost string) (Draft, error) {
+	var sub map[string]interface{}
+	if s, ok := item["xray"].(map[string]interface{}); ok {
+		sub = s
+	}
+
+	lastConfigRaw := item["last_config"]
+	if lastConfigRaw == nil && sub != nil {
+		lastConfigRaw = sub["last_config"]
+	}
+	if lastConfigRaw == nil {
+		lastConfigRaw = item["lastConfig"]
+		if lastConfigRaw == nil && sub != nil {
+			lastConfigRaw = sub["lastConfig"]
+		}
+	}
+
+	var xrayMap map[string]interface{}
+	switch lc := lastConfigRaw.(type) {
+	case string:
+		lc = strings.TrimSpace(lc)
+		if strings.HasPrefix(lc, "vless://") {
+			u, err := url.Parse(lc)
+			if err != nil {
+				return Draft{}, fmt.Errorf("amnezia: не удалось разобрать vless URL: %w", err)
+			}
+			return parseVLESS(u)
+		}
+		if strings.HasPrefix(lc, "{") {
+			_ = json.Unmarshal([]byte(lc), &xrayMap)
+		}
+	case map[string]interface{}:
+		xrayMap = lc
+	}
+
+	if xrayMap == nil {
+		xrayMap = sub
+	}
+	if xrayMap == nil {
+		xrayMap = item
+	}
+
+	return parseXrayMap(xrayMap, rootHost, item, sub)
+}
+
+func parseXrayMap(xrayMap map[string]interface{}, rootHost string, item, sub map[string]interface{}) (Draft, error) {
+	var server, uuid, flow string
+	var port int
+	var streamSettings map[string]interface{}
+
+	// 1. Check outbounds (client config format)
+	if obs, ok := xrayMap["outbounds"].([]interface{}); ok && len(obs) > 0 {
+		for _, ob := range obs {
+			if obm, ok := ob.(map[string]interface{}); ok {
+				proto := strings.ToLower(getMapString(obm, "protocol", "type"))
+				if proto == "vless" {
+					if ss, ok := obm["streamSettings"].(map[string]interface{}); ok {
+						streamSettings = ss
+					}
+					if sets, ok := obm["settings"].(map[string]interface{}); ok {
+						if vnexts, ok := sets["vnext"].([]interface{}); ok && len(vnexts) > 0 {
+							if vn, ok := vnexts[0].(map[string]interface{}); ok {
+								server = getMapString(vn, "address")
+								port = getMapInt(vn, "port")
+								if users, ok := vn["users"].([]interface{}); ok && len(users) > 0 {
+									if u, ok := users[0].(map[string]interface{}); ok {
+										uuid = getMapString(u, "id")
+										flow = getMapString(u, "flow")
+									}
+								}
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+
+	// 2. Check inbounds (Amnezia server template format)
+	if uuid == "" {
+		if ibs, ok := xrayMap["inbounds"].([]interface{}); ok && len(ibs) > 0 {
+			for _, ib := range ibs {
+				if ibm, ok := ib.(map[string]interface{}); ok {
+					proto := strings.ToLower(getMapString(ibm, "protocol"))
+					if proto == "vless" {
+						port = getMapInt(ibm, "port")
+						if ss, ok := ibm["streamSettings"].(map[string]interface{}); ok {
+							streamSettings = ss
+						}
+						if sets, ok := ibm["settings"].(map[string]interface{}); ok {
+							if clients, ok := sets["clients"].([]interface{}); ok && len(clients) > 0 {
+								if cl, ok := clients[0].(map[string]interface{}); ok {
+									uuid = getMapString(cl, "id")
+									flow = getMapString(cl, "flow")
+								}
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Direct fields fallback
+	if server == "" {
+		server = getMapStringFromSources([]map[string]interface{}{xrayMap, sub, item}, "server", "host", "hostName", "hostname")
+		if server == "" {
+			server = rootHost
+		}
+	}
+	if port == 0 {
+		port = getMapIntFromSources([]map[string]interface{}{xrayMap, sub, item}, "port", "server_port", "Port")
+	}
+	if uuid == "" {
+		uuid = getMapStringFromSources([]map[string]interface{}{xrayMap, sub, item}, "uuid", "id")
+	}
+	if flow == "" {
+		flow = getMapStringFromSources([]map[string]interface{}{xrayMap, sub, item}, "flow")
+	}
+	if streamSettings == nil {
+		if ss, ok := xrayMap["streamSettings"].(map[string]interface{}); ok {
+			streamSettings = ss
+		}
+	}
+
+	if server == "" || port == 0 || uuid == "" {
+		return Draft{}, fmt.Errorf("amnezia: неполная конфигурация xray/vless (нужны server, port, uuid)")
+	}
+
+	cfg := map[string]interface{}{
+		"type":            "vless",
+		"server":          server,
+		"server_port":     port,
+		"uuid":            uuid,
+		"packet_encoding": "xudp",
+	}
+	if flow != "" {
+		cfg["flow"] = flow
+	}
+
+	var security, sni, fp, pbk, sid string
+	if streamSettings != nil {
+		security = strings.ToLower(getMapString(streamSettings, "security"))
+		if rs, ok := streamSettings["realitySettings"].(map[string]interface{}); ok {
+			pbk = getMapString(rs, "publicKey", "public_key", "pbk")
+			fp = getMapString(rs, "fingerprint", "fp")
+			sid = getMapString(rs, "shortId", "short_id", "sid")
+			if sid == "" {
+				if sids, ok := rs["shortIds"].([]interface{}); ok && len(sids) > 0 {
+					sid = fmt.Sprint(sids[0])
+				}
+			}
+			sni = getMapString(rs, "serverName", "server_name", "sni")
+			if sni == "" {
+				if sns, ok := rs["serverNames"].([]interface{}); ok && len(sns) > 0 {
+					sni = fmt.Sprint(sns[0])
+				}
+			}
+			if sni == "" {
+				dest := getMapString(rs, "dest")
+				if h, _, err := net.SplitHostPort(dest); err == nil && h != "" {
+					sni = h
+				} else if dest != "" {
+					sni = dest
+				}
+			}
+		}
+		if tlsSettings, ok := streamSettings["tlsSettings"].(map[string]interface{}); ok {
+			if sni == "" {
+				sni = getMapString(tlsSettings, "serverName", "server_name", "sni")
+			}
+			if fp == "" {
+				fp = getMapString(tlsSettings, "fingerprint", "fp")
+			}
+		}
+		if fp == "" {
+			if utls, ok := streamSettings["utls"].(map[string]interface{}); ok {
+				fp = getMapString(utls, "fingerprint", "fp")
+			}
+		}
+	}
+	if sni == "" {
+		sni = server
+	}
+	if fp == "" && security == "reality" {
+		fp = "chrome"
+	}
+
+	if security == "reality" {
+		tls := map[string]interface{}{
+			"enabled":     true,
+			"server_name": sni,
+			"utls": map[string]interface{}{
+				"enabled":     true,
+				"fingerprint": fp,
+			},
+			"reality": map[string]interface{}{
+				"enabled":    true,
+				"public_key": pbk,
+			},
+		}
+		if sid != "" {
+			tls["reality"].(map[string]interface{})["short_id"] = sid
+		}
+		cfg["tls"] = tls
+	} else if security == "tls" {
+		tls := map[string]interface{}{
+			"enabled":     true,
+			"server_name": sni,
+		}
+		if fp != "" {
+			tls["utls"] = map[string]interface{}{
+				"enabled":     true,
+				"fingerprint": fp,
+			}
+		}
+		cfg["tls"] = tls
+	}
+
+	if streamSettings != nil {
+		network := strings.ToLower(getMapString(streamSettings, "network"))
+		switch network {
+		case "ws", "websocket":
+			tr := map[string]interface{}{"type": "ws"}
+			if ws, ok := streamSettings["wsSettings"].(map[string]interface{}); ok {
+				if p := getMapString(ws, "path"); p != "" {
+					tr["path"] = p
+				}
+				if h := getMapString(ws, "headers.Host", "host"); h != "" {
+					tr["headers"] = map[string]interface{}{"Host": h}
+				}
+			}
+			cfg["transport"] = tr
+		case "grpc":
+			tr := map[string]interface{}{"type": "grpc"}
+			if gr, ok := streamSettings["grpcSettings"].(map[string]interface{}); ok {
+				if s := getMapString(gr, "serviceName", "service_name"); s != "" {
+					tr["service_name"] = s
+				}
+			}
+			cfg["transport"] = tr
+		case "http", "h2":
+			tr := map[string]interface{}{"type": "http"}
+			if ht, ok := streamSettings["httpSettings"].(map[string]interface{}); ok {
+				if p := getMapString(ht, "path"); p != "" {
+					tr["path"] = p
+				}
+				if h := getMapString(ht, "host"); h != "" {
+					tr["host"] = []interface{}{h}
+				}
+			}
+			cfg["transport"] = tr
+		case "httpupgrade":
+			tr := map[string]interface{}{"type": "httpupgrade"}
+			if hu, ok := streamSettings["httpupgradeSettings"].(map[string]interface{}); ok {
+				if p := getMapString(hu, "path"); p != "" {
+					tr["path"] = p
+				}
+				if h := getMapString(hu, "host"); h != "" {
+					tr["host"] = h
+				}
+			}
+			cfg["transport"] = tr
+		case "xhttp", "splithttp":
+			tr := map[string]interface{}{"type": "xhttp", "mode": "auto"}
+			if xh, ok := streamSettings["xhttpSettings"].(map[string]interface{}); ok {
+				if p := getMapString(xh, "path"); p != "" {
+					tr["path"] = p
+				}
+				if h := getMapString(xh, "host"); h != "" {
+					tr["host"] = h
+				}
+				if m := getMapString(xh, "mode"); m != "" {
+					tr["mode"] = m
+				}
+			}
+			cfg["transport"] = tr
+		}
+	}
+
+	return Draft{Kind: profile.KindOutbound, Label: server, Config: cfg}, nil
+}
+
+func parseAmneziaContainerShadowsocks(item map[string]interface{}, rootHost string) (Draft, error) {
+	var sub map[string]interface{}
+	if s, ok := item["shadowsocks"].(map[string]interface{}); ok {
+		sub = s
+	}
+
+	lastConfigRaw := item["last_config"]
+	if lastConfigRaw == nil && sub != nil {
+		lastConfigRaw = sub["last_config"]
+	}
+	if lastConfigRaw == nil {
+		lastConfigRaw = item["lastConfig"]
+		if lastConfigRaw == nil && sub != nil {
+			lastConfigRaw = sub["lastConfig"]
+		}
+	}
+
+	var ssMap map[string]interface{}
+	switch lc := lastConfigRaw.(type) {
+	case string:
+		lc = strings.TrimSpace(lc)
+		if strings.HasPrefix(lc, "ss://") {
+			u, err := url.Parse(lc)
+			if err != nil {
+				return Draft{}, fmt.Errorf("amnezia: не удалось разобрать shadowsocks URL: %w", err)
+			}
+			return parseShadowsocks(lc, u)
+		}
+		if strings.HasPrefix(lc, "{") {
+			_ = json.Unmarshal([]byte(lc), &ssMap)
+		}
+	case map[string]interface{}:
+		ssMap = lc
+	}
+
+	sources := []map[string]interface{}{ssMap, sub, item}
+	server := getMapStringFromSources(sources, "server", "host", "hostName", "hostname")
+	if server == "" {
+		server = rootHost
+	}
+	port := getMapIntFromSources(sources, "server_port", "port", "Port")
+	method := getMapStringFromSources(sources, "method", "cipher")
+	password := getMapStringFromSources(sources, "password")
+
+	if server == "" || port == 0 || method == "" || password == "" {
+		return Draft{}, fmt.Errorf("amnezia: неполная конфигурация shadowsocks (нужны server, port, method, password)")
+	}
+
+	cfg := map[string]interface{}{
+		"type":        "shadowsocks",
+		"server":      server,
+		"server_port": port,
+		"method":      method,
+		"password":    password,
+	}
+	return Draft{Kind: profile.KindOutbound, Label: server, Config: cfg}, nil
+}
+
+func getMapString(m map[string]interface{}, keys ...string) string {
+	if m == nil {
+		return ""
+	}
+	for _, k := range keys {
+		if v, ok := m[k]; ok && v != nil {
+			switch s := v.(type) {
+			case string:
+				if strings.TrimSpace(s) != "" {
+					return strings.TrimSpace(s)
+				}
+			case fmt.Stringer:
+				if strings.TrimSpace(s.String()) != "" {
+					return strings.TrimSpace(s.String())
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func getMapInt(m map[string]interface{}, keys ...string) int {
+	if m == nil {
+		return 0
+	}
+	for _, k := range keys {
+		if v, ok := m[k]; ok && v != nil {
+			switch n := v.(type) {
+			case float64:
+				return int(n)
+			case int:
+				return n
+			case int64:
+				return int(n)
+			case string:
+				if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+					return i
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func getMapStringFromSources(sources []map[string]interface{}, keys ...string) string {
+	for _, src := range sources {
+		if src == nil {
+			continue
+		}
+		if val := getMapString(src, keys...); val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+func getMapIntFromSources(sources []map[string]interface{}, keys ...string) int {
+	for _, src := range sources {
+		if src == nil {
+			continue
+		}
+		if val := getMapInt(src, keys...); val != 0 {
+			return val
+		}
+	}
+	return 0
+}
+
+func getAnyString(m map[string]interface{}, keys ...string) string {
+	if m == nil {
+		return ""
+	}
+	for _, k := range keys {
+		if v, ok := m[k]; ok && v != nil {
+			switch s := v.(type) {
+			case string:
+				if strings.TrimSpace(s) != "" {
+					return strings.TrimSpace(s)
+				}
+			case float64:
+				return strconv.Itoa(int(s))
+			case int:
+				return strconv.Itoa(s)
+			case int64:
+				return strconv.FormatInt(s, 10)
+			}
+		}
+	}
+	return ""
 }
