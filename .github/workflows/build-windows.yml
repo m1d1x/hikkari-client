@@ -626,6 +626,11 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: release
+    # One writer at a time: the server's rrsync refuses a second instance on
+    # the channel directory, and macOS and Windows publish the same tag.
+    concurrency:
+      group: update-channel
+      cancel-in-progress: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
