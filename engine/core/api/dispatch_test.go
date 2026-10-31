@@ -17,7 +17,7 @@ import (
 func initCore(t *testing.T) *Core {
 	t.Helper()
 	c := New()
-	if err := c.Init(t.TempDir()); err != nil {
+	if err := c.InitWithEngine(t.TempDir(), testEngine); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Shutdown() })
@@ -213,11 +213,11 @@ func TestCall_SwitchProfile_UpdatesConfigAndActive(t *testing.T) {
 
 func TestInit_TwiceWithDifferentBaseDirFails(t *testing.T) {
 	c := New()
-	if err := c.Init(t.TempDir()); err != nil {
+	if err := c.InitWithEngine(t.TempDir(), testEngine); err != nil {
 		t.Fatalf("first Init: %v", err)
 	}
 	defer c.Shutdown()
-	if err := c.Init(t.TempDir()); err == nil {
+	if err := c.InitWithEngine(t.TempDir(), testEngine); err == nil {
 		t.Fatal("expected error when re-initing with a different baseDir")
 	}
 }
@@ -228,18 +228,18 @@ func TestInit_TwiceWithDifferentBaseDirFails(t *testing.T) {
 func TestInit_SameBaseDirIsNoop(t *testing.T) {
 	c := New()
 	dir := t.TempDir()
-	if err := c.Init(dir); err != nil {
+	if err := c.InitWithEngine(dir, testEngine); err != nil {
 		t.Fatalf("first Init: %v", err)
 	}
 	defer c.Shutdown()
-	if err := c.Init(dir); err != nil {
+	if err := c.InitWithEngine(dir, testEngine); err != nil {
 		t.Fatalf("re-Init with same dir should be no-op, got %v", err)
 	}
 }
 
 func TestInit_RequiresBaseDir(t *testing.T) {
 	c := New()
-	if err := c.Init(""); err == nil {
+	if err := c.InitWithEngine("", testEngine); err == nil {
 		t.Fatal("expected error on empty baseDir")
 	}
 }

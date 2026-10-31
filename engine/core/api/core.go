@@ -22,7 +22,6 @@ import (
 
 	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/downdetector"
-	"NekkoVPN/core/telemetry"
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
@@ -32,6 +31,7 @@ import (
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/profile/legacy"
 	"NekkoVPN/core/routing"
+	"NekkoVPN/core/telemetry"
 	"NekkoVPN/core/uptime"
 )
 

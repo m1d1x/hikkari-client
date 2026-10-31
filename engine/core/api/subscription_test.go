@@ -149,7 +149,7 @@ func TestLegacyInstallSurvivesTwoRestarts(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		c := New()
-		if err := c.Init(dir); err != nil {
+		if err := c.InitWithEngine(dir, testEngine); err != nil {
 			t.Fatal(err)
 		}
 		pf, err := c.profiles.Read()

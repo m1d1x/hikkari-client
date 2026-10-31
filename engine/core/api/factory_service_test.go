@@ -15,7 +15,9 @@ import (
 // "fork/exec …/Application Support/nekkobox/sing-box".
 func TestDefaultEngineDrivesTheCoreThroughTheService(t *testing.T) {
 	dir := t.TempDir()
-	backend, err := DefaultEngineFactory(dir, logging.New(dir+"/test.log"))
+	log := logging.New(dir + "/test.log")
+	t.Cleanup(func() { _ = log.Close() })
+	backend, err := DefaultEngineFactory(dir, log)
 	if err != nil {
 		t.Fatal(err)
 	}

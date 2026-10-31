@@ -80,6 +80,12 @@ func (m *ServiceManager) Start() error {
 
 func (m *ServiceManager) Stop() error {
 	_, err := m.call(svcproto.Request{Op: svcproto.OpStop}, 30*time.Second)
+	if errors.Is(err, svcclient.ErrNoService) {
+		// The core belongs to the service: with no service there is no core
+		// to stop. Start still reports the missing service to the user.
+		m.log.Logf("vpn.Stop (service): no service, nothing to stop")
+		return nil
+	}
 	if err != nil {
 		m.log.Logf("vpn.Stop (service): %v", err)
 		return err
