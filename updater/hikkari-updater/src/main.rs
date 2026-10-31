@@ -1,19 +1,19 @@
-//! `hikkari-updater` — run by the Hikkari service (SYSTEM on Windows, root on
+//! `hikkari-updater` — run by the hikkari service (SYSTEM on Windows, root on
 //! macOS) to keep the installation current. One command per invocation; every
 //! outcome is one JSON object per line on stdout, diagnostics go to stderr.
 //!
 //! ```text
-//!   Windows: <root> = Program Files\Hikkari
+//!   Windows: <root> = Program Files\hikkari
 //!       hikkari-updater.exe         this binary — lives OUTSIDE app\
 //!       app\                        the installation; app\VERSION names it
 //!       app.old\                    previous version while the new one is on trial
 //!       .staging\                   tree\, parts\, READY / PENDING / REFUSED, cache
 //!
 //!   macOS: <root> = /Applications
-//!       Hikkari.app/                the installation, this binary inside it;
+//!       hikkari.app/                the installation, this binary inside it;
 //!                                   Contents/Resources/VERSION names it
-//!       Hikkari.app.old/            previous version while the new one is on trial
-//!       .Hikkari.staging/           same as .staging\ (one volume with the bundle)
+//!       hikkari.app.old/            previous version while the new one is on trial
+//!       .hikkari.staging/           same as .staging\ (one volume with the bundle)
 //! ```
 //!
 //! ```text
@@ -74,8 +74,8 @@ const WINDOWS: Placement = Placement {
 /// The bundle is replaced whole. VERSION sits in Resources: a file in the
 /// bundle root would break its code signature.
 const MACOS: Placement = Placement {
-    app_dir: "Hikkari.app",
-    staging_dir: ".Hikkari.staging",
+    app_dir: "hikkari.app",
+    staging_dir: ".hikkari.staging",
     version_file: "Contents/Resources/VERSION",
     platform: Platform::Macos,
 };
@@ -241,7 +241,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 
 /// The root when `--root` is not given. On Windows the updater ships beside
 /// `app\`; on macOS it ships inside the bundle, three levels below the
-/// directory holding `Hikkari.app` (`Hikkari.app/Contents/MacOS/`).
+/// directory holding `hikkari.app` (`hikkari.app/Contents/MacOS/`).
 fn default_root() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("finding this executable: {e}"))?;
     let up = if cfg!(target_os = "macos") { 4 } else { 1 };

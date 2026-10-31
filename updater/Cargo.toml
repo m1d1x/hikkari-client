@@ -1,5 +1,5 @@
 # Update channel and swap, vendored verbatim from m1d1x/nekko
-# (client-core/nekko-updater, see VENDORED.md). Hikkari is the first product
+# (client-core/nekko-updater, see VENDORED.md). hikkari is the first product
 # to ship it on Windows; the crate is kept byte-identical to its source so
 # fixes travel both ways as plain file copies.
 [workspace]

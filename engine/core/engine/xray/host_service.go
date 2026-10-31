@@ -12,7 +12,7 @@ import (
 	"NekkoVPN/core/svcproto"
 )
 
-// ServiceHost runs the core through the Hikkari service (core/service:
+// ServiceHost runs the core through the hikkari service (core/service:
 // LocalSystem on Windows, root on macOS), which is what lets the GUI run
 // unelevated: TUN and system DNS need those rights and the service has them.
 //

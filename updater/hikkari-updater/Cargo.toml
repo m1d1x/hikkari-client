@@ -1,4 +1,4 @@
-# hikkari-updater — the executable the Hikkari service runs to check, stage,
+# hikkari-updater — the executable the hikkari service runs to check, stage,
 # swap, confirm and roll back releases. All policy lives in nekko-updater;
 # this crate is the HTTP transport, the on-disk layout and a JSON-lines CLI.
 [package]

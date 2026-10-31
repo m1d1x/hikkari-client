@@ -203,7 +203,7 @@ func Fetch[T any](ctx context.Context, subURL, deviceID string, decode func(stri
 	if err != nil {
 		return Imported[T]{}, fmt.Errorf("ошибка создания запроса подписки: %w", err)
 	}
-	req.Header.Set("User-Agent", "v2rayN/6.42 Hikkari/1.0")
+	req.Header.Set("User-Agent", "v2rayN/6.42 hikkari/1.0")
 	if deviceID != "" {
 		req.Header.Set("X-Hwid", deviceID)
 		osName := runtime.GOOS

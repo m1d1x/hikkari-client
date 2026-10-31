@@ -107,13 +107,13 @@ func installedRoot() (string, error) {
 	return root, nil
 }
 
-// InstallDir is %ProgramFiles%\Hikkari.
+// InstallDir is %ProgramFiles%\hikkari.
 func InstallDir() (string, error) {
 	pf, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, 0)
 	if err != nil {
 		return "", fmt.Errorf("locating Program Files: %w", err)
 	}
-	return filepath.Join(pf, "Hikkari"), nil
+	return filepath.Join(pf, "hikkari"), nil
 }
 
 func samePath(a, b string) bool {

@@ -15,7 +15,7 @@ import (
 
 // ErrNoService: the endpoint is not there — the service is not installed or not
 // running.
-var ErrNoService = errors.New("служба Hikkari не запущена — переустановите приложение")
+var ErrNoService = errors.New("служба hikkari не запущена — переустановите приложение")
 
 // Call sends one request and returns the service's answer. A response with
 // ok=false comes back as an error carrying the service's message.
@@ -27,11 +27,11 @@ func Call(req svcproto.Request, timeout time.Duration) (svcproto.Response, error
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 	if err := svcproto.WriteMessage(conn, req); err != nil {
-		return svcproto.Response{}, fmt.Errorf("служба Hikkari: отправка запроса: %w", err)
+		return svcproto.Response{}, fmt.Errorf("служба hikkari: отправка запроса: %w", err)
 	}
 	var resp svcproto.Response
 	if err := svcproto.ReadMessage(conn, &resp); err != nil {
-		return svcproto.Response{}, fmt.Errorf("служба Hikkari: ответ: %w", err)
+		return svcproto.Response{}, fmt.Errorf("служба hikkari: ответ: %w", err)
 	}
 	if !resp.OK {
 		return resp, errors.New(resp.Error)

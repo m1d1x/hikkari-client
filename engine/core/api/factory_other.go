@@ -23,7 +23,7 @@ func newDesktopVPN(baseDir string, log vpn.LineLogger) vpn.Manager {
 }
 
 // newDesktopXray: Xray needs a privileged host for TUN, and only the
-// Hikkari service on Windows and macOS is one.
+// hikkari service on Windows and macOS is one.
 func newDesktopXray(string, engine.Logger) (engine.Backend, error) {
 	return nil, fmt.Errorf("Xray на этой платформе не поддержан")
 }

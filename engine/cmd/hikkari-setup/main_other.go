@@ -1,6 +1,6 @@
 //go:build !windows
 
-// HikkariSetup.exe exists only on Windows; macOS ships the .app
+// hikkari-setup.exe exists only on Windows; macOS ships the .app
 // directly.
 package main
 
@@ -10,6 +10,6 @@ import (
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "the Hikkari installer is Windows-only")
+	fmt.Fprintln(os.Stderr, "the hikkari installer is Windows-only")
 	os.Exit(1)
 }

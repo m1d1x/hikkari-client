@@ -43,7 +43,7 @@ type Backend struct {
 }
 
 // New is the Xray adapter whose core is run by hosts — on the desktop, the
-// Hikkari service (see ServiceHost); the platform's composition root picks.
+// hikkari service (see ServiceHost); the platform's composition root picks.
 func New(dir string, log engine.Logger, hosts HostFactory) (engine.Backend, error) {
 	if hosts == nil {
 		return nil, fmt.Errorf("Xray: не задан процесс ядра")

@@ -1,10 +1,10 @@
 //go:build windows
 
-// Hikkari.exe — the launcher. The Start menu shortcut points here, at a path
+// hikkari.exe — the launcher. The Start menu shortcut points here, at a path
 // that never changes between versions, and never at app\nekkobox.exe.
 //
-//	Hikkari.exe                                     launch the GUI
-//	Hikkari.exe --apply-update --wait-pid N [--reconnect]
+//	hikkari.exe                                     launch the GUI
+//	hikkari.exe --apply-update --wait-pid N [--reconnect]
 //	                                                the GUI's «Перезапустить»: wait for it
 //	                                                to exit, swap the update in, launch
 //
@@ -156,13 +156,13 @@ func exeDir() string {
 	return filepath.Dir(exe)
 }
 
-// userDataDir is %LOCALAPPDATA%\Hikkari, where the GUI keeps its state.
+// userDataDir is %LOCALAPPDATA%\hikkari, where the GUI keeps its state.
 func userDataDir() string {
 	local, err := windows.KnownFolderPath(windows.FOLDERID_LocalAppData, 0)
 	if err != nil {
 		return os.TempDir()
 	}
-	dir := filepath.Join(local, "Hikkari")
+	dir := filepath.Join(local, "hikkari")
 	_ = os.MkdirAll(dir, 0o755)
 	return dir
 }

@@ -103,13 +103,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.nekkobox" "\0"
-            VALUE "FileDescription", "nekkobox" "\0"
+            VALUE "CompanyName", "hikkari" "\0"
+            VALUE "FileDescription", "hikkari" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "nekkobox" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.nekkobox. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 hikkari. All rights reserved." "\0"
             VALUE "OriginalFilename", "nekkobox.exe" "\0"
-            VALUE "ProductName", "nekkobox" "\0"
+            VALUE "ProductName", "hikkari" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

@@ -15,7 +15,7 @@ import (
 )
 
 // ServiceManager is the GUI's handle on the core when the core is owned by
-// the Hikkari service (core/service: LocalSystem on Windows, root on macOS).
+// the hikkari service (core/service: LocalSystem on Windows, root on macOS).
 //
 // This is what lets the GUI run without administrator rights: bringing up
 // TUN needs them, and the service already has them. The GUI generates the

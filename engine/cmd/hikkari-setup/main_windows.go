@@ -1,11 +1,11 @@
 //go:build windows
 
-// HikkariSetup.exe — the one file a user downloads. It carries the whole
+// hikkari-setup.exe — the one file a user downloads. It carries the whole
 // release bundle (payload/hikkari.zip, embedded at build time) and installs
-// it through winsvc.Install: one UAC prompt, Program Files\Hikkari, the
+// it through winsvc.Install: one UAC prompt, Program Files\hikkari, the
 // service, shortcuts, the "Apps & features" entry.
 //
-//	HikkariSetup.exe [--import DIR] [--quiet]
+//	hikkari-setup.exe [--import DIR] [--quiet]
 //
 // --import names a portable install whose profiles to bring along; --quiet
 // shows no dialogs and does not start the app (CI, scripted installs).
@@ -51,7 +51,7 @@ func main() {
 	// in %TEMP%: between unpacking and copying, anything running as this
 	// user (unelevated) could swap a binary in %TEMP% — which the service
 	// would then run as SYSTEM. Program Files is writable by admins only.
-	work := filepath.Join(filepath.Dir(dest), "Hikkari.setup")
+	work := filepath.Join(filepath.Dir(dest), "hikkari.setup")
 	_ = os.RemoveAll(work)
 	defer os.RemoveAll(work)
 	if err := unzip(bundle, work); err != nil {
@@ -59,7 +59,7 @@ func main() {
 		return
 	}
 
-	launcher, err := winsvc.Install(filepath.Join(work, "Hikkari"), winsvc.ImportDirs(args))
+	launcher, err := winsvc.Install(filepath.Join(work, "hikkari"), winsvc.ImportDirs(args))
 	if err != nil {
 		winsvc.Report(false, "Установка: "+err.Error())
 		return
@@ -68,7 +68,7 @@ func main() {
 		fmt.Println("installed:", launcher)
 		return
 	}
-	if winsvc.Ask("Hikkari VPN установлен.\n\nЗапустить сейчас?") {
+	if winsvc.Ask("hikkari установлен.\n\nЗапустить сейчас?") {
 		if err := winsvc.LaunchUnelevated(launcher); err != nil {
 			winsvc.Report(false, "Запуск: "+err.Error())
 		}

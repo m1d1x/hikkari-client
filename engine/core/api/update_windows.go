@@ -20,7 +20,7 @@ import (
 	"NekkoVPN/core/svcproto"
 )
 
-// startUpdates: on Windows the launcher (Hikkari.exe) recovers and confirms a
+// startUpdates: on Windows the launcher (hikkari.exe) recovers and confirms a
 // new version around the GUI. What is left for the GUI is an install whose
 // service predates self-update (1.0.x): it never puts the launcher, the
 // updater or itself in line with their copies in app\, so the GUI — the
@@ -76,7 +76,7 @@ func fileHash(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// RestartToUpdate hands over to the launcher (<root>\Hikkari.exe), which
+// RestartToUpdate hands over to the launcher (<root>\hikkari.exe), which
 // waits for this process to exit, has the service swap the staged version in
 // and starts the new GUI. The caller exits right after this returns.
 func (c *Core) RestartToUpdate() error {
@@ -88,7 +88,7 @@ func (c *Core) RestartToUpdate() error {
 		return err
 	}
 	root := filepath.Dir(filepath.Dir(exe)) // <root>\app\nekkobox.exe
-	launcher := filepath.Join(root, "Hikkari.exe")
+	launcher := filepath.Join(root, "hikkari.exe")
 	if _, err := os.Stat(launcher); err != nil {
 		return fmt.Errorf("лаунчер не найден: %s", launcher)
 	}

@@ -1,6 +1,6 @@
 //go:build !windows
 
-// Hikkari.exe (the launcher) exists only on Windows; macOS launches the .app
+// hikkari.exe (the launcher) exists only on Windows; macOS launches the .app
 // directly.
 package main
 
@@ -10,6 +10,6 @@ import (
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "the Hikkari launcher is Windows-only")
+	fmt.Fprintln(os.Stderr, "the hikkari launcher is Windows-only")
 	os.Exit(1)
 }

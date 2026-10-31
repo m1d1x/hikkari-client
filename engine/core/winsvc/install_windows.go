@@ -19,11 +19,11 @@ import (
 )
 
 // Files the service and updater bring with them, beside app\.
-var rootFiles = []string{"HikkariService.exe", "hikkari-updater.exe", "Hikkari.exe"}
+var rootFiles = []string{"HikkariService.exe", "hikkari-updater.exe", "hikkari.exe"}
 
 // userDataFiles are the engine's state files. Before the service existed the
 // engine kept them next to nekkobox.exe (the portable zip); now they live in
-// %LOCALAPPDATA%\Hikkari, where an unelevated GUI can write.
+// %LOCALAPPDATA%\hikkari, where an unelevated GUI can write.
 var userDataFiles = []string{
 	"profiles.json", "config.json", "custom-services.json", "direct-ip.txt",
 	"geoip-cache.json", "ipqs-key.txt", "uptime-history.json",
@@ -35,7 +35,7 @@ func IsElevated() bool {
 	return windows.GetCurrentProcessToken().IsElevated()
 }
 
-// Install puts this build into %ProgramFiles%\Hikkari, registers and starts
+// Install puts this build into %ProgramFiles%\hikkari, registers and starts
 // the service from there, creates the shortcuts and the "Apps & features"
 // entry, and returns the launcher to start the app with. `src` is the
 // unpacked build (the folder holding HikkariService.exe and app\);
@@ -77,7 +77,7 @@ func Install(src string, importFrom []string) (string, error) {
 	if err := register(m, exe); err != nil {
 		return "", err
 	}
-	launcher := filepath.Join(dest, "Hikkari.exe")
+	launcher := filepath.Join(dest, "hikkari.exe")
 	if err := writeUninstallEntry(dest, installedVersion(dest)); err != nil {
 		return "", err
 	}
@@ -88,8 +88,8 @@ func Install(src string, importFrom []string) (string, error) {
 }
 
 // Uninstall removes everything Install put on the machine: the service, the
-// shortcuts, the "Apps & features" entry and %ProgramFiles%\Hikkari. The
-// user's own data in %LOCALAPPDATA%\Hikkari (profiles, logs) stays.
+// shortcuts, the "Apps & features" entry and %ProgramFiles%\hikkari. The
+// user's own data in %LOCALAPPDATA%\hikkari (profiles, logs) stays.
 //
 // It usually runs from inside the folder it removes (the uninstall entry
 // points at HikkariService.exe), so the folder itself goes a few seconds
@@ -146,8 +146,8 @@ func installedVersion(dest string) string {
 
 func register(m *mgr.Mgr, exe string) error {
 	cfg := mgr.Config{
-		DisplayName:  "Hikkari VPN",
-		Description:  "Runs the Hikkari VPN core and installs Hikkari updates.",
+		DisplayName:  "hikkari",
+		Description:  "Runs the hikkari VPN core and installs hikkari updates.",
 		StartType:    mgr.StartAutomatic,
 		ErrorControl: mgr.ErrorNormal,
 	}
@@ -199,7 +199,7 @@ func stopAndWait(s *mgr.Service) {
 // build being installed supersedes them.
 func copyBuild(src, dest string) error {
 	if _, err := os.Stat(filepath.Join(src, "app", "nekkobox.exe")); err != nil {
-		return fmt.Errorf("%s is not a Hikkari build (no app\\nekkobox.exe)", src)
+		return fmt.Errorf("%s is not a hikkari build (no app\\nekkobox.exe)", src)
 	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
@@ -208,7 +208,7 @@ func copyBuild(src, dest string) error {
 		_ = os.RemoveAll(filepath.Join(dest, leftover))
 	}
 	if err := os.RemoveAll(filepath.Join(dest, "app")); err != nil {
-		return fmt.Errorf("removing the old app\\ (is Hikkari still open?): %w", err)
+		return fmt.Errorf("removing the old app\\ (is hikkari still open?): %w", err)
 	}
 	if err := copyTree(filepath.Join(src, "app"), filepath.Join(dest, "app")); err != nil {
 		return err
@@ -265,14 +265,14 @@ func copyFile(from, to string) error {
 	return os.Rename(tmp, to)
 }
 
-// userDataDir is %LOCALAPPDATA%\Hikkari of the installing user — the same
+// userDataDir is %LOCALAPPDATA%\hikkari of the installing user — the same
 // folder the GUI computes (app/lib/main.dart).
 func userDataDir() (string, error) {
 	local, err := windows.KnownFolderPath(windows.FOLDERID_LocalAppData, 0)
 	if err != nil {
 		return "", fmt.Errorf("locating LocalAppData: %w", err)
 	}
-	return filepath.Join(local, "Hikkari"), nil
+	return filepath.Join(local, "hikkari"), nil
 }
 
 // migrateUserData copies a portable install's state files into dest, never

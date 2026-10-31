@@ -25,15 +25,15 @@
 ## 1. Раскладка на диске
 
 ```
-C:\Program Files\Hikkari\        ← пишет только SYSTEM/админ
-    Hikkari.exe                  ← лаунчер: путь не меняется, на него ярлык
+C:\Program Files\hikkari\        ← пишет только SYSTEM/админ
+    hikkari.exe                  ← лаунчер: путь не меняется, на него ярлык
     HikkariService.exe           ← служба: TUN, sing-box, обновления
     hikkari-updater.exe          ← CLI над nekko-updater, зовёт служба
     app\                         ← текущая версия: GUI, nekkobox.dll, sing-box, wintun, VERSION
     app.old\                     ← предыдущая, пока новая на испытании
     .staging\                    ← tree\, parts\, READY.json, PENDING.json, REFUSED.json
     core\                        ← служба: свой config.json, cache.db, service.log
-%LOCALAPPDATA%\Hikkari\          ← профили, конфиг GUI, логи, кэши (не трогаются заменой)
+%LOCALAPPDATA%\hikkari\          ← профили, конфиг GUI, логи, кэши (не трогаются заменой)
 ```
 
 - **Данные пользователя — в `%LOCALAPPDATA%`, а не в `ProgramData`.** ProgramData выбирали,
@@ -47,7 +47,7 @@ C:\Program Files\Hikkari\        ← пишет только SYSTEM/админ
 - **Лаунчер, служба и апдейтер живут вне `app\`.** Windows не даёт переименовать папку, внутри
   которой запущен exe или загружена dll, — поэтому заменяет её процесс снаружи, после того как
   всё внутри завершилось. Это и делает два rename из Nekko рабочими на Windows.
-- **Их новые копии едут внутри `app\`** (`app\Hikkari.exe`, `app\HikkariService.exe`,
+- **Их новые копии едут внутри `app\`** (`app\hikkari.exe`, `app\HikkariService.exe`,
   `app\hikkari-updater.exe`), под тем же подписанным манифестом. Служба ставит их на место сама —
   см. Phase 3, «Самообновление бинарей вне `app\`».
 - **`.staging\` — рядом с `app\`, не внутри** (иначе первый rename унёс бы его с собой);
@@ -105,19 +105,19 @@ GUI:                 баннер «Доступно X — Перезапуст�
       открывает пути из конфига, поэтому разрешён только список секций, `log.output` убирается,
       `cache_file.path` принудительно в `core\`, Clash API только на loopback и без `external_ui`,
       любые `*_path` / `*directory` и локальные rule-set — отказ. Тесты на реальном конфиге GUI.
-- [x] Служба отказывается работать не из `Program Files\Hikkari` (иначе SYSTEM исполнял бы
+- [x] Служба отказывается работать не из `Program Files\hikkari` (иначе SYSTEM исполнял бы
       бинарники из папки, куда пишет пользователь).
 - [x] `HikkariService.exe install` (двойной клик → один UAC): копирует сборку в
-      `Program Files\Hikkari`, переносит профили portable-версии в `%LOCALAPPDATA%\Hikkari`,
+      `Program Files\hikkari`, переносит профили portable-версии в `%LOCALAPPDATA%\hikkari`,
       регистрирует службу (автозапуск, перезапуск при падении), запускает. `uninstall`, `debug`.
-- [x] GUI: `requireAdministrator` → `asInvoker`; данные — `%LOCALAPPDATA%\Hikkari`.
-- [x] CI: zip в целевой раскладке (`Hikkari\HikkariService.exe`, `hikkari-updater.exe`, `app\`,
+- [x] GUI: `requireAdministrator` → `asInvoker`; данные — `%LOCALAPPDATA%\hikkari`.
+- [x] CI: zip в целевой раскладке (`hikkari\HikkariService.exe`, `hikkari-updater.exe`, `app\`,
       `app\VERSION`); smoke-тест на Windows-раннере — установка, отказ санитайзера, подъём TUN
       через службу, Clash API, остановка, удаление. `engine.yml`: vet/test на Windows и Linux.
 - Известное: пользователь, который может запустить VPN, может направить трафик машины как
   угодно — это суть VPN-клиента (так же у Tailscale). Файловая система закрыта санитайзером.
 
-### Phase 3 — цикл обновлений + лаунчер `Hikkari.exe` ✅
+### Phase 3 — цикл обновлений + лаунчер `hikkari.exe` ✅
 - [x] Служба (`winsvc/updates_windows.go`): первая проверка через 1 мин после старта, дальше каждые
       30 мин, плюс `check_update` при каждом запуске GUI (не чаще раза в 5 мин). Проверка — это
       ~100-байтная проба; манифест качается только при новой версии, поэтому интервал можно
@@ -127,9 +127,9 @@ GUI:                 баннер «Доступно X — Перезапуст�
       поднимает ядро на новой версии, если туннель был включён), `recover_update` (гасит ядро
       только если реально есть что переставлять), `confirm_update`, `rollback_update`.
       Долгая загрузка не блокирует подключение/отключение: у обновлений свой замок.
-- [x] Лаунчер `Hikkari.exe` (без консоли, без админа): `recover` → старт `app\nekkobox.exe` →
+- [x] Лаунчер `hikkari.exe` (без консоли, без админа): `recover` → старт `app\nekkobox.exe` →
       версия на испытании, упавшая с ошибкой в первые 20 с, откатывается сразу и стартует старая;
-      живая через 20 с (или закрытая штатно) — подтверждается. Лог — `%LOCALAPPDATA%\Hikkari\launcher.log`.
+      живая через 20 с (или закрытая штатно) — подтверждается. Лог — `%LOCALAPPDATA%\hikkari\launcher.log`.
 - [x] Движок: `UpdateStatus` / `CheckUpdate` / `RestartToUpdate` (contract.md). GUI: плашка
       «Доступна версия X — Перезапустить» (для mandatory — «Нужно обновиться»), опрос раз в 5 с.
 - [x] Закрытие окна идёт через `onWindowClose` → `Shutdown` → туннель гасится. Ядро теперь живёт в
@@ -138,7 +138,7 @@ GUI:                 баннер «Доступно X — Перезапуст�
       ключом, публикация «1.0.1», check → staged → apply при работающем ядре → ядро снова
       поднято на новой версии → trial → confirm.
 - [x] **Самообновление бинарей вне `app\`** (`winsvc/selfupdate_windows.go`). Каждый релиз кладёт
-      копии `Hikkari.exe`, `HikkariService.exe`, `hikkari-updater.exe` в `app\`. Когда версия
+      копии `hikkari.exe`, `HikkariService.exe`, `hikkari-updater.exe` в `app\`. Когда версия
       «устоялась» — после `confirm`, после отката и при каждом старте службы, но никогда во время
       испытания — служба сравнивает sha256 копии в `app\` с файлом в корне и для отличающихся делает
       `app\X → X.new`, `X → X.old`, `X.new → X` (запущенный exe Windows переименовать даёт, так что
@@ -166,25 +166,25 @@ GUI:                 баннер «Доступно X — Перезапуст�
     пробует снова.
 - [ ] Single-instance; передача «показать окно» уже запущенному GUI.
 
-### Phase 4 — установщик `HikkariSetup.exe` (Go) ✅
+### Phase 4 — установщик `hikkari-setup.exe` (Go) ✅
 - [x] Один файл: весь комплект вшит (`cmd/hikkari-setup`, `go:embed`). Один UAC → распаковка в
-      `Program Files\Hikkari.setup` (не в `%TEMP%`: пока установщик копирует, программа того же
+      `Program Files\hikkari.setup` (не в `%TEMP%`: пока установщик копирует, программа того же
       пользователя без прав могла бы подменить там бинарь, который потом запустит SYSTEM) →
       `winsvc.Install` → предложение запустить приложение **без** прав (через explorer.exe).
 - [x] Установка: закрывает открытый GUI/лаунчер, копирует, служба (автозапуск, перезапуск при
-      падении), ярлыки «Пуск» и рабочий стол → `Hikkari.exe`, запись в «Программы и компоненты»
+      падении), ярлыки «Пуск» и рабочий стол → `hikkari.exe`, запись в «Программы и компоненты»
       (версия, размер, `UninstallString`/`QuietUninstallString`). Служба обновляет версию в этой
       записи после каждого обновления/отката.
 - [x] Удаление (`HikkariService.exe uninstall`, его и вызывают «Программы и компоненты»):
-      подтверждение → служба, процессы, ярлыки, запись, `Program Files\Hikkari` (сама папка — через
-      пару секунд после выхода: удаляющий exe лежит в ней). Профили в `%LOCALAPPDATA%\Hikkari`
+      подтверждение → служба, процессы, ярлыки, запись, `Program Files\hikkari` (сама папка — через
+      пару секунд после выхода: удаляющий exe лежит в ней). Профили в `%LOCALAPPDATA%\hikkari`
       остаются.
 - [x] Профили portable-версии: переносятся из `--import DIR` (и из папки распакованного комплекта).
       Portable-версии дальше нет — только установщик.
-- [x] Иконка приложения у `Hikkari.exe` и `HikkariSetup.exe` (rsrc в CI).
-- [x] CI: установка через `HikkariSetup.exe --quiet`, проверка ярлыков и записи, обновление меняет
+- [x] Иконка приложения у `hikkari.exe` и `hikkari-setup.exe` (rsrc в CI).
+- [x] CI: установка через `hikkari-setup.exe --quiet`, проверка ярлыков и записи, обновление меняет
       версию в записи, удаление через `QuietUninstallString` не оставляет ничего; артефакт
-      `HikkariSetup`.
+      `hikkari-setup`.
 - SmartScreen на первом запуске скачанного установщика будет (нет сертификата): «Подробнее →
   Выполнить в любом случае». Обновления его не вызывают.
 
@@ -211,7 +211,7 @@ GUI:                 баннер «Доступно X — Перезапуст�
 - [x] Релиз падает до сборки, если нет конфигурации или `HIKKARI_RELEASE_KEY_ID` не входит в
       `HIKKARI_UPDATE_KEYS`; после подписи манифест проверяется `nekko-manifest verify` публичным
       ключом, с которым собраны клиенты.
-- [x] Подпись — на Windows-раннере (дерево `bundle/Hikkari/app` ровно то, что в установщике), ключ на
+- [x] Подпись — на Windows-раннере (дерево `bundle/hikkari/app` ровно то, что в установщике), ключ на
       диске только в этом шаге. Выкладка — отдельный job `publish-channel` (environment `release`),
       `scripts/publish-update-channel.sh`: блобы → манифесты → проба, rsync без `--delete`, затем
       проба/манифест/блоб с публичного адреса.
@@ -231,15 +231,15 @@ GUI:                 баннер «Доступно X — Перезапуст�
 Та же модель, что на Windows: привилегированная служба, GUI без прав, пароль — один раз при установке.
 
 ```
-/Applications/Hikkari.app                    ← root:wheel, ставится .pkg; заменяется обновлением целиком
+/Applications/hikkari.app                    ← root:wheel, ставится .pkg; заменяется обновлением целиком
     Contents/MacOS/nekkobox                  GUI (Flutter)
     Contents/MacOS/HikkariService            служба (root, LaunchDaemon net.hikkari.service)
     Contents/MacOS/hikkari-updater
     Contents/Frameworks/libnekkobox.dylib    движок
     Contents/Resources/sing-box, VERSION
-/Applications/Hikkari.app.old                предыдущая, пока новая на испытании
-/Applications/.Hikkari.staging/              tree/, parts/, READY/PENDING/REFUSED (тот же том, что .app)
-/Library/Application Support/Hikkari/core/   служба: config.json, cache.db, service.log, run
+/Applications/hikkari.app.old                предыдущая, пока новая на испытании
+/Applications/.hikkari.staging/              tree/, parts/, READY/PENDING/REFUSED (тот же том, что .app)
+/Library/Application Support/hikkari/core/   служба: config.json, cache.db, service.log, run
 /var/run/hikkari-service.sock                тот же протокол svcproto, что pipe на Windows
 ~/Library/Application Support/nekkobox/      данные GUI (как раньше)
 ```
@@ -266,7 +266,7 @@ GUI:                 баннер «Доступно X — Перезапуст�
 - [x] Транспорт: unix-сокет `/var/run/hikkari-service.sock`; `svcclient`/`ServiceManager` для darwin.
 - [x] `vpn.ProcessManager` на darwin — обычный дочерний процесс службы (вместо launchd-супервизора).
 - [x] `hikkari-service` для darwin: daemon, `install` (из postinstall), `uninstall`, проверка владельца.
-- [x] `hikkari-updater`: раскладка macOS (`/Applications`, `Hikkari.app`, `Contents/Resources/VERSION`).
+- [x] `hikkari-updater`: раскладка macOS (`/Applications`, `hikkari.app`, `Contents/Resources/VERSION`).
 - [x] Движок: `RestartToUpdate` / recover / confirm на macOS.
 - [x] CI `build-macos.yml`: `.app` → `.pkg`, smoke на раннере (sudo без пароля): установка, TUN через
       службу, обновление до +1 patch, удаление; релиз по тегу в канал `stable/macos`.

@@ -28,15 +28,15 @@ func archive(t *testing.T, files map[string]string) []byte {
 func TestTheBundleUnpacksWithEitherSlash(t *testing.T) {
 	dir := t.TempDir()
 	data := archive(t, map[string]string{
-		"Hikkari/HikkariService.exe": "svc",
-		`Hikkari\app\VERSION`:        "1.0.0", // Windows PowerShell's Compress-Archive
+		"hikkari/HikkariService.exe": "svc",
+		`hikkari\app\VERSION`:        "1.0.0", // Windows PowerShell's Compress-Archive
 	})
 	if err := unzip(data, dir); err != nil {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]string{
-		"Hikkari/HikkariService.exe": "svc",
-		"Hikkari/app/VERSION":        "1.0.0",
+		"hikkari/HikkariService.exe": "svc",
+		"hikkari/app/VERSION":        "1.0.0",
 	} {
 		got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(path)))
 		if err != nil || string(got) != want {
@@ -47,7 +47,7 @@ func TestTheBundleUnpacksWithEitherSlash(t *testing.T) {
 
 func TestAnEntryOutsideTheBundleIsRefused(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"../evil.exe", "Hikkari/../../evil.exe", `..\evil.exe`} {
+	for _, name := range []string{"../evil.exe", "hikkari/../../evil.exe", `..\evil.exe`} {
 		if err := unzip(archive(t, map[string]string{name: "x"}), filepath.Join(dir, "work")); err == nil {
 			t.Fatalf("%q was extracted", name)
 		}

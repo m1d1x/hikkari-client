@@ -4,7 +4,7 @@
 //
 //	HikkariService             serve (launchd runs it like this, as root)
 //	HikkariService install     register and start the daemon (the .pkg's postinstall)
-//	HikkariService uninstall   remove Hikkari: daemon, bundle, service state (sudo)
+//	HikkariService uninstall   remove hikkari: daemon, bundle, service state (sudo)
 package main
 
 import (

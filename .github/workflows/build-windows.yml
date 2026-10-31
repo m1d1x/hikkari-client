@@ -3,7 +3,7 @@ name: Build Windows Client
 on:
   workflow_dispatch:
   push:
-    # claude/** too: a working branch gets its own HikkariSetup.exe to try,
+    # claude/** too: a working branch gets its own hikkari-setup.exe to try,
     # and the service/update/uninstall smoke tests run before it merges.
     branches: [ main, 'claude/**' ]
     tags: [ 'v*' ]
@@ -163,7 +163,7 @@ jobs:
           }
           Write-Host "nekkobox.dll generated successfully."
 
-      - name: Build HikkariService.exe and Hikkari.exe
+      - name: Build HikkariService.exe and hikkari.exe
         shell: pwsh
         run: |
           $env:CGO_ENABLED = "0"
@@ -174,10 +174,10 @@ jobs:
           go build -trimpath -ldflags "-s -w -X NekkoVPN/core/service.Version=$version" -o ../HikkariService.exe ./cmd/hikkari-service
           # The launcher is what the shortcuts point at: give it the app icon.
           go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico ../app/windows/runner/resources/app_icon.ico -o cmd/hikkari-launcher/rsrc_windows_amd64.syso
-          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$version" -o ../Hikkari.exe ./cmd/hikkari-launcher
+          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$version" -o ../hikkari.exe ./cmd/hikkari-launcher
           cd ..
           if (-not (Test-Path "HikkariService.exe")) { throw "HikkariService.exe was not generated!" }
-          if (-not (Test-Path "Hikkari.exe")) { throw "Hikkari.exe was not generated!" }
+          if (-not (Test-Path "hikkari.exe")) { throw "hikkari.exe was not generated!" }
 
       # Release builds trust exactly the channel and keys they are built with
       # (option_env! in hikkari-updater); other builds get neither.
@@ -206,14 +206,14 @@ jobs:
           cd ..
 
       # Layout of the installed client (docs/AUTOUPDATE-ROADMAP.md §1):
-      #   Hikkari\Hikkari.exe            launcher (shortcut target)
-      #   Hikkari\HikkariService.exe     install / service
-      #   Hikkari\hikkari-updater.exe
-      #   Hikkari\app\                   GUI, engine, core, VERSION — what updates replace
+      #   hikkari\hikkari.exe            launcher (shortcut target)
+      #   hikkari\HikkariService.exe     install / service
+      #   hikkari\hikkari-updater.exe
+      #   hikkari\app\                   GUI, engine, core, VERSION — what updates replace
       # app\ also carries a copy of the three binaries above: an update brings
       # them in under the signed manifest and the service puts them in place.
       # Unpack and run HikkariService.exe: one UAC prompt, it copies itself to
-      # Program Files\Hikkari and starts the service.
+      # Program Files\hikkari and starts the service.
       - name: Assemble Release Bundle
         shell: pwsh
         run: |
@@ -222,7 +222,7 @@ jobs:
             throw "Release directory does not exist: $releaseDir"
           }
 
-          $bundle = "bundle/Hikkari"
+          $bundle = "bundle/hikkari"
           New-Item -ItemType Directory -Force -Path "$bundle/app" | Out-Null
           Copy-Item -Recurse -Force "$releaseDir/*" -Destination "$bundle/app/"
 
@@ -238,7 +238,7 @@ jobs:
           $version = (Select-String -Path app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value
           Set-Content -NoNewline -Encoding ascii -Path "$bundle/app/VERSION" -Value $version
 
-          foreach ($exe in "HikkariService.exe", "hikkari-updater.exe", "Hikkari.exe") {
+          foreach ($exe in "HikkariService.exe", "hikkari-updater.exe", "hikkari.exe") {
             Copy-Item -Force $exe -Destination "$bundle/"
             Copy-Item -Force $exe -Destination "$bundle/app/"
           }
@@ -246,21 +246,21 @@ jobs:
           Write-Host "Bundle ($version):"
           Get-ChildItem -Recurse -Path "bundle" | Select-Object FullName
 
-          Compress-Archive -Path "bundle/Hikkari" -DestinationPath "hikkari-windows-x64.zip" -Force
+          Compress-Archive -Path "bundle/hikkari" -DestinationPath "hikkari-windows-x64.zip" -Force
           Write-Host "hikkari-windows-x64.zip created successfully."
 
       # The one file users download: the bundle above, embedded.
-      - name: Build HikkariSetup.exe
+      - name: Build hikkari-setup.exe
         shell: pwsh
         run: |
           Copy-Item -Force "hikkari-windows-x64.zip" "engine/cmd/hikkari-setup/payload/hikkari.zip"
           cd engine
           $env:CGO_ENABLED = "0"
           go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -ico ../app/windows/runner/resources/app_icon.ico -o cmd/hikkari-setup/rsrc_windows_amd64.syso
-          go build -trimpath -ldflags "-s -w -H windowsgui" -o ../HikkariSetup.exe ./cmd/hikkari-setup
+          go build -trimpath -ldflags "-s -w -H windowsgui" -o ../hikkari-setup.exe ./cmd/hikkari-setup
           cd ..
-          if (-not (Test-Path "HikkariSetup.exe")) { throw "HikkariSetup.exe was not generated!" }
-          Write-Host ("HikkariSetup.exe: {0:N1} MB" -f ((Get-Item HikkariSetup.exe).Length / 1MB))
+          if (-not (Test-Path "hikkari-setup.exe")) { throw "hikkari-setup.exe was not generated!" }
+          Write-Host ("hikkari-setup.exe: {0:N1} MB" -f ((Get-Item hikkari-setup.exe).Length / 1MB))
 
       # The runner is elevated, which makes it the one place the privileged
       # half can be exercised for real: install from the bundle, talk to the
@@ -270,19 +270,19 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          # Installed the way users install: through HikkariSetup.exe (a GUI
+          # Installed the way users install: through hikkari-setup.exe (a GUI
           # program, so Start-Process -Wait for its exit code).
-          $setup = Start-Process -FilePath ./HikkariSetup.exe -ArgumentList "--quiet" -Wait -PassThru
+          $setup = Start-Process -FilePath ./hikkari-setup.exe -ArgumentList "--quiet" -Wait -PassThru
           if ($setup.ExitCode -ne 0) { throw "setup failed ($($setup.ExitCode))" }
-          $root = "$env:ProgramFiles\Hikkari"
-          if (Test-Path "$env:ProgramFiles\Hikkari.setup") { throw "setup left its unpack folder behind" }
-          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari"
+          $root = "$env:ProgramFiles\hikkari"
+          if (Test-Path "$env:ProgramFiles\hikkari.setup") { throw "setup left its unpack folder behind" }
+          $entry = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\hikkari"
           if ($entry.DisplayVersion -ne (Get-Content -Raw "$root\app\VERSION")) { throw "uninstall entry version: $($entry.DisplayVersion)" }
           Write-Host "Apps & features: $($entry.DisplayName) $($entry.DisplayVersion), $($entry.EstimatedSize) KB"
-          foreach ($lnk in @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Hikkari.lnk", "$env:PUBLIC\Desktop\Hikkari.lnk")) {
+          foreach ($lnk in @("$env:ProgramData\Microsoft\Windows\Start Menu\Programs\hikkari.lnk", "$env:PUBLIC\Desktop\hikkari.lnk")) {
             if (-not (Test-Path $lnk)) { throw "missing shortcut $lnk" }
             $target = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
-            if ($target -ne "$root\Hikkari.exe") { throw "$lnk points at $target" }
+            if ($target -ne "$root\hikkari.exe") { throw "$lnk points at $target" }
           }
           if ((Get-Service HikkariService).Status -ne 'Running') { throw "service is not running" }
           if (-not (Test-Path "$root\app\sing-box.exe")) { throw "build was not copied to $root" }
@@ -328,7 +328,7 @@ jobs:
             # channel may not answer from here — "error" is fine). Either way
             # it refuses to apply with nothing staged, and recovery with
             # nothing pending must not touch anything.
-            if (-not (Test-Path "$root\Hikkari.exe")) { throw "the launcher was not installed" }
+            if (-not (Test-Path "$root\hikkari.exe")) { throw "the launcher was not installed" }
             $rec = Invoke-Hikkari '{"op":"recover_update"}'
             if (-not $rec.ok -or $rec.recovery -ne "nothing") { throw "unexpected recovery: $($rec.recovery)" }
             $chk = Invoke-Hikkari '{"op":"check_update"}'
@@ -359,7 +359,7 @@ jobs:
       # one patch above the installed version published from the installed
       # tree, check → stage → apply with reconnect → trial → confirm.
       #
-      # That release also brings new HikkariService.exe, Hikkari.exe and
+      # That release also brings new HikkariService.exe, hikkari.exe and
       # hikkari-updater.exe inside app\ (built with its version, so their
       # hashes differ): after the confirmation the service must put all three
       # beside app\, restart into the new service and bring the tunnel back.
@@ -370,7 +370,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root = "$env:ProgramFiles\Hikkari"
+          $root = "$env:ProgramFiles\hikkari"
           $tmp = $env:RUNNER_TEMP
           $port = 8731
 
@@ -410,7 +410,7 @@ jobs:
           Push-Location engine
           $env:CGO_ENABLED = "0"
           go build -trimpath -ldflags "-s -w -X NekkoVPN/core/service.Version=$to" -o "$rel\HikkariService.exe" ./cmd/hikkari-service
-          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$to" -o "$rel\Hikkari.exe" ./cmd/hikkari-launcher
+          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$to" -o "$rel\hikkari.exe" ./cmd/hikkari-launcher
           Pop-Location
           Copy-Item -Force updater/target-ci2/release/hikkari-updater.exe "$rel\"
 
@@ -465,7 +465,7 @@ jobs:
             if (-not $ap.running) { throw "the core did not come back after the swap" }
             if ((Get-Content -Raw "$root\app\VERSION") -ne $version) { throw "app\ is not $version" }
             if (-not (Test-Path "$root\app.old\nekkobox.exe")) { throw "the previous version was not kept" }
-            $dv = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari").DisplayVersion
+            $dv = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\hikkari").DisplayVersion
             if ($dv -ne $version) { throw "Apps & features still says $dv after the update" }
 
             $rec = Invoke-Hikkari '{"op":"recover_update"}'
@@ -508,7 +508,7 @@ jobs:
 
             # 1. The binaries beside app\ follow the update.
             $new = @{}
-            foreach ($name in "HikkariService.exe", "Hikkari.exe", "hikkari-updater.exe") {
+            foreach ($name in "HikkariService.exe", "hikkari.exe", "hikkari-updater.exe") {
               $new[$name] = Hash "$rel\$name"
               if ($new[$name] -eq (Hash "$root\$name")) { throw "$name of $to is the installed one: nothing to test" }
             }
@@ -550,7 +550,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari"
+          $key = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\hikkari"
           $cmd = (Get-ItemProperty $key -ErrorAction SilentlyContinue).QuietUninstallString
           if (-not $cmd) { throw "no uninstall entry" }
           Write-Host "> $cmd"
@@ -559,8 +559,8 @@ jobs:
           if ($un.ExitCode -ne 0) { throw "uninstall failed ($($un.ExitCode))" }
           if (Get-Service HikkariService -ErrorAction SilentlyContinue) { throw "the service is still registered" }
           if (Test-Path $key) { throw "the uninstall entry is still there" }
-          if (Test-Path "$env:PUBLIC\Desktop\Hikkari.lnk") { throw "the desktop shortcut is still there" }
-          $root = "$env:ProgramFiles\Hikkari"
+          if (Test-Path "$env:PUBLIC\Desktop\hikkari.lnk") { throw "the desktop shortcut is still there" }
+          $root = "$env:ProgramFiles\hikkari"
           for ($i = 0; $i -lt 60 -and (Test-Path $root); $i++) { Start-Sleep -Milliseconds 500 }
           if (Test-Path $root) { cmd /c dir /a /s "$root"; throw "$root was not removed" }
           Write-Host "removed after ~$([math]::Round($i / 2)) s"
@@ -581,7 +581,7 @@ jobs:
           MINIMUM_VERSION: ${{ vars.HIKKARI_MINIMUM_VERSION }}
         run: |
           $ErrorActionPreference = "Stop"
-          $version = Get-Content -Raw bundle/Hikkari/app/VERSION
+          $version = Get-Content -Raw bundle/hikkari/app/VERSION
           $minimum = @()
           if ($env:MINIMUM_VERSION) { $minimum = @("--minimum-version", $env:MINIMUM_VERSION.Trim()) }
           $manifestBin = "updater/target/release/nekko-manifest.exe"
@@ -589,7 +589,7 @@ jobs:
           $key = Join-Path $env:RUNNER_TEMP "release.key"
           Set-Content -NoNewline -Encoding ascii -Path $key -Value $env:RELEASE_KEY.Trim()
           try {
-            & $manifestBin publish --dir bundle/Hikkari/app --version $version --platform windows `
+            & $manifestBin publish --dir bundle/hikkari/app --version $version --platform windows `
                 --base-url $env:UPDATE_URL.TrimEnd('/') --key $key --key-id $env:KEY_ID --out update-channel @minimum
             if ($LASTEXITCODE -ne 0) { throw "publish failed" }
           } finally {
@@ -618,8 +618,8 @@ jobs:
       - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
-          name: HikkariSetup
-          path: HikkariSetup.exe
+          name: hikkari-setup
+          path: hikkari-setup.exe
           retention-days: 14
 
   # Blobs → manifests → probe onto the update server, then checked from its

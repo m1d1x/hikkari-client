@@ -48,7 +48,7 @@
 //! rename a directory while a file in it is mapped as a running `.exe` or a
 //! loaded `.dll`, or while a process has it as its working directory. So the
 //! swap is performed by a process that lives OUTSIDE the tree, after
-//! everything inside it has exited — in Hikkari that is the service, which
+//! everything inside it has exited — in hikkari that is the service, which
 //! sits beside `app\` and stops the GUI and the core before calling [`apply`].
 //!
 //! That precondition is also why the first rename is the one expected to fail

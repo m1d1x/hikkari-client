@@ -40,7 +40,7 @@ class NekkoboxApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Nekko VPN',
+      title: 'hikkari',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(),
       home: const _BootGate(),
@@ -160,7 +160,7 @@ class _BootGateState extends State<_BootGate>
       if (local == null || local.isEmpty) {
         throw StateError('LOCALAPPDATA is not set');
       }
-      dir = Directory('$local\\Hikkari');
+      dir = Directory('$local\\hikkari');
     } else {
       return File(Platform.resolvedExecutable).parent.path;
     }

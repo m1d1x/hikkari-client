@@ -3,9 +3,9 @@
 // HikkariService.exe — the privileged half of the Windows client. See
 // core/winsvc.
 //
-//	HikkariService.exe uninstall [--quiet]                remove Hikkari ("Apps & features" runs this)
+//	HikkariService.exe uninstall [--quiet]                remove hikkari ("Apps & features" runs this)
 //	HikkariService.exe install [--import DIR] [--quiet]   install from an unpacked build (development;
-//	                                                      users run HikkariSetup.exe)
+//	                                                      users run hikkari-setup.exe)
 //	HikkariService.exe debug                              serve in the foreground (elevated shell)
 //	HikkariService.exe adopt                              (from app\, elevated) put this release's binaries
 //	                                                      beside app\ for a service that predates self-update
@@ -69,7 +69,7 @@ func main() {
 			winsvc.Report(false, "Установка: "+err.Error())
 			return
 		}
-		winsvc.Report(true, "Hikkari установлен.\n\nЗапуск: "+launcher)
+		winsvc.Report(true, "hikkari установлен.\n\nЗапуск: "+launcher)
 	case "adopt":
 		if err := winsvc.Adopt(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -93,12 +93,12 @@ func main() {
 }
 
 func uninstall() {
-	if !winsvc.Ask("Удалить Hikkari VPN?\n\nПрофили и настройки останутся в %LOCALAPPDATA%\\Hikkari.") {
+	if !winsvc.Ask("Удалить hikkari?\n\nПрофили и настройки останутся в %LOCALAPPDATA%\\hikkari.") {
 		return
 	}
 	if err := winsvc.Uninstall(); err != nil {
 		winsvc.Report(false, "Удаление: "+err.Error())
 		return
 	}
-	winsvc.Report(true, "Hikkari удалён.")
+	winsvc.Report(true, "hikkari удалён.")
 }

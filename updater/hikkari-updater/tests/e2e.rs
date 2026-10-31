@@ -262,7 +262,7 @@ impl Updater {
 
 fn scene(label: &str, minimum: &str) -> (Tmp, ChannelServer, Updater) {
     let tmp = Tmp::new(label);
-    let root = tmp.0.join("Hikkari");
+    let root = tmp.0.join("hikkari");
     write_tree(&root.join("app"), V1);
     write_tree(&tmp.0.join("build-1.1.0"), V2);
 
@@ -430,7 +430,7 @@ const MAC_V2: &[(&str, &str)] = &[
 fn a_macos_bundle_is_swapped_whole() {
     let tmp = Tmp::new("macos");
     let root = tmp.0.join("Applications");
-    write_tree(&root.join("Hikkari.app"), MAC_V1);
+    write_tree(&root.join("hikkari.app"), MAC_V1);
     write_tree(&tmp.0.join("build"), MAC_V2);
     let channel_dir = tmp.0.join("channel");
     fs::create_dir_all(&channel_dir).unwrap();
@@ -454,18 +454,18 @@ fn a_macos_bundle_is_swapped_whole() {
 
     assert_eq!(up.ok("status", "status")["installed"], "1.0.0");
     assert_eq!(up.ok("update", "ready")["version"], "1.1.0");
-    assert!(root.join(".Hikkari.staging/READY.json").exists());
+    assert!(root.join(".hikkari.staging/READY.json").exists());
     assert_eq!(server.hits("/stable/macos/manifest.json"), 1);
     up.ok("apply", "applied");
     assert_eq!(
-        read(&root.join("Hikkari.app/Contents/MacOS/nekkobox")),
+        read(&root.join("hikkari.app/Contents/MacOS/nekkobox")),
         "gui 1.1.0"
     );
     assert_eq!(
-        read(&root.join("Hikkari.app.old/Contents/Resources/VERSION")),
+        read(&root.join("hikkari.app.old/Contents/Resources/VERSION")),
         "1.0.0"
     );
     up.ok("recover", "recovered");
     up.ok("confirm", "confirmed");
-    assert!(!root.join("Hikkari.app.old").exists());
+    assert!(!root.join("hikkari.app.old").exists());
 }

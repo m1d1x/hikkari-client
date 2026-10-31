@@ -1,5 +1,5 @@
 // Package svcproto is the contract between the unprivileged GUI engine and
-// the Hikkari service that owns the VPN core — sing-box or Xray, whichever
+// the hikkari service that owns the VPN core — sing-box or Xray, whichever
 // engine the user chose (core/service: a Windows service behind a named
 // pipe, a macOS LaunchDaemon behind a unix socket).
 //
@@ -86,7 +86,7 @@ type Response struct {
 
 	Update *UpdateState `json:"update,omitempty"`
 	// SyncsBinaries: this service keeps the binaries outside the replaced
-	// tree up to date itself (Windows: Hikkari.exe, HikkariService.exe,
+	// tree up to date itself (Windows: hikkari.exe, HikkariService.exe,
 	// hikkari-updater.exe beside app\). A service from before that (1.0.x)
 	// leaves it to the GUI, which has one elevated run of the new service
 	// binary adopt them.

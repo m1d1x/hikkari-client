@@ -19,9 +19,9 @@ import (
 // entry, and the processes that hold its files open.
 
 const (
-	uninstallKey = `Software\Microsoft\Windows\CurrentVersion\Uninstall\Hikkari`
-	productName  = "Hikkari VPN"
-	shortcutName = "Hikkari.lnk"
+	uninstallKey = `Software\Microsoft\Windows\CurrentVersion\Uninstall\hikkari`
+	productName  = "hikkari"
+	shortcutName = "hikkari.lnk"
 )
 
 // shortcutPaths are the Start menu and desktop shortcuts, for all users: the
@@ -81,9 +81,9 @@ func writeUninstallEntry(dest, version string) error {
 	str := map[string]string{
 		"DisplayName":     productName,
 		"DisplayVersion":  version,
-		"Publisher":       "Hikkari",
+		"Publisher":       "hikkari",
 		"InstallLocation": dest,
-		"DisplayIcon":     filepath.Join(dest, "Hikkari.exe"),
+		"DisplayIcon":     filepath.Join(dest, "hikkari.exe"),
 		"UninstallString": `"` + service + `" uninstall`,
 		// Scripted removal (winget and friends) asks for this one.
 		"QuietUninstallString": `"` + service + `" uninstall --quiet`,

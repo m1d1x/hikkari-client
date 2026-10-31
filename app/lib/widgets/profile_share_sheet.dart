@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -137,14 +138,11 @@ class ProfileShareSheet extends StatelessWidget {
               // остаются тёмными, без наложения).
               Opacity(
                 opacity: 0.9,
-                child: ColorFiltered(
+                child: SvgPicture.asset(
+                  'assets/logo.svg',
+                  width: 140,
+                  height: 140,
                   colorFilter: ColorFilter.mode(t.primary, BlendMode.srcIn),
-                  child: Image.asset(
-                    'assets/ico.png',
-                    width: 140,
-                    height: 140,
-                    filterQuality: FilterQuality.medium,
-                  ),
                 ),
               ),
               // Модули поверх: прозрачный фон (виден белый лист + лого),

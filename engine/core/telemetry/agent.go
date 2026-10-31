@@ -1,6 +1,6 @@
 // Package telemetry queues product events and scrubbed error reports and
 // sends them to the hub in batches (docs/TELEMETRY.md). One switch,
-// "help improve Hikkari", governs it; off means nothing is queued or sent.
+// "help improve hikkari", governs it; off means nothing is queued or sent.
 package telemetry
 
 import (

@@ -4,8 +4,8 @@
 // installation and uninstallation around the platform-neutral service in
 // core/service.
 //
-//	<root>\                        Program Files\Hikkari — admin-only writable
-//	    Hikkari.exe                launcher — the shortcut points here
+//	<root>\                        Program Files\hikkari — admin-only writable
+//	    hikkari.exe                launcher — the shortcut points here
 //	    HikkariService.exe         this service, LocalSystem
 //	    hikkari-updater.exe
 //	    app\                       GUI, engine DLL, sing-box.exe, wintun.dll

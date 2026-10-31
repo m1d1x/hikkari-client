@@ -48,9 +48,9 @@ var corpus = []struct {
 		keep:   []string{"~/Library/Application Support/nekkobox/profiles.json", "permission denied"},
 	},
 	{
-		in:     `open C:\Users\Bob Smith\AppData\Local\Hikkari\routing.json: access is denied`,
+		in:     `open C:\Users\Bob Smith\AppData\Local\hikkari\routing.json: access is denied`,
 		secret: []string{"Bob"},
-		keep:   []string{`\AppData\Local\Hikkari\routing.json`},
+		keep:   []string{`\AppData\Local\hikkari\routing.json`},
 	},
 	{
 		in:     `dns: exchange failed for youtube.com via 1.1.1.1: context deadline exceeded`,

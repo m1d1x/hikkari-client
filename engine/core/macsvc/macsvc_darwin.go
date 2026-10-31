@@ -3,7 +3,7 @@
 // Package macsvc is HikkariService on macOS: a root LaunchDaemon around the
 // platform-neutral service in core/service, and its installation.
 //
-//	/Applications/Hikkari.app                  root:wheel, installed by the .pkg,
+//	/Applications/hikkari.app                  root:wheel, installed by the .pkg,
 //	    Contents/MacOS/nekkobox                replaced whole by an update
 //	    Contents/MacOS/HikkariService          this daemon (net.hikkari.service)
 //	    Contents/MacOS/hikkari-updater
@@ -41,8 +41,8 @@ const (
 	Label     = "net.hikkari.service"
 	PlistPath = "/Library/LaunchDaemons/" + Label + ".plist"
 	// Bundle is where the .pkg installs the app; the updater's layout
-	// (/Applications + Hikkari.app) says the same.
-	Bundle  = "/Applications/Hikkari.app"
+	// (/Applications + hikkari.app) says the same.
+	Bundle  = "/Applications/hikkari.app"
 	CoreDir = "/var/db/hikkari"
 
 	serviceBin = Bundle + "/Contents/MacOS/HikkariService"
@@ -146,7 +146,7 @@ func checkBundle() error {
 		serviceBin, updaterBin, coreBin, xrayBin,
 	} {
 		if err := rootOnly(p); err != nil {
-			return fmt.Errorf("%w — reinstall Hikkari from the .pkg", err)
+			return fmt.Errorf("%w — reinstall hikkari from the .pkg", err)
 		}
 	}
 	return nil
@@ -215,7 +215,7 @@ func Uninstall() error {
 	var errs []string
 	for _, p := range []string{
 		PlistPath, svcproto.SocketPath, CoreDir,
-		Bundle, Bundle + ".old", filepath.Join(filepath.Dir(Bundle), ".Hikkari.staging"),
+		Bundle, Bundle + ".old", filepath.Join(filepath.Dir(Bundle), ".hikkari.staging"),
 	} {
 		if err := os.RemoveAll(p); err != nil {
 			errs = append(errs, err.Error())
@@ -231,7 +231,7 @@ func Uninstall() error {
 // stopProcessesUnder ends every process running a binary under dir — the
 // GUI, mostly — except this one, which may be running from there too.
 func stopProcessesUnder(dir string) {
-	out, _ := exec.Command("/usr/bin/pgrep", "-f", dir).Output()
+	out, _ := exec.Command("/usr/bin/pgrep", "-i", "-f", dir).Output()
 	for _, field := range strings.Fields(string(out)) {
 		pid, err := strconv.Atoi(field)
 		if err != nil || pid == os.Getpid() {

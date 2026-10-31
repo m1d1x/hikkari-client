@@ -37,7 +37,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // around this width; opening
   // wider just creates empty side space.
   Win32Window::Size size(440, 780);
-  if (!window.Create(L"Nekko VPN", origin, size)) {
+  if (!window.Create(L"hikkari", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

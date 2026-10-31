@@ -57,7 +57,7 @@ import (
 const (
 	serviceExe  = "HikkariService.exe"
 	updaterExe  = "hikkari-updater.exe"
-	launcherExe = "Hikkari.exe"
+	launcherExe = "hikkari.exe"
 
 	// healthyWithin: the restarted service must answer on the pipe this
 	// soon after the SCM is asked to start it.

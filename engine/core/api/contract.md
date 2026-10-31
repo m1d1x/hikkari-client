@@ -220,7 +220,7 @@ adapter and disk remain available; rollback errors are logged as well.
 
 `Profile-Update-Interval` is expressed in hours by provider protocols and is
 normalized to seconds in the metadata (see [provider documentation](https://docs.v2raytun.com/overview/supported-headers)).
-Hikkari's product freshness target is 5 minutes independently of that hint;
+hikkari's product freshness target is 5 minutes independently of that hint;
 server throttling/backoff still takes priority. The UI computes remaining days
 from expiry and remaining traffic as max(0, total - upload - download).
 

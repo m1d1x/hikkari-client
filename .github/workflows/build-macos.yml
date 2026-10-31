@@ -11,7 +11,7 @@ on:
 env:
   SING_BOX_LX_TAG: v1.14.3-lx.21
   # docs/AUTOUPDATE-ROADMAP.md, Phase 6/7: a tag stamps the version, bakes the
-  # update channel into hikkari-updater, signs Hikkari.app into stable/macos.
+  # update channel into hikkari-updater, signs hikkari.app into stable/macos.
   RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
   # docs/TELEMETRY.md §9: only releases send; branch builds keep it local.
   HIKKARI_TELEMETRY_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/events' || '' }}
@@ -136,14 +136,14 @@ jobs:
       # Layout of the installed client (docs/AUTOUPDATE-ROADMAP.md, Phase 7):
       # the whole bundle is what an update replaces, the service and the
       # updater included.
-      - name: Assemble Hikkari.app
+      - name: Assemble hikkari.app
         run: |
           src=app/build/macos/Build/Products/Release/nekkobox.app
           [[ -d "$src" ]] || { echo "::error::no $src"; exit 1; }
           mkdir -p dist
-          rm -rf dist/Hikkari.app
-          ditto "$src" dist/Hikkari.app
-          app=dist/Hikkari.app
+          rm -rf dist/hikkari.app
+          ditto "$src" dist/hikkari.app
+          app=dist/hikkari.app
           [[ -x "$app/Contents/Resources/sing-box" ]] || { echo "::error::sing-box was not embedded"; exit 1; }
           install -m 755 bin/HikkariService "$app/Contents/MacOS/HikkariService"
           install -m 755 bin/hikkari-updater "$app/Contents/MacOS/hikkari-updater"
@@ -160,18 +160,18 @@ jobs:
       # (which the service requires) and runs postinstall → HikkariService
       # install. Not relocatable: the installer must not "update" some other
       # copy of the bundle it finds elsewhere on disk.
-      - name: Build Hikkari.pkg
+      - name: Build hikkari.pkg
         run: |
           rm -rf pkgroot && mkdir -p pkgroot/Applications
-          ditto dist/Hikkari.app pkgroot/Applications/Hikkari.app
+          ditto dist/hikkari.app pkgroot/Applications/hikkari.app
           pkgbuild --analyze --root pkgroot component.plist
           plutil -replace 0.BundleIsRelocatable -bool NO component.plist
           plutil -replace 0.BundleOverwriteAction -string upgrade component.plist
           pkgbuild --root pkgroot --component-plist component.plist \
             --identifier net.hikkari.pkg --version "$VERSION" \
             --scripts app/macos/pkg/scripts --ownership recommended \
-            --install-location / "Hikkari-$VERSION.pkg"
-          ls -la Hikkari-*.pkg
+            --install-location / "hikkari-$VERSION.pkg"
+          ls -la hikkari-*.pkg
 
       # The runner has passwordless sudo: install the package the way users
       # do and exercise the privileged half for real — the daemon, the socket,
@@ -180,8 +180,8 @@ jobs:
       - name: Service smoke test
         run: |
           set -euo pipefail
-          sudo installer -pkg "Hikkari-$VERSION.pkg" -target /
-          app=/Applications/Hikkari.app
+          sudo installer -pkg "hikkari-$VERSION.pkg" -target /
+          app=/Applications/hikkari.app
           stat -f '%Su:%Sg %Sp %N' "$app" "$app/Contents/MacOS/HikkariService" "$app/Contents/Resources/sing-box"
           [[ "$(stat -f %Su "$app/Contents/Resources/sing-box")" == root ]] || { echo "the bundle is not root-owned"; exit 1; }
           [[ "$(cat "$app/Contents/Resources/VERSION")" == "$VERSION" ]]
@@ -239,7 +239,7 @@ jobs:
       - name: Update smoke test
         run: |
           set -euo pipefail
-          app=/Applications/Hikkari.app
+          app=/Applications/hikkari.app
           port=8731
           call() { python3 svc.py "$1" | tee /dev/stderr; }
           field() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
@@ -258,7 +258,7 @@ jobs:
           from=$(cat "$app/Contents/Resources/VERSION")
           IFS=. read -r ma mi pa <<< "$from"
           to="$ma.$mi.$((pa + 1))"
-          rel="$RUNNER_TEMP/release/Hikkari.app"
+          rel="$RUNNER_TEMP/release/hikkari.app"
           mkdir -p "$(dirname "$rel")"
           ditto "$app" "$rel"
           printf '%s' "$to" > "$rel/Contents/Resources/VERSION"
@@ -301,7 +301,7 @@ jobs:
 
           [[ "$(call '{"op":"recover_update"}' | field 'd["recovery"]')" == on_trial ]]
           call '{"op":"confirm_update"}' >/dev/null
-          [[ ! -e "$app.old" ]] || { echo "Hikkari.app.old survived the confirmation"; exit 1; }
+          [[ ! -e "$app.old" ]] || { echo "hikkari.app.old survived the confirmation"; exit 1; }
           [[ "$(stat -f %Su "$app/Contents/MacOS/HikkariService")" == root ]] || { echo "the updated bundle is not root-owned"; exit 1; }
           call '{"op":"stop"}' >/dev/null
 
@@ -309,9 +309,9 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          sudo /Applications/Hikkari.app/Contents/MacOS/HikkariService uninstall
+          sudo /Applications/hikkari.app/Contents/MacOS/HikkariService uninstall
           ! sudo launchctl print system/net.hikkari.service >/dev/null 2>&1 || { echo "the daemon is still loaded"; exit 1; }
-          for p in /Applications/Hikkari.app /Applications/Hikkari.app.old /Applications/.Hikkari.staging \
+          for p in /Applications/hikkari.app /Applications/hikkari.app.old /Applications/.hikkari.staging \
                    /Library/LaunchDaemons/net.hikkari.service.plist /var/db/hikkari /var/run/hikkari-service.sock; do
             [[ ! -e "$p" ]] || { echo "$p is still there"; exit 1; }
           done
@@ -335,7 +335,7 @@ jobs:
           umask 077
           printf '%s' "$RELEASE_KEY" | tr -d '[:space:]' > "$key"
           trap 'rm -f "$key"' EXIT
-          "$m" publish --dir dist/Hikkari.app --version "$VERSION" --platform macos \
+          "$m" publish --dir dist/hikkari.app --version "$VERSION" --platform macos \
             --base-url "${UPDATE_URL%/}" --key "$key" --key-id "$KEY_ID" --out update-channel ${minimum[@]+"${minimum[@]}"}
           pub=$(tr ',' '\n' <<< "$UPDATE_KEYS" | sed -n "s/^$KEY_ID://p" | head -1)
           "$m" verify --manifest update-channel/stable/macos/manifest.json \
@@ -352,8 +352,8 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: HikkariMac
-          path: Hikkari-*.pkg
+          name: hikkari-macos
+          path: hikkari-*.pkg
           retention-days: 14
 
   publish-channel:

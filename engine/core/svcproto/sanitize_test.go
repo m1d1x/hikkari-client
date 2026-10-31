@@ -9,7 +9,7 @@ import (
 	configfile "NekkoVPN/core/engine/singbox/config"
 )
 
-var paths = Paths{CacheFile: `C:\Program Files\Hikkari\core\cache.db`}
+var paths = Paths{CacheFile: `C:\Program Files\hikkari\core\cache.db`}
 
 // realConfig is what the GUI engine actually generates, plus the kinds of
 // profile blocks it adds: a VLESS/Reality outbound with an xhttp transport
@@ -92,7 +92,7 @@ func TestLogOutputIsTakenAwayFromTheConfig(t *testing.T) {
 func TestACacheFilePointedElsewhereIsPutBack(t *testing.T) {
 	cfg := realConfig(t)
 	cfg["experimental"].(map[string]interface{})["cache_file"].(map[string]interface{})["path"] =
-		`C:\Program Files\Hikkari\HikkariService.exe`
+		`C:\Program Files\hikkari\HikkariService.exe`
 	out, err := sanitize(t, cfg)
 	if err != nil {
 		t.Fatal(err)
