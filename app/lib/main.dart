@@ -200,7 +200,9 @@ class _Root extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final blocked = context.select<AppState, bool>((s) => s.updateStatus.blocks);
+    final blocked = context.select<AppState, bool>(
+      (s) => s.updateStatus.blocks,
+    );
     return blocked ? const MandatoryUpdateScreen() : const HomeScreen();
   }
 }

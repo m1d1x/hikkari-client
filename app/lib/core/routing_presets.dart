@@ -43,6 +43,10 @@ class ServicePreset {
 
 class RoutingPresets {
   final bool syncEnabled;
+
+  /// Gets a release still rolling out ahead of everyone; set by hand from a
+  /// hidden spot in the settings.
+  final bool tester;
   final bool configured;
   final bool connected;
   final String source;
@@ -55,6 +59,7 @@ class RoutingPresets {
 
   const RoutingPresets({
     required this.syncEnabled,
+    this.tester = false,
     required this.configured,
     required this.connected,
     required this.source,
@@ -70,6 +75,7 @@ class RoutingPresets {
     final catalog = json['catalog'] as Map<String, dynamic>;
     return RoutingPresets(
       syncEnabled: json['syncEnabled'] as bool,
+      tester: json['tester'] as bool? ?? false,
       configured: json['configured'] as bool,
       connected: json['connected'] as bool? ?? false,
       source: json['source'] as String,

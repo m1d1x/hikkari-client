@@ -548,6 +548,10 @@ startup uses true: preset choices are in-memory and do not reconfigure a VPN.
 - `RoutingPresets()` → snapshot: `syncEnabled`, `catalog`, `choices`, `source`,
   `configured`, `connected`, `platform`, `lastChecked`, `error`.
 - `SetPresetSync({on: bool})` → null; default on, off freezes the catalog.
+- `SetPresetTester({on: bool})` → null; asks the hub for the release still
+  rolling out, ahead of every bucket. Snapshot field `tester`. Flipping it
+  refetches; the answer replaces the catalog even under the same version, and
+  204 sends the install back to the bundled catalog.
 - `SetServicePreset({mode: "bypass"|"proxy", id: string, on: bool})` → null;
   applies the group without merging it into manual storage.
 - `RefreshRoutingPresets()` → null; fetches/applies now when sync is enabled.

@@ -34,6 +34,13 @@ type State struct {
 	// this install's own randomness and sent with each catalog request. It
 	// is not the telemetry id and says nothing about the device.
 	Bucket *int `json:"bucket,omitempty"`
+	// Tester asks the hub for a release still rolling out, ahead of every
+	// bucket. Switched on and off by hand in a hidden spot of the settings.
+	Tester bool `json:"tester,omitempty"`
+	// Regrouped is set when Tester flips and cleared by the next answer: the
+	// hub may now serve another release under the same version, or nothing
+	// at all, and that answer replaces the catalog instead of being refused.
+	Regrouped bool `json:"regrouped,omitempty"`
 }
 
 type Snapshot struct {
@@ -197,6 +204,33 @@ func (m *Manager) SetSync(on bool) error {
 	return nil
 }
 
+// SetTester moves the install in or out of the testers and refetches at once.
+func (m *Manager) SetTester(on bool) error {
+	m.tx.Lock()
+	defer m.tx.Unlock()
+	old := m.Snapshot().State
+	if old.Tester == on {
+		return nil
+	}
+	next := clone(old)
+	next.Tester = on
+	next.Regrouped = true
+	if err := m.commit(old, next); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.etag = ""
+	if m.streamCancel != nil {
+		m.streamCancel()
+	}
+	m.mu.Unlock()
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
 func (m *Manager) Select(mode routing.RoutingMode, id string, on bool) error {
 	m.tx.Lock()
 	defer m.tx.Unlock()
@@ -310,8 +344,12 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	if err != nil {
 		return m.report(err)
 	}
+	asked := m.Snapshot().State
 	query := endpoint.Query()
-	query.Set("bucket", fmt.Sprint(*m.Snapshot().Bucket))
+	query.Set("bucket", fmt.Sprint(*asked.Bucket))
+	if asked.Tester {
+		query.Set("tester", "1")
+	}
 	endpoint.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
@@ -329,9 +367,21 @@ func (m *Manager) Refresh(ctx context.Context) error {
 		return m.report(fmt.Errorf("не удалось обновить пресеты: %w", err))
 	}
 	defer resp.Body.Close()
-	// 204: nothing is released for this install yet; it keeps its catalog.
-	if resp.StatusCode == http.StatusNotModified || resp.StatusCode == http.StatusNoContent {
+	if resp.StatusCode == http.StatusNotModified {
 		return m.report(nil)
+	}
+	// 204: nothing is released for this install. It keeps its catalog,
+	// unless it just left or joined the testers: what it has came from the
+	// other side, so it goes back to the bundled one.
+	if resp.StatusCode == http.StatusNoContent {
+		if !asked.Regrouped {
+			return m.report(nil)
+		}
+		catalog, err := Parse(bundled)
+		if err != nil {
+			return m.report(err)
+		}
+		return m.adopt(ctx, asked, catalog, "bundled", "")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return m.report(fmt.Errorf("сервер пресетов: HTTP %d", resp.StatusCode))
@@ -344,29 +394,39 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	if err != nil {
 		return m.report(err)
 	}
+	return m.adopt(ctx, asked, catalog, "remote", resp.Header.Get("ETag"))
+}
+
+// adopt applies an answer to the request made with asked. An answer to a
+// request made before the tester flag flipped is dropped: the refetch that
+// flip woke is already on its way.
+func (m *Manager) adopt(ctx context.Context, asked State, catalog Catalog, source, etag string) error {
 	m.tx.Lock()
 	defer m.tx.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	old := m.Snapshot().State
-	if !old.SyncEnabled {
+	if !old.SyncEnabled || old.Tester != asked.Tester || old.Regrouped != asked.Regrouped {
 		return nil
 	}
-	if catalog.Version < old.Catalog.Version {
-		return m.report(fmt.Errorf("сервер вернул старую версию пресетов"))
-	}
-	if catalog.Version == old.Catalog.Version && !reflect.DeepEqual(catalog, old.Catalog) {
-		return m.report(fmt.Errorf("содержимое каталога изменено без увеличения версии"))
+	if !old.Regrouped {
+		if catalog.Version < old.Catalog.Version {
+			return m.report(fmt.Errorf("сервер вернул старую версию пресетов"))
+		}
+		if catalog.Version == old.Catalog.Version && !reflect.DeepEqual(catalog, old.Catalog) {
+			return m.report(fmt.Errorf("содержимое каталога изменено без увеличения версии"))
+		}
 	}
 	next := clone(old)
 	next.Catalog = catalog
-	next.Source = "remote"
+	next.Source = source
+	next.Regrouped = false
 	if err := m.commit(old, next); err != nil {
 		return m.report(fmt.Errorf("не удалось применить пресеты: %w", err))
 	}
 	m.mu.Lock()
-	m.etag = resp.Header.Get("ETag")
+	m.etag = etag
 	m.mu.Unlock()
 	return m.report(nil)
 }

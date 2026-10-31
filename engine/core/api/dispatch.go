@@ -143,6 +143,14 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 			return nil, err
 		}
 		return nil, c.SetPresetSync(a.On)
+	case "SetPresetTester":
+		var a struct {
+			On bool `json:"on"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return nil, c.SetPresetTester(a.On)
 	case "SetServicePreset":
 		var a struct {
 			Mode string `json:"mode"`

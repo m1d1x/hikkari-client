@@ -17,6 +17,7 @@ func presetEndpoint(name, fallback string) string {
 
 func (c *Core) RoutingPresets() presets.Snapshot { return c.presets.Snapshot() }
 func (c *Core) SetPresetSync(on bool) error      { return c.presets.SetSync(on) }
+func (c *Core) SetPresetTester(on bool) error    { return c.presets.SetTester(on) }
 func (c *Core) SetServicePreset(mode, id string, on bool) error {
 	return c.presets.Select(routing.RoutingMode(mode), id, on)
 }

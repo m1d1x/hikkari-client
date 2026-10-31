@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../ui/nekko_segmented.dart';
+import '../ui/nekko_toast.dart';
 import '../theme/tokens.dart';
 import 'route_section.dart';
 import 'service_presets.dart';
@@ -99,6 +100,36 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   int _hintVersion = 0;
   bool _logsHover = false;
 
+  // Seven quick taps on the title flip the tester mode; a pause starts over.
+  static const _testerTaps = 7;
+  static const _testerTapGap = Duration(milliseconds: 1500);
+  int _titleTaps = 0;
+  DateTime _lastTitleTap = DateTime(0);
+
+  Future<void> _tapTitle() async {
+    final now = DateTime.now();
+    _titleTaps = now.difference(_lastTitleTap) > _testerTapGap
+        ? 1
+        : _titleTaps + 1;
+    _lastTitleTap = now;
+    if (_titleTaps < _testerTaps) return;
+    _titleTaps = 0;
+    final state = context.read<AppState>();
+    final on = !(state.presets?.tester ?? false);
+    await state.setPresetTester(on);
+    if (!mounted) return;
+    final failed = (state.presets?.tester ?? false) != on;
+    NekkoToast.show(
+      context,
+      failed
+          ? 'не удалось переключить режим тестера'
+          : on
+          ? 'режим тестера включён'
+          : 'режим тестера выключен',
+      icon: failed ? Icons.error_outline_rounded : Icons.science_outlined,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -133,7 +164,20 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 ),
               ),
               const SizedBox(height: 18),
-              Center(child: Text('настройки', style: t.sectionTitle)),
+              Center(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _tapTitle,
+                  child: Text(
+                    'настройки',
+                    style: t.sectionTitle.copyWith(
+                      color: context.watch<AppState>().presets?.tester ?? false
+                          ? t.primary
+                          : null,
+                    ),
+                  ),
+                ),
+              ),
               const SizedBox(height: 14),
               _InfoRow(label: 'статус', value: statusLabel, loading: false),
               const SizedBox(height: 8),

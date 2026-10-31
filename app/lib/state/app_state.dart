@@ -431,6 +431,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> setPresetSync(bool on) =>
       _changePreset(() => _core.setPresetSync(on));
+  Future<void> setPresetTester(bool on) =>
+      _changePreset(() => _core.setPresetTester(on));
   Future<void> setServicePreset(String id, bool on) {
     final mode = _routing.mode;
     return _changePreset(() => _core.setServicePreset(mode, id, on));

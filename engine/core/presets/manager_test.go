@@ -451,3 +451,57 @@ func TestAnExplicitChoiceOutlivesANewPreset(t *testing.T) {
 		t.Fatal("a mode the user never touched did not follow the new default")
 	}
 }
+
+// A tester gets the release rolling out under the same version the others
+// get theirs; flipping the flag swaps the catalog either way, and a hub with
+// nothing for the new side sends the install back to the bundled catalog.
+func TestTesterFlagSwapsTheCatalogUnderOneVersion(t *testing.T) {
+	var mu sync.Mutex
+	var testerOnly bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		tester := r.URL.Query().Get("tester") == "1"
+		switch {
+		case tester:
+			_, _ = w.Write(testCatalog(7, "next.example"))
+		case testerOnly:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			_, _ = w.Write(testCatalog(7, "current.example"))
+		}
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "presets.json")
+	m := newManager(t, path, Options{URL: server.URL})
+	domain := func() string { return m.Snapshot().Catalog.Services[0].Domains[0] }
+
+	if err := m.Refresh(context.Background()); err != nil || domain() != "current.example" {
+		t.Fatalf("plain install: %v %s", err, domain())
+	}
+	if err := m.SetTester(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Refresh(context.Background()); err != nil || domain() != "next.example" {
+		t.Fatalf("tester: %v %s", err, domain())
+	}
+	if s := m.Snapshot(); !s.Tester || s.Regrouped {
+		t.Fatalf("state after the swap: %+v", s.State)
+	}
+	if !newManager(t, path, Options{URL: server.URL}).Snapshot().Tester {
+		t.Fatal("the tester flag did not survive a restart")
+	}
+
+	mu.Lock()
+	testerOnly = true
+	mu.Unlock()
+	if err := m.SetTester(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s := m.Snapshot(); s.Source != "bundled" || s.Tester || s.Regrouped {
+		t.Fatalf("leaving the testers with nothing released: %+v", s.State)
+	}
+}

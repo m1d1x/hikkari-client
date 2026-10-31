@@ -138,6 +138,9 @@ abstract class NekkoboxCore {
   Future<void> setPresetSync(bool on) =>
       _callAsync('SetPresetSync', {'on': on});
 
+  Future<void> setPresetTester(bool on) =>
+      _callAsync('SetPresetTester', {'on': on});
+
   Future<void> setServicePreset(RoutingMode mode, String id, bool on) =>
       _callAsync('SetServicePreset', {'mode': mode.wire, 'id': id, 'on': on});
 
