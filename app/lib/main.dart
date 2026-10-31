@@ -87,6 +87,7 @@ class _BootGateState extends State<_BootGate>
   Future<void> onWindowClose() async {
     _shutdown();
     await windowManager.destroy();
+    exit(0);
   }
 
   /// Stops the engine (and with it the tunnel) exactly once.

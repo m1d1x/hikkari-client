@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
@@ -32,8 +34,10 @@ class _UpdateBannerState extends State<UpdateBanner> {
   Future<void> _restart(AppState state) async {
     setState(() => _restarting = true);
     if (await state.restartToUpdate()) {
-      await windowManager.close();
-      return;
+      try {
+        await windowManager.destroy();
+      } catch (_) {}
+      exit(0);
     }
     if (mounted) setState(() => _restarting = false);
   }
