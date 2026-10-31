@@ -21,10 +21,12 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     await windowManager.ensureInitialized();
-    const opts = WindowOptions(
+    final opts = WindowOptions(
       titleBarStyle: TitleBarStyle.hidden,
-      windowButtonVisibility: false,
-      backgroundColor: Color(0xFF0E0E10),
+      // macOS keeps its native traffic lights inside the hidden titlebar;
+      // Windows and Linux draw their own controls in WindowTitlebar.
+      windowButtonVisibility: Platform.isMacOS,
+      backgroundColor: const Color(0xFF0E0E10),
     );
     await windowManager.waitUntilReadyToShow(opts, () async {
       await windowManager.show();

@@ -1,11 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../theme/tokens.dart';
 
-/// Custom Windows titlebar — replaces the native frame so the controls
-/// match the rest of the UI instead of the OS default. 32px tall, drag
-/// area on the left with logo + label, three buttons on the right.
+/// Custom titlebar over the hidden native frame. 32px tall drag area with
+/// logo + label. On Windows and Linux it draws its own three buttons on the
+/// right; on macOS the native traffic lights stay on the left, so the label
+/// is centered and nothing is drawn under them.
 class WindowTitlebar extends StatefulWidget {
   const WindowTitlebar({super.key});
 
@@ -42,6 +45,7 @@ class _WindowTitlebarState extends State<WindowTitlebar> with WindowListener {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final mac = Platform.isMacOS;
     return Container(
       height: WindowTitlebar.height,
       color: t.bg,
@@ -61,6 +65,9 @@ class _WindowTitlebarState extends State<WindowTitlebar> with WindowListener {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
+                  mainAxisAlignment: mac
+                      ? MainAxisAlignment.center
+                      : MainAxisAlignment.start,
                   children: [
                     Container(
                       width: 12,
@@ -72,7 +79,7 @@ class _WindowTitlebarState extends State<WindowTitlebar> with WindowListener {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      'nekkobox',
+                      'hikkari',
                       style: TextStyle(
                         color: t.textMuted,
                         fontSize: 11,
@@ -85,25 +92,27 @@ class _WindowTitlebarState extends State<WindowTitlebar> with WindowListener {
               ),
             ),
           ),
-          _WinButton(
-            icon: _WinIcon.minimize,
-            onTap: () => windowManager.minimize(),
-          ),
-          _WinButton(
-            icon: _maximized ? _WinIcon.restore : _WinIcon.maximize,
-            onTap: () async {
-              if (await windowManager.isMaximized()) {
-                await windowManager.unmaximize();
-              } else {
-                await windowManager.maximize();
-              }
-            },
-          ),
-          _WinButton(
-            icon: _WinIcon.close,
-            isClose: true,
-            onTap: () => windowManager.close(),
-          ),
+          if (!mac) ...[
+            _WinButton(
+              icon: _WinIcon.minimize,
+              onTap: () => windowManager.minimize(),
+            ),
+            _WinButton(
+              icon: _maximized ? _WinIcon.restore : _WinIcon.maximize,
+              onTap: () async {
+                if (await windowManager.isMaximized()) {
+                  await windowManager.unmaximize();
+                } else {
+                  await windowManager.maximize();
+                }
+              },
+            ),
+            _WinButton(
+              icon: _WinIcon.close,
+              isClose: true,
+              onTap: () => windowManager.close(),
+            ),
+          ],
         ],
       ),
     );
