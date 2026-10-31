@@ -289,15 +289,19 @@ class AppState extends ChangeNotifier {
       (_) => refreshPresetState(),
     );
     if (_disposed) return;
-    if (!kEngineDryRun) {
-      // Every launch is a reason to look: the service throttles repeats.
-      unawaited(
-        _core.checkUpdate().catchError((Object e) {
-          _elog('checkUpdate failed: $e');
-        }),
-      );
-      unawaited(_refreshUpdate());
-    }
+    if (!kEngineDryRun) _checkForUpdate();
+  }
+
+  /// Launch and every return to the window are reasons to look at the
+  /// channel; the service ignores a request within 5 minutes of its last
+  /// check, so this costs nothing when repeated.
+  void _checkForUpdate() {
+    unawaited(
+      _core.checkUpdate().catchError((Object e) {
+        _elog('checkUpdate failed: $e');
+      }),
+    );
+    unawaited(_refreshUpdate());
   }
 
   Future<void> _refreshUpdate() async {
@@ -347,6 +351,7 @@ class AppState extends ChangeNotifier {
   /// Refresh silently after focus/resume; no sync errors enter lastError.
   Future<void> onAppResumed() async {
     if (_disposed || kEngineDryRun) return;
+    _checkForUpdate();
     try {
       await _core.subscriptionWake();
     } catch (e) {
