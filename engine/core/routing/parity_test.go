@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"os"
@@ -62,6 +63,7 @@ func TestRuleParityFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	want = bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))
 	if string(got) != string(want) {
 		t.Fatalf("%s is stale: the normalizer changed. Regenerate it with -update-parity and copy it to hikkari-control internal/presets/testdata", path)
 	}

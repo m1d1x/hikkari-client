@@ -3,6 +3,7 @@
 package api
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -15,7 +16,8 @@ import (
 // "fork/exec …/Application Support/nekkobox/sing-box".
 func TestDefaultEngineDrivesTheCoreThroughTheService(t *testing.T) {
 	dir := t.TempDir()
-	log := logging.New(dir + "/test.log")
+	log := logging.New(filepath.Join(dir, "test.log"))
+	defer log.Close()
 	t.Cleanup(func() { _ = log.Close() })
 	backend, err := DefaultEngineFactory(dir, log)
 	if err != nil {
@@ -35,7 +37,9 @@ func TestDefaultEngineDrivesTheCoreThroughTheService(t *testing.T) {
 // and the installed app never got a tunnel.
 func TestXrayEngineDrivesTheCoreThroughTheService(t *testing.T) {
 	dir := t.TempDir()
-	backend, err := XrayEngineFactory(dir, logging.New(dir+"/test.log"))
+	log := logging.New(filepath.Join(dir, "test.log"))
+	defer log.Close()
+	backend, err := XrayEngineFactory(dir, log)
 	if err != nil {
 		t.Fatal(err)
 	}
