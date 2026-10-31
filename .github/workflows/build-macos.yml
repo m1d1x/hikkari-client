@@ -13,6 +13,8 @@ env:
   # docs/AUTOUPDATE-ROADMAP.md, Phase 6/7: a tag stamps the version, bakes the
   # update channel into hikkari-updater, signs Hikkari.app into stable/macos.
   RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  # docs/TELEMETRY.md §9: only releases send; branch builds keep it local.
+  HIKKARI_TELEMETRY_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/events' || '' }}
 
 jobs:
   build:

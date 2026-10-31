@@ -27,6 +27,10 @@ if command -v go >/dev/null 2>&1; then
   # Build one slice per architecture Xcode asked for, then lipo them together,
   # so a universal Release build gets a universal engine.
   SLICES=""
+  # Release builds name the telemetry endpoint (docs/TELEMETRY.md §9);
+  # without it the engine queues locally and sends nothing.
+  LDFLAGS=""
+  [ -n "${HIKKARI_TELEMETRY_URL:-}" ] && LDFLAGS="-X NekkoVPN/core/telemetry.EventsURL=$HIKKARI_TELEMETRY_URL"
   for ARCH in ${ARCHS:-$(uname -m)}; do
     case "$ARCH" in
       arm64)  GOARCH=arm64 ;;
@@ -38,7 +42,7 @@ if command -v go >/dev/null 2>&1; then
     ( cd "$ENGINE_DIR" && \
       CGO_ENABLED=1 GOOS=darwin GOARCH="$GOARCH" \
       CC="$(xcrun -f clang) -arch $ARCH -isysroot $(xcrun --sdk macosx --show-sdk-path) -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET:-10.15}" \
-      go build -buildmode=c-shared -o "$SLICE" ./cmd/nekkobox-ffi )
+      go build -buildmode=c-shared -ldflags "$LDFLAGS" -o "$SLICE" ./cmd/nekkobox-ffi )
     SLICES="$SLICES $SLICE"
   done
   [ -n "$SLICES" ] || { echo "error: no engine slice was built"; exit 1; }
