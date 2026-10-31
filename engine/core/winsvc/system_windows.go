@@ -20,6 +20,9 @@ import (
 
 const (
 	uninstallKey = `Software\Microsoft\Windows\CurrentVersion\Uninstall\hikkari`
+	// urlSchemeKey makes hikkari:// links (the landing's «открыть в hikkari»)
+	// start the launcher, for all users like the rest of the install.
+	urlSchemeKey = `Software\Classes\hikkari`
 	productName  = "hikkari"
 	shortcutName = "hikkari.lnk"
 )
@@ -117,6 +120,38 @@ func setDisplayVersion(version string) {
 
 func removeUninstallEntry() {
 	_ = registry.DeleteKey(registry.LOCAL_MACHINE, uninstallKey)
+}
+
+// registerURLScheme points hikkari:// at the launcher, which hands the link to
+// the GUI (app/windows/runner: one window, a second start forwards to it).
+// Idempotent: the service runs it at every start, so installs that predate
+// the scheme get it with their next update.
+func registerURLScheme(dest string) error {
+	launcher := filepath.Join(dest, "hikkari.exe")
+	keys := []struct{ path, name, value string }{
+		{urlSchemeKey, "", "URL:hikkari"},
+		{urlSchemeKey, "URL Protocol", ""},
+		{urlSchemeKey + `\DefaultIcon`, "", launcher + ",0"},
+		{urlSchemeKey + `\shell\open\command`, "", `"` + launcher + `" "%1"`},
+	}
+	for _, k := range keys {
+		key, _, err := registry.CreateKey(registry.LOCAL_MACHINE, k.path, registry.SET_VALUE)
+		if err != nil {
+			return fmt.Errorf("registering hikkari:// links: %w", err)
+		}
+		err = key.SetStringValue(k.name, k.value)
+		key.Close()
+		if err != nil {
+			return fmt.Errorf("registering hikkari:// links: %w", err)
+		}
+	}
+	return nil
+}
+
+func removeURLScheme() {
+	for _, sub := range []string{`\shell\open\command`, `\shell\open`, `\shell`, `\DefaultIcon`, ""} {
+		_ = registry.DeleteKey(registry.LOCAL_MACHINE, urlSchemeKey+sub)
+	}
 }
 
 // stopProcessesUnder terminates every process whose executable lives under

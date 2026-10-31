@@ -47,6 +47,12 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 	if err != nil {
 		return false, 1
 	}
+	// Installs that predate hikkari:// links get them with the update that
+	// brings this service. Only the installed service does this, never a
+	// console run of a dev build.
+	if err := registerURLScheme(h.root); err != nil {
+		srv.Log().Logf("winsvc: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ctx) }()

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../core/models.dart';
 import '../state/app_state.dart';
@@ -439,6 +440,11 @@ class _SubscriptionCard extends StatelessWidget {
         ? 'меньше дня'
         : _daysLabel(daysLeft);
     final usedBytes = info.uploadBytes + info.downloadBytes;
+    final renewUrl = info.renewUrl;
+    // Ending soon, ended, or out of traffic: the renewal is what to do next.
+    final renewDue =
+        (daysLeft != null && daysLeft <= 7) ||
+        (info.totalBytes > 0 && usedBytes >= info.totalBytes);
     final trafficLabel = info.totalBytes > 0
         ? '${_formatGigabytes((info.totalBytes - usedBytes).clamp(0, info.totalBytes))} ГБ осталось'
         : usedBytes > 0
@@ -495,6 +501,10 @@ class _SubscriptionCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                  if (renewUrl != null) ...[
+                    const SizedBox(width: 12),
+                    _RenewButton(url: renewUrl, due: renewDue),
+                  ],
                 ],
               ),
             ),
@@ -513,6 +523,48 @@ class _SubscriptionCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Opens the landing's checkout for this subscription's next period. The
+/// token rides in the URL's fragment, which the browser never sends.
+class _RenewButton extends StatefulWidget {
+  final Uri url;
+
+  /// Ending, ended or spent: drawn in the accent colour.
+  final bool due;
+
+  const _RenewButton({required this.url, required this.due});
+
+  @override
+  State<_RenewButton> createState() => _RenewButtonState();
+}
+
+class _RenewButtonState extends State<_RenewButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final color = widget.due || _hover ? t.primary : t.textMuted;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () =>
+            launchUrl(widget.url, mode: LaunchMode.externalApplication),
+        child: Text(
+          'продлить',
+          style: TextStyle(
+            color: color,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );

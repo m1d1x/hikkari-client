@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "flutter_window.h"
+#include "links.h"
 #include "utils.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
@@ -21,6 +22,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
+  const std::string link = LinkArgument(command_line_arguments);
+
+  // One window per session (links.h): a second start hands its link to the
+  // open window and leaves. The handle stays open for the process's life.
+  ::CreateMutexW(nullptr, FALSE, kInstanceMutex);
+  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+    ForwardToRunningInstance(link);
+    ::CoUninitialize();
+    return EXIT_SUCCESS;
+  }
 
   // Enable Impeller — Flutter's modern renderer. The default Skia/OpenGL
   // backend on Windows loses its EGL context on display sleep/wake and
@@ -32,12 +43,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
   FlutterWindow window(project);
+  if (!link.empty()) window.QueueLink(link);
   Win32Window::Point origin(10, 10);
   // Portrait phone-sized window (440x780). The layout below is designed
   // around this width; opening
   // wider just creates empty side space.
   Win32Window::Size size(440, 780);
-  if (!window.Create(L"hikkari", origin, size)) {
+  if (!window.Create(kWindowTitle, origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

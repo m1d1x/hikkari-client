@@ -4,6 +4,9 @@
 // that never changes between versions, and never at app\nekkobox.exe.
 //
 //	hikkari.exe                                     launch the GUI
+//	hikkari.exe hikkari://…                         a link (the hikkari:// scheme, registered
+//	                                                by winsvc): handed to the GUI, which
+//	                                                forwards it to its window if one is open
 //	hikkari.exe --apply-update --wait-pid N [--reconnect]
 //	                                                the GUI's «Перезапустить»: wait for it
 //	                                                to exit, swap the update in, launch
@@ -23,6 +26,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -48,7 +52,16 @@ func main() {
 	defer log.Close()
 	log.Logf("launcher %s: %v", version, os.Args[1:])
 
-	apply, reconnect, waitPid := parseArgs(os.Args[1:])
+	apply, reconnect, waitPid, link := parseArgs(os.Args[1:])
+	gui := filepath.Join(root, "app", "nekkobox.exe")
+	if link != "" && guiRunning() {
+		// The open window takes the link; nothing about the installation
+		// may change under it, so no recover and no trial bookkeeping.
+		if _, err := launch(gui, link); err != nil {
+			log.Logf("launcher: handing a link to %s: %v", gui, err)
+		}
+		return
+	}
 	if apply {
 		if waitPid > 0 {
 			waitForExit(waitPid, 30*time.Second)
@@ -70,8 +83,7 @@ func main() {
 		log.Logf("launcher: recover: %s (%s -> %s)", rec.Recovery, rec.From, rec.To)
 	}
 
-	gui := filepath.Join(root, "app", "nekkobox.exe")
-	exited, err := launch(gui)
+	exited, err := launch(gui, link)
 	if err != nil {
 		log.Logf("launcher: starting %s: %v", gui, err)
 		return
@@ -81,8 +93,12 @@ func main() {
 	}
 }
 
-func parseArgs(args []string) (apply, reconnect bool, waitPid int) {
+func parseArgs(args []string) (apply, reconnect bool, waitPid int, link string) {
 	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "hikkari:") {
+			link = args[i]
+			continue
+		}
 		switch args[i] {
 		case "--apply-update":
 			apply = true
@@ -98,9 +114,29 @@ func parseArgs(args []string) (apply, reconnect bool, waitPid int) {
 	return
 }
 
-// launch starts the GUI and returns a channel that yields its exit code.
-func launch(gui string) (<-chan int, error) {
-	cmd := exec.Command(gui)
+// guiInstance is the mutex the GUI holds while its window is open
+// (app/windows/runner/main.cpp).
+const guiInstance = `Local\hikkari-gui`
+
+// guiRunning says whether a GUI window is open in this session.
+func guiRunning() bool {
+	name, _ := windows.UTF16PtrFromString(guiInstance)
+	h, err := windows.OpenMutex(windows.SYNCHRONIZE, false, name)
+	if err != nil {
+		return false
+	}
+	windows.CloseHandle(h)
+	return true
+}
+
+// launch starts the GUI, with link if there is one, and returns a channel
+// that yields its exit code.
+func launch(gui, link string) (<-chan int, error) {
+	var args []string
+	if link != "" {
+		args = append(args, link)
+	}
+	cmd := exec.Command(gui, args...)
 	cmd.Dir = filepath.Dir(gui)
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -123,7 +159,7 @@ func supervise(gui string, exited <-chan int) {
 				log.Logf("launcher: rollback: %v", err)
 				return
 			}
-			if _, err := launch(gui); err != nil {
+			if _, err := launch(gui, ""); err != nil {
 				log.Logf("launcher: starting the previous version: %v", err)
 			}
 			return

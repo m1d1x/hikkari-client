@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../core/deep_links.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import '../ui/copy_flash.dart';
@@ -18,16 +19,20 @@ import '../ui/nekko_dialog_field.dart';
 /// itself on success. Failures use the shared Nekko-style toast; diagnostic
 /// details remain available to copy without taking over the dialog.
 class ImportProfileDialog extends StatefulWidget {
-  const ImportProfileDialog({super.key});
+  /// A link handed over from outside (a `hikkari://import` deep link): shown
+  /// filled in and added only when the user confirms it.
+  final String? initialLink;
 
-  static Future<void> show(BuildContext context) {
+  const ImportProfileDialog({super.key, this.initialLink});
+
+  static Future<void> show(BuildContext context, {String? initialLink}) {
     final state = context.read<AppState>();
     return showDialog<void>(
       context: context,
       barrierColor: Colors.black54,
       builder: (_) => ChangeNotifierProvider<AppState>.value(
         value: state,
-        child: const ImportProfileDialog(),
+        child: ImportProfileDialog(initialLink: initialLink),
       ),
     );
   }
@@ -44,6 +49,16 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
   bool _submitting = false;
   int? _added;
   String _lastObservedText = '';
+
+  @override
+  void initState() {
+    super.initState();
+    final link = widget.initialLink;
+    if (link != null) {
+      _ctrl.text = link;
+      _lastObservedText = link;
+    }
+  }
 
   @override
   void dispose() {
@@ -85,13 +100,7 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
     }
   }
 
-  bool _isSupportedLink(String value) =>
-      value.startsWith('https://') ||
-      value.startsWith('http://') ||
-      value.startsWith('vless://') ||
-      value.startsWith('trojan://') ||
-      value.startsWith('ss://') ||
-      value.startsWith('hysteria2://');
+  bool _isSupportedLink(String value) => ImportLink.supports(value);
 
   Future<void> _submit() async {
     if (_submitting) return;

@@ -84,6 +84,9 @@ func Install(src string, importFrom []string) (string, error) {
 	if err := createShortcuts(launcher); err != nil {
 		return "", err
 	}
+	if err := registerURLScheme(dest); err != nil {
+		return "", err
+	}
 	return launcher, nil
 }
 
@@ -117,6 +120,7 @@ func Uninstall() error {
 	stopProcessesUnder(dest)
 	removeShortcuts()
 	removeUninstallEntry()
+	removeURLScheme()
 
 	self, _ := exeDir()
 	if !samePath(self, dest) {

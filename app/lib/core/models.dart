@@ -244,6 +244,16 @@ class SubscriptionInfo {
     webPageUrl: j['webPageUrl'] as String? ?? '',
     supportUrl: j['supportUrl'] as String? ?? '',
   );
+
+  /// Where a hikkari subscription is renewed: the landing's checkout, which
+  /// the hub names in Profile-Web-Page-Url. Null for any other provider's
+  /// subscription — paying for those is not the app's business.
+  Uri? get renewUrl {
+    final uri = Uri.tryParse(webPageUrl);
+    if (uri == null || uri.scheme != 'https') return null;
+    if (uri.host != 'hikkari.net' && uri.host != 'www.hikkari.net') return null;
+    return uri.path == '/pay' ? uri : null;
+  }
 }
 
 /// Split-routing mode. Mirrors Go's `configfile.RoutingMode`.
