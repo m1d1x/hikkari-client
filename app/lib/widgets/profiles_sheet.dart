@@ -7,7 +7,7 @@ import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
 import '../ui/nekko_text_field.dart';
-import 'import_profile_dialog.dart';
+import 'add_profile_dialog.dart';
 import 'profile_tile.dart';
 
 /// Bottom sheet with the full profile list. Opened from
@@ -201,7 +201,7 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
             borderRadius: BorderRadius.circular(t.radiusLg),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
-              onTap: () => ImportProfileDialog.show(context),
+              onTap: () => AddProfileDialog.show(context),
               mouseCursor: SystemMouseCursors.click,
               borderRadius: BorderRadius.circular(t.radiusLg),
               hoverColor: t.primary.withValues(alpha: 0.06),
@@ -297,7 +297,7 @@ class _ProfilesSheetState extends State<ProfilesSheet> {
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(t.radius),
         child: InkWell(
-          onTap: () => ImportProfileDialog.show(context),
+          onTap: () => AddProfileDialog.show(context),
           mouseCursor: SystemMouseCursors.click,
           borderRadius: BorderRadius.circular(t.radius),
           hoverColor: t.primary.withValues(alpha: 0.10),

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:simple_icons/simple_icons.dart';
 
 import '../core/routing_presets.dart';
 import '../state/app_state.dart';
@@ -166,12 +165,7 @@ class _ServiceRowState extends State<_ServiceRow>
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final (icon, brand) = switch (widget.service.icon) {
-      'steam' => (SimpleIcons.steam, const Color(0xFFC7D0D8)),
-      'discord' => (SimpleIcons.discord, const Color(0xFF5865F2)),
-      'telegram' => (SimpleIcons.telegram, const Color(0xFF26A5E4)),
-      _ => (Icons.apps, t.textMuted),
-    };
+    final (icon, brand) = resolveServiceIcon(widget.service.icon, t.textMuted);
     final color = widget.selected ? brand : t.textFaint;
     final rules = _rules(
       widget.service,

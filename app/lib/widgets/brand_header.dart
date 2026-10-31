@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../state/app_state.dart';
 import '../ui/nekko_segmented.dart';
@@ -8,6 +9,10 @@ import '../theme/tokens.dart';
 import 'route_section.dart';
 import 'service_presets.dart';
 import 'update_banner.dart';
+
+/// Fallback client version displayed in settings when [UpdateStatus.installed]
+/// is not populated yet.
+const String kFallbackClientVersion = '1.0.9';
 
 /// The top row: the settings action on the right and, when an update is
 /// ready, the [UpdateBanner] beside it. The old brand/IP header was
@@ -20,8 +25,16 @@ class BrandHeader extends StatelessWidget {
   /// instead of being centred.
   static const double _centredFrom = 420;
 
+  static final Uri donateUri = Uri.parse('https://hikkari.net');
+
   final VoidCallback onOpenLogs;
-  const BrandHeader({super.key, required this.onOpenLogs});
+  final Future<bool> Function(Uri uri)? onLaunchUrl;
+
+  const BrandHeader({
+    super.key,
+    required this.onOpenLogs,
+    this.onLaunchUrl,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -81,7 +94,10 @@ class BrandHeader extends StatelessWidget {
       ),
       builder: (_) => ChangeNotifierProvider<AppState>.value(
         value: state,
-        child: _SettingsSheet(onOpenLogs: onOpenLogs),
+        child: _SettingsSheet(
+          onOpenLogs: onOpenLogs,
+          onLaunchUrl: onLaunchUrl,
+        ),
       ),
     );
   }
@@ -89,7 +105,9 @@ class BrandHeader extends StatelessWidget {
 
 class _SettingsSheet extends StatefulWidget {
   final VoidCallback onOpenLogs;
-  const _SettingsSheet({required this.onOpenLogs});
+  final Future<bool> Function(Uri uri)? onLaunchUrl;
+
+  const _SettingsSheet({required this.onOpenLogs, this.onLaunchUrl});
 
   @override
   State<_SettingsSheet> createState() => _SettingsSheetState();
@@ -99,6 +117,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   String? _hint;
   int _hintVersion = 0;
   bool _logsHover = false;
+  bool _donateHover = false;
 
   // Seven quick taps on the title flip the tester mode; a pause starts over.
   static const _testerTaps = 7;
@@ -133,10 +152,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final h = context.watch<AppState>().health;
+    final state = context.watch<AppState>();
+    final h = state.health;
     final status = h?.status ?? 'off';
     final ip = h?.ip ?? '';
     final msg = h?.message ?? '';
+    final installed = state.updateStatus.installed.trim();
+    final rawVersion = installed.isEmpty ? kFallbackClientVersion : installed;
+    final versionLabel = rawVersion.startsWith('v')
+        ? 'hikkari $rawVersion'
+        : 'hikkari v$rawVersion';
     final statusLabel = switch (status) {
       'ok' => 'подключено',
       'connecting' => 'подключаюсь',
@@ -282,42 +307,130 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 cursor: SystemMouseCursors.click,
                 onEnter: (_) => setState(() => _logsHover = true),
                 onExit: (_) => setState(() => _logsHover = false),
-                child: AnimatedContainer(
-                  duration: AppDurations.fast,
-                  curve: AppCurves.fastInSlowOut,
-                  decoration: BoxDecoration(
-                    color: _logsHover ? t.surface2 : Colors.transparent,
-                    borderRadius: BorderRadius.circular(t.radius),
-                    border: Border.all(
-                      color: _logsHover
-                          ? t.primary.withValues(alpha: .55)
-                          : t.borderStrong,
-                    ),
-                  ),
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).maybePop();
-                      widget.onOpenLogs();
-                    },
-                    icon: const Icon(Icons.terminal, size: 16),
-                    label: const Text('логи'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: t.text,
-                      backgroundColor: Colors.transparent,
-                      side: BorderSide.none,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(t.radius),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    Navigator.of(context).maybePop();
+                    widget.onOpenLogs();
+                  },
+                  child: AnimatedContainer(
+                    duration: AppDurations.fast,
+                    curve: AppCurves.fastInSlowOut,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _logsHover ? t.surface2 : Colors.transparent,
+                      borderRadius: BorderRadius.circular(t.radius),
+                      border: Border.all(
+                        color: _logsHover
+                            ? t.primary.withValues(alpha: .55)
+                            : t.borderStrong,
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.terminal, size: 16, color: t.text),
+                        const SizedBox(width: 8),
+                        Text(
+                          'логи',
+                          style: TextStyle(
+                            color: t.text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        onEnter: (_) => setState(() => _donateHover = true),
+                        onExit: (_) => setState(() => _donateHover = false),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _openDonate,
+                          child: AnimatedContainer(
+                            duration: AppDurations.fast,
+                            curve: AppCurves.fastInSlowOut,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _donateHover
+                                  ? t.primary.withValues(alpha: 0.12)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _donateHover
+                                      ? Icons.favorite_rounded
+                                      : Icons.favorite_border_rounded,
+                                  size: 14,
+                                  color: t.primary,
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    'поддержать проект',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: _donateHover
+                                          ? t.text
+                                          : t.textMuted,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    versionLabel,
+                    style: TextStyle(
+                      color: t.textFaint,
+                      fontFamily: t.monoFamily,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Future<void> _openDonate() async {
+    final launcher = widget.onLaunchUrl;
+    if (launcher != null) {
+      await launcher(BrandHeader.donateUri);
+    } else {
+      await launchUrl(
+        BrandHeader.donateUri,
+        mode: LaunchMode.externalApplication,
+      );
+    }
   }
 
   void _setHint(String? hint) {

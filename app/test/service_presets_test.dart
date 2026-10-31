@@ -785,6 +785,31 @@ void main() {
       expect(core.calls, 3);
     },
   );
+
+  test('resolveServiceIcon maps every catalog icon to a dedicated glyph', () {
+    const fallback = Color(0xFF010203);
+    for (final id in [
+      'ru',
+      'steam',
+      'discord',
+      'telegram',
+      'youtube',
+      'openai',
+      'claude',
+      'gemini',
+      'instagram',
+      'x',
+      'spotify',
+      'twitch',
+      'notion',
+      'figma',
+      'github',
+    ]) {
+      final (icon, color) = resolveServiceIcon(id, fallback);
+      expect(icon, isNot(Icons.apps), reason: 'icon $id fell back to generic');
+      expect(color, isNot(fallback), reason: 'icon $id used fallback color');
+    }
+  });
 }
 
 class DiscoveryCore extends NekkoboxCore {

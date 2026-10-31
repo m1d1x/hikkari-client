@@ -41,9 +41,13 @@ final class ImportLink extends DeepLink {
     'trojan://',
     'ss://',
     'hysteria2://',
+    'vpn://',
   ];
 
-  static bool supports(String link) => schemes.any(link.startsWith);
+  static bool supports(String link) {
+    final lower = link.trim().toLowerCase();
+    return schemes.any(lower.startsWith);
+  }
 }
 
 class DeepLinks {

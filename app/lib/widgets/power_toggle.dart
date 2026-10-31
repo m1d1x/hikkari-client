@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,7 +6,8 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
-import 'import_profile_dialog.dart';
+import '../ui/nekko_error_card.dart';
+import 'add_profile_dialog.dart';
 import 'profile_flag_badge.dart';
 import 'profiles_sheet.dart';
 import 'service_ping_sheet.dart';
@@ -79,8 +81,11 @@ class _PowerToggleState extends State<PowerToggle> {
                 onTap: busy
                     ? null
                     : noProfiles
-                    ? () => ImportProfileDialog.show(context)
+                    ? () => AddProfileDialog.show(context)
                     : () => s.toggleVpn(),
+                onSecondaryTap: kDebugMode
+                    ? () => s.simulateEngineFailure()
+                    : null,
                 mouseCursor: busy
                     ? SystemMouseCursors.basic
                     : SystemMouseCursors.click,
@@ -140,7 +145,7 @@ class _PowerToggleState extends State<PowerToggle> {
             onTap: busy
                 ? null
                 : noProfiles
-                ? () => ImportProfileDialog.show(context)
+                ? () => AddProfileDialog.show(context)
                 : () => ProfilesSheet.show(context),
             onSecondaryTap: active == null
                 ? null
@@ -250,17 +255,55 @@ class _PowerToggleState extends State<PowerToggle> {
         ),
 
         if (err != null) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: SelectableText(
-              err,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: t.bad,
-                fontFamily: t.monoFamily,
-                fontSize: 11,
-                height: 1.4,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: NekkoErrorCard(
+                title: 'Не удалось подключиться',
+                summary: NekkoErrorCard.summarize(err),
+                details: err,
+                maxLines: 2,
+                tokens: t,
+              ),
+            ),
+          ),
+        ] else if (kDebugMode) ...[
+          const SizedBox(height: 10),
+          Center(
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => s.simulateEngineFailure(),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: t.bad.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: t.bad.withValues(alpha: 0.22)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.bolt_rounded, size: 13, color: t.bad),
+                      const SizedBox(width: 4),
+                      Text(
+                        'сэмулировать сбой запуска VPN',
+                        style: TextStyle(
+                          color: t.bad,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: t.monoFamily,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
           ),

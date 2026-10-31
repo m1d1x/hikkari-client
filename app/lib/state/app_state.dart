@@ -108,6 +108,7 @@ class AppState extends ChangeNotifier {
 
   final String? _baseDir;
   final bool _routingPreview;
+  final bool _dryRun;
   String _engineId;
   bool _switchingEngine = false;
   String get engineId => _engineId;
@@ -118,7 +119,8 @@ class AppState extends ChangeNotifier {
     this._baseDir,
     this._routingPreview = false,
     this._engineId = 'sing-box',
-  });
+    bool? dryRun,
+  }) : _dryRun = dryRun ?? kEngineDryRun;
 
   Future<void> switchEngine(String id) async {
     if (_switchingEngine || id == _engineId || _baseDir == null) return;
@@ -207,6 +209,23 @@ class AppState extends ChangeNotifier {
   bool get autoMode => _autoMode;
   String? get lastError => _lastError;
   bool get isRunning => _health?.running ?? false;
+
+  /// Explicitly clears the last operation error.
+  void clearError() {
+    if (_lastError == null) return;
+    _lastError = null;
+    notifyListeners();
+  }
+
+  /// Simulates a fatal engine crash on VPN start for diagnostic UI testing.
+  void simulateEngineFailure([String? message]) {
+    _lastError = message ??
+        'FATAL[0000] start engine: configure tun interface: operation not permitted\n'
+        '2026-11-01T02:50:12Z [singbox/inbound] tun: open utun4: permission denied\n'
+        '[engine.stderr] sing-box core died unexpectedly with exit code 1';
+    _health = _dryHealthOff;
+    notifyListeners();
+  }
   // True for ~10s after a VPN start / profile switch. During this window
   // uptime cards should show "checking" rather than "down" for probes that
   // fail simply because the tunnel hasn't finished coming up yet.
@@ -271,7 +290,7 @@ class AppState extends ChangeNotifier {
       _routingEpoch++;
       _routingSequence = -1;
       await refreshRoutingState();
-      if (kEngineDryRun) {
+      if (_dryRun) {
         _elog('start: dry-run, seeding fake profiles/health');
         _profiles = _dryProfiles;
         _health = _dryHealth;
@@ -295,7 +314,7 @@ class AppState extends ChangeNotifier {
       (_) => refreshPresetState(),
     );
     if (_disposed) return;
-    if (!kEngineDryRun) _checkForUpdate();
+    if (!_dryRun) _checkForUpdate();
   }
 
   /// Launch and every return to the window are reasons to look at the
@@ -331,7 +350,7 @@ class AppState extends ChangeNotifier {
   /// in dry-run — the restart was only played out: the banner goes away and
   /// comes back a few seconds later, so it can be looked at again.
   Future<bool> restartToUpdate() async {
-    if (kEngineDryRun) {
+    if (_dryRun) {
       _elog('restartToUpdate: dry-run, simulating the swap');
       await Future<void>.delayed(const Duration(milliseconds: 1500));
       _update = UpdateStatus(state: 'idle', installed: _dryUpdate.version);
@@ -356,7 +375,7 @@ class AppState extends ChangeNotifier {
 
   /// Refresh silently after focus/resume; no sync errors enter lastError.
   Future<void> onAppResumed() async {
-    if (_disposed || kEngineDryRun) return;
+    if (_disposed || _dryRun) return;
     _checkForUpdate();
     try {
       await _core.subscriptionWake();
@@ -449,7 +468,7 @@ class AppState extends ChangeNotifier {
   /// show a spinner where the flag will land. Skipped entirely in dry-run.
   /// Degrades to leaving the previous map in place on failure.
   Future<void> _refreshProfileCountries() async {
-    if (kEngineDryRun || _disposed) return;
+    if (_dryRun || _disposed) return;
     if (_resolvingCountries) {
       _countryRefreshPending = true;
       return;
@@ -632,7 +651,7 @@ class AppState extends ChangeNotifier {
   // ----- mutations -----
 
   Future<void> toggleVpn() async {
-    if (kEngineDryRun) {
+    if (_dryRun) {
       await _withBusy(() async {
         if (isRunning) {
           _elog('toggleVpn: stop (simulated)');
@@ -706,7 +725,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> switchProfile(String name) async {
-    if (kEngineDryRun) {
+    if (_dryRun) {
       _elog('switchProfile: $name (simulated)');
       _connectedSince = DateTime.now();
       await _withBusy(() {
@@ -746,7 +765,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> renameProfile(String name, String label) async {
-    if (kEngineDryRun) {
+    if (_dryRun) {
       _elog('renameProfile: $name -> $label (simulated)');
       await _withBusy(() {
         _dryProfiles = [
@@ -772,7 +791,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> deleteProfile(String name) async {
-    if (kEngineDryRun) {
+    if (_dryRun) {
       _elog('deleteProfile: $name (simulated)');
       await _withBusy(() {
         _dryProfiles = _dryProfiles.where((p) => p.name != name).toList();
@@ -794,7 +813,7 @@ class AppState extends ChangeNotifier {
   /// Toggles auto-fastest mode. The engine reload (when running) means
   /// there's a 1-2s pause; AppState's _withBusy lock hides the spinner.
   Future<void> setAutoMode(bool on) async {
-    if (kEngineDryRun) {
+    if (_dryRun) {
       _elog('setAutoMode: $on (simulated)');
       await _withBusy(() async {
         await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -813,7 +832,7 @@ class AppState extends ChangeNotifier {
   /// name on success, or null if the import failed (error is stored in
   /// [lastError]).
   Future<String?> addProfileFromUri(String uri) async {
-    if (kEngineDryRun) {
+    if (_dryRun) {
       _elog('addProfileFromUri: $uri (simulated)');
       String? name;
       await _withBusy(() {
@@ -846,7 +865,7 @@ class AppState extends ChangeNotifier {
   /// can't be serialised). Never throws — the share sheet degrades to a
   /// "ссылка недоступна" state on null.
   Future<String?> exportProfileUri(String name) async {
-    if (kEngineDryRun) {
+    if (_dryRun) {
       final p = _profiles.firstWhere(
         (p) => p.name == name,
         orElse: () => ProfileInfo(
@@ -944,12 +963,12 @@ class AppState extends ChangeNotifier {
   /// Refreshes uptime history. Cheap-ish (one FFI call + dart-side copies);
   /// call it from the widget that displays uptime, on its own timer.
   Future<void> refreshUptime() async {
-    if (kEngineDryRun) return;
+    if (_dryRun) return;
     await _safeReload(() async => _uptime = await _core.uptimeHistory());
   }
 
   Future<String> logTail() async {
-    if (kEngineDryRun) return '[engine/dry] no log — engine calls are disabled';
+    if (_dryRun) return '[engine/dry] no log — engine calls are disabled';
     try {
       return await _core.logTail();
     } on NekkoboxError catch (e) {
@@ -971,14 +990,18 @@ class AppState extends ChangeNotifier {
     try {
       await refreshRoutingState();
       if (_disposed) return;
-      if (kEngineDryRun) {
+      if (_dryRun) {
         _growDryUptime();
         return;
       }
       await _reloadSyncedProfiles();
       if (_disposed) return;
+      final wasRunning = isRunning;
       await _safeReload(() async {
         _health = await _core.health();
+        if (!wasRunning && isRunning) {
+          _lastError = null;
+        }
         _uptime = await _core.uptimeHistory();
         _serviceUptime = await _core.serviceUptimeHistory();
         _cleanliness = await _core.serverCleanliness();
@@ -1008,7 +1031,6 @@ class AppState extends ChangeNotifier {
   Future<void> _safeReload(FutureOr<void> Function() body) async {
     try {
       await Future.sync(body);
-      _lastError = null;
     } on NekkoboxError catch (e) {
       _lastError = e.message;
     } catch (e) {

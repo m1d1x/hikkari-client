@@ -15,6 +15,12 @@ void main() {
         DeepLink.parse('hikkari://import?url=vless%3A%2F%2Fid%40host%3A443'),
         isA<ImportLink>(),
       );
+      expect(
+        DeepLink.parse('hikkari://import?url=vpn%3A%2F%2Fabc123'),
+        isA<ImportLink>(),
+      );
+      expect(ImportLink.supports('vpn://abc123'), isTrue);
+      expect(ImportLink.supports('VPN://ABC123'), isTrue);
     });
 
     test('anything else is ignored', () {

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../theme/tokens.dart';
@@ -69,13 +70,10 @@ class _WindowTitlebarState extends State<WindowTitlebar> with WindowListener {
                       ? MainAxisAlignment.center
                       : MainAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        color: t.primary,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
+                    SvgPicture.asset(
+                      'assets/logo.svg',
+                      width: 14,
+                      height: 14,
                     ),
                     const SizedBox(width: 8),
                     Text(

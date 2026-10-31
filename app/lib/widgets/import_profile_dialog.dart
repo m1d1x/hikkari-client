@@ -9,10 +9,10 @@ import 'package:provider/provider.dart';
 import '../core/deep_links.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
-import '../ui/copy_flash.dart';
 import '../ui/nekko_dialog.dart';
 import '../ui/nekko_dialog_action.dart';
 import '../ui/nekko_dialog_field.dart';
+import '../ui/nekko_error_card.dart';
 
 /// Imports server links or HTTP(S) subscriptions containing multiple servers.
 /// Delegates to AppState.addProfileFromUri and closes
@@ -133,7 +133,7 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
       setState(() {
         _submitting = false;
         _error = state.lastError ?? 'не удалось добавить';
-        _errorSummary = _importErrorSummary(_error!);
+        _errorSummary = NekkoErrorCard.summarize(_error!);
         _errorTitle = 'Не удалось импортировать профиль';
       });
     }
@@ -151,7 +151,7 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
           _input(t),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            _ImportError(
+            NekkoErrorCard(
               summary: _errorSummary ?? _error!,
               title: _errorTitle,
               onCopy: _copyError,
@@ -257,206 +257,6 @@ const _syntheticImportError = '''Источник: https://sub.example.net/profi
 Этап: загрузка подписки
 Подробности: сервер подписки временно недоступен. Повторите попытку позже.
 Код: subscription_fetch_failed''';
-
-String _importErrorSummary(String details) {
-  final httpStatus = RegExp(
-    r'HTTP\s+(\d{3})',
-    caseSensitive: false,
-  ).firstMatch(details)?.group(1);
-  if (httpStatus != null) {
-    return 'Сервер подписки вернул HTTP $httpStatus. Проверьте ссылку или попробуйте позже.';
-  }
-
-  final firstLine = details
-      .replaceFirst(RegExp(r'^(?:NekkoboxError|Exception):\s*'), '')
-      .trim()
-      .split('\n')
-      .first
-      .trim();
-  if (firstLine.length <= 120) return firstLine;
-  return '${firstLine.substring(0, 117).trimRight()}…';
-}
-
-class _ImportError extends StatefulWidget {
-  const _ImportError({
-    required this.summary,
-    required this.title,
-    required this.onCopy,
-    required this.tokens,
-  });
-
-  final String summary;
-  final String title;
-  final Future<void> Function() onCopy;
-  final NekkoTokens tokens;
-
-  @override
-  State<_ImportError> createState() => _ImportErrorState();
-}
-
-class _ImportErrorState extends State<_ImportError> {
-  final _flash = GlobalKey<CopyFlashState>();
-  bool _hovered = false;
-  bool _flashing = false;
-
-  Future<void> _copy() async {
-    // One confirmation at a time: taps while it plays are ignored instead of
-    // restarting it mid-flight.
-    if (_flashing) return;
-    setState(() => _flashing = true);
-    await widget.onCopy();
-    final flash = _flash.currentState;
-    if (!mounted) return;
-    if (flash == null) {
-      setState(() => _flashing = false);
-      return;
-    }
-    // The hover hint steps aside for the whole confirmation, so «скопировать»
-    // never shares the card with «скопировано».
-    flash.animation.removeStatusListener(_onFlashStatus);
-    flash.animation.addStatusListener(_onFlashStatus);
-    flash.flash();
-  }
-
-  void _onFlashStatus(AnimationStatus status) {
-    if (status == AnimationStatus.dismissed && mounted) {
-      setState(() => _flashing = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = widget.tokens;
-    // The card stays dark through the whole confirmation, not just on hover,
-    // so the error text never shows through «скопировано».
-    final dark = _hovered || _flashing;
-    final hint = _hovered && !_flashing;
-    final surface = t.bad.withValues(alpha: 0.07);
-    return Semantics(
-      container: true,
-      button: true,
-      label: 'скопировать текст ошибки',
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _copy,
-          // The whole card, background included, recedes under «скопировано».
-          child: CopyFlash(
-            key: _flash,
-            color: t.bad,
-            iconSize: 20,
-            fontSize: 15,
-            bodyOpacity: 1,
-            child: AnimatedContainer(
-              duration: AppDurations.normal,
-              curve: AppCurves.fastInSlowOut,
-              decoration: BoxDecoration(
-                color: dark
-                    ? Color.alphaBlend(
-                        Colors.black.withValues(alpha: 0.6),
-                        surface,
-                      )
-                    : surface,
-                border: Border.all(color: t.bad.withValues(alpha: 0.24)),
-                borderRadius: BorderRadius.circular(t.radius),
-              ),
-              // The hint centres on the whole card, not the padded content box,
-              // so it sits at equal distance from the top and bottom edges.
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-                    child: AnimatedOpacity(
-                      opacity: dark ? 0.08 : 1,
-                      duration: AppDurations.normal,
-                      curve: AppCurves.fastInSlowOut,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Icon(
-                            Icons.error_outline_rounded,
-                            color: t.bad,
-                            size: 20,
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            widget.title.toLowerCase(),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: t.bad,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            widget.summary.toLowerCase(),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: t.textMuted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              height: 1.4,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: ExcludeSemantics(
-                        child: AnimatedOpacity(
-                          opacity: hint ? 1 : 0,
-                          duration: _flashing
-                              ? AppDurations.hover
-                              : AppDurations.normal,
-                          curve: AppCurves.fastInSlowOut,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.copy_rounded, size: 18, color: t.bad),
-                              const SizedBox(width: 7),
-                              // Lowercase sits low in its em box; lift it so
-                              // its x-height centres on the icon.
-                              Transform.translate(
-                                offset: const Offset(0, -1.5),
-                                child: Text(
-                                  'скопировать',
-                                  textHeightBehavior: const TextHeightBehavior(
-                                    applyHeightToFirstAscent: false,
-                                    applyHeightToLastDescent: false,
-                                    leadingDistribution:
-                                        TextLeadingDistribution.even,
-                                  ),
-                                  style: TextStyle(
-                                    color: t.bad,
-                                    height: 1,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // Stamp and staggered entrance ported from Nekko’s seed phrase outcome.
 class _ImportOutcome extends StatefulWidget {

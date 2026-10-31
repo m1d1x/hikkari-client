@@ -1,4 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:simple_icons/simple_icons.dart';
+
+/// Resolves a catalog service `icon` identifier to its brand glyph and accent
+/// color, falling back to [Icons.apps] and [fallbackColor] for unknown IDs.
+(IconData, Color) resolveServiceIcon(String iconId, Color fallbackColor) =>
+    switch (iconId) {
+      'ru' || 'russia' => (Icons.language, const Color(0xFF4C8BF5)),
+      'banks' || 'bank' => (
+        Icons.account_balance_outlined,
+        const Color(0xFF21A038),
+      ),
+      'gosuslugi' => (Icons.verified_user_outlined, const Color(0xFF0D4CD3)),
+      'marketplaces' || 'shop' => (
+        Icons.shopping_bag_outlined,
+        const Color(0xFF005BFF),
+      ),
+      'yandex' => (SimpleIcons.yandexcloud, const Color(0xFFFC3F1D)),
+      'vk' => (SimpleIcons.vk, const Color(0xFF0077FF)),
+      'steam' => (SimpleIcons.steam, const Color(0xFFC7D0D8)),
+      'discord' => (SimpleIcons.discord, const Color(0xFF5865F2)),
+      'telegram' => (SimpleIcons.telegram, const Color(0xFF26A5E4)),
+      'youtube' => (SimpleIcons.youtube, const Color(0xFFFF0033)),
+      'openai' || 'chatgpt' => (Icons.auto_awesome, const Color(0xFF7FD9B0)),
+      'claude' || 'anthropic' => (SimpleIcons.claude, const Color(0xFFD97757)),
+      'gemini' => (SimpleIcons.googlegemini, const Color(0xFF8E75B2)),
+      'instagram' || 'meta' => (
+        SimpleIcons.instagram,
+        const Color(0xFFE4405F),
+      ),
+      'x' || 'twitter' => (SimpleIcons.x, const Color(0xFFE7E9EA)),
+      'spotify' => (SimpleIcons.spotify, const Color(0xFF1ED760)),
+      'twitch' => (SimpleIcons.twitch, const Color(0xFF9146FF)),
+      'notion' => (SimpleIcons.notion, const Color(0xFFE6E6E6)),
+      'figma' => (SimpleIcons.figma, const Color(0xFFF24E1E)),
+      'github' || 'copilot' || 'github-copilot' => (
+        SimpleIcons.githubcopilot,
+        const Color(0xFFCDD9E5),
+      ),
+      'google' => (SimpleIcons.google, const Color(0xFF4285F4)),
+      _ => (Icons.apps, fallbackColor),
+    };
 
 /// Unified "service icon" badge: a rounded, brand-tinted container with the
 /// icon centered inside. Used by [ServicePingSheet] so every row — built-in
