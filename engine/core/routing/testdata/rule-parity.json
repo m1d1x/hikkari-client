@@ -1,0 +1,254 @@
+[
+	{
+		"category": "domains",
+		"value": "example.com",
+		"normal": "example.com",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "Example.COM",
+		"normal": "example.com",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "https://www.example.com/path?q=1",
+		"normal": "www.example.com",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "*.example.com",
+		"normal": "example.com",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": ".example.com",
+		"normal": "example.com",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "example.com.",
+		"normal": "example.com",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "example.com:443",
+		"normal": "example.com",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "localhost",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "domains",
+		"value": "1.2.3.4",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "domains",
+		"value": "exa mple.com",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "domains",
+		"value": "-bad.com",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "domains",
+		"value": "xn--80ak6aa92e.com",
+		"normal": "xn--80ak6aa92e.com",
+		"ok": true
+	},
+	{
+		"category": "domains",
+		"value": "a..b.com",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "domains",
+		"value": "user@example.com",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "domains",
+		"value": "",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "ips",
+		"value": "1.2.3.4",
+		"normal": "1.2.3.4/32",
+		"ok": true
+	},
+	{
+		"category": "ips",
+		"value": "1.2.3.4/32",
+		"normal": "1.2.3.4/32",
+		"ok": true
+	},
+	{
+		"category": "ips",
+		"value": "10.1.2.3/8",
+		"normal": "10.0.0.0/8",
+		"ok": true
+	},
+	{
+		"category": "ips",
+		"value": "10.0.0.0/8",
+		"normal": "10.0.0.0/8",
+		"ok": true
+	},
+	{
+		"category": "ips",
+		"value": "2001:db8::1",
+		"normal": "2001:db8::1/128",
+		"ok": true
+	},
+	{
+		"category": "ips",
+		"value": "2001:db8::/32",
+		"normal": "2001:db8::/32",
+		"ok": true
+	},
+	{
+		"category": "ips",
+		"value": "[2001:db8::1]",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "ips",
+		"value": "https://example.com",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "ips",
+		"value": "example.com",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "ips",
+		"value": "300.1.1.1",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "ips",
+		"value": "1.2.3.4/33",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "processes",
+		"value": "steam.exe",
+		"normal": "steam.exe",
+		"ok": true
+	},
+	{
+		"category": "processes",
+		"value": "Steam.exe",
+		"normal": "Steam.exe",
+		"ok": true
+	},
+	{
+		"category": "processes",
+		"value": "C:\\Program Files\\Steam\\steam.exe",
+		"normal": "steam.exe",
+		"ok": true
+	},
+	{
+		"category": "processes",
+		"value": "/Applications/Discord.app/Contents/MacOS/Discord",
+		"normal": "Discord",
+		"ok": true
+	},
+	{
+		"category": "processes",
+		"value": "\"steam.exe\"",
+		"normal": "steam.exe",
+		"ok": true
+	},
+	{
+		"category": "processes",
+		"value": " steam.exe ",
+		"normal": "steam.exe",
+		"ok": true
+	},
+	{
+		"category": "processes",
+		"value": "*.exe",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "processes",
+		"value": "a|b",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "processes",
+		"value": "dir/",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "folders",
+		"value": "steamapps/common/",
+		"normal": "steamapps/common/",
+		"ok": true
+	},
+	{
+		"category": "folders",
+		"value": "C:\\Games\\steamapps\\common\\",
+		"normal": "Games/steamapps/common/",
+		"ok": true
+	},
+	{
+		"category": "folders",
+		"value": "/opt//games/",
+		"normal": "opt/games/",
+		"ok": true
+	},
+	{
+		"category": "folders",
+		"value": "steam",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "folders",
+		"value": "/",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "folders",
+		"value": "a/*/b",
+		"normal": "",
+		"ok": false
+	},
+	{
+		"category": "folders",
+		"value": "\"games/x\"",
+		"normal": "games/x",
+		"ok": true
+	}
+]
