@@ -2,7 +2,7 @@
 // hands off to HomeScreen. Everything else is composed from screens/ and
 // widgets/.
 
-import 'dart:io' show Directory, File, Platform;
+import 'dart:io' show Directory, File, Platform, exit;
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
