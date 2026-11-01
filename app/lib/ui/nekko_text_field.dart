@@ -32,6 +32,9 @@ class NekkoTextField extends StatelessWidget {
   /// Ведущая иконка (лупа поиска и т.п.). Меняет внутренние отступы под себя.
   final Widget? prefixIcon;
 
+  /// Ведомая иконка (кнопка очистки и т.п.).
+  final Widget? suffixIcon;
+
   const NekkoTextField({
     super.key,
     this.controller,
@@ -44,6 +47,7 @@ class NekkoTextField extends StatelessWidget {
     this.textInputAction,
     this.maxLines = 1,
     this.prefixIcon,
+    this.suffixIcon,
   });
 
   @override
@@ -98,6 +102,10 @@ class NekkoTextField extends StatelessWidget {
             prefixIcon: prefixIcon,
             prefixIconConstraints: prefixIcon != null
                 ? const BoxConstraints(minWidth: 40, minHeight: 40)
+                : null,
+            suffixIcon: suffixIcon,
+            suffixIconConstraints: suffixIcon != null
+                ? const BoxConstraints(minWidth: 36, minHeight: 40)
                 : null,
           ),
         ),

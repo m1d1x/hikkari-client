@@ -22,6 +22,9 @@ import 'package:nekkobox/theme/tokens.dart';
 import 'package:provider/provider.dart';
 
 class PresetCore extends NekkoboxCore {
+  final List<Map<String, dynamic>>? customServices;
+  PresetCore({this.customServices});
+
   bool sync = true;
   bool? selected;
   int listAppsCalls = 0;
@@ -55,7 +58,7 @@ class PresetCore extends NekkoboxCore {
         },
         'catalog': {
           'version': 2,
-          'services': [
+          'services': customServices ?? [
             {
               'id': 'steam',
               'name': 'Steam',
@@ -155,7 +158,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('steampowered.com\nsteamcommunity.com'), findsOneWidget);
-    expect(find.byType(EditableText), findsOneWidget); // only the manual input
+    expect(find.byType(EditableText), findsNWidgets(2)); // manual input + preset search
     expect(core.pending.isCompleted, isFalse);
     core.pending.complete([]);
     expect(
@@ -530,7 +533,10 @@ void main() {
       expect(height(), greaterThan(closed));
       await tester.tap(find.text('домены'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(EditableText), 'draft.example.com');
+      await tester.enterText(
+        find.byType(EditableText).first,
+        'draft.example.com',
+      );
       expect(height(), closeTo(opened, .01));
       await tester.tap(find.text('steam'), buttons: kSecondaryMouseButton);
       await tester.pumpAndSettle();
@@ -543,7 +549,10 @@ void main() {
       await tester.tap(find.text('маршрутизация'));
       await tester.pumpAndSettle();
       expect(
-        tester.widget<EditableText>(find.byType(EditableText)).controller.text,
+        tester
+            .widget<EditableText>(find.byType(EditableText).first)
+            .controller
+            .text,
         'draft.example.com',
       );
       await tester.tap(find.text('приложения'));
@@ -790,7 +799,39 @@ void main() {
     const fallback = Color(0xFF010203);
     for (final id in [
       'ru',
+      'yandex',
+      'yandex-music',
+      'yandex-taxi',
+      'yandex-maps',
+      'yandex-disk',
+      'yandex-market',
+      'vk',
+      'vk-video',
+      'vk-play',
+      'mailru',
+      'kinopoisk',
+      'ivi',
+      'okko',
+      'wink',
+      'streaming-ru',
+      'transport-ru',
+      'rutube',
+      'banks',
+      'gosuslugi',
+      'marketplaces',
+      'ozon',
+      'wildberries',
+      'avito',
+      'sber',
+      'tbank',
+      'vtb',
+      'alfa',
+      'ok',
+      'habr',
+      'kaspersky',
+      '2gis',
       'steam',
+      'faceit',
       'discord',
       'telegram',
       'youtube',
@@ -804,11 +845,85 @@ void main() {
       'notion',
       'figma',
       'github',
+      'google',
     ]) {
       final (icon, color) = resolveServiceIcon(id, fallback);
       expect(icon, isNot(Icons.apps), reason: 'icon $id fell back to generic');
       expect(color, isNot(fallback), reason: 'icon $id used fallback color');
     }
+  });
+
+  testWidgets('preset search filters services by name, id, domains and aliases', (
+    tester,
+  ) async {
+    final core = PresetCore(
+      customServices: [
+        {
+          'id': 'steam',
+          'name': 'Steam',
+          'icon': 'steam',
+          'domains': ['steampowered.com', 'steamcommunity.com'],
+          'ips': [],
+          'processes': {},
+          'defaultModes': ['bypass', 'proxy'],
+        },
+        {
+          'id': 'discord',
+          'name': 'Discord',
+          'icon': 'discord',
+          'domains': ['discord.gg', 'discord.com'],
+          'ips': [],
+          'processes': {},
+          'defaultModes': ['proxy'],
+        },
+        {
+          'id': 'banks',
+          'name': 'Банки РФ',
+          'icon': 'banks',
+          'domains': ['sberbank.ru', 'tinkoff.ru'],
+          'ips': [],
+          'processes': {},
+          'defaultModes': ['bypass'],
+        },
+      ],
+    );
+    final state = await showPresets(tester, core);
+    expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
+
+    final searchField = find.byKey(const ValueKey('preset_search_field'));
+    expect(searchField, findsOneWidget);
+
+    // Filter by name
+    await tester.enterText(searchField, 'steam');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
+    expect(find.byKey(const ValueKey('preset_action_discord')), findsNothing);
+
+    // Filter by Russian alias
+    await tester.enterText(searchField, 'дискорд');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('preset_action_discord')), findsOneWidget);
+    expect(find.byKey(const ValueKey('preset_action_steam')), findsNothing);
+
+    // Filter by domain inside rules
+    await tester.enterText(searchField, 'sberbank');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('preset_action_banks')), findsOneWidget);
+    expect(find.byKey(const ValueKey('preset_action_steam')), findsNothing);
+
+    // Nothing found
+    await tester.enterText(searchField, 'nonexistentxyz123');
+    await tester.pumpAndSettle();
+    expect(find.text('ничего не найдено'), findsOneWidget);
+
+    // Clear search
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
+    expect(find.byKey(const ValueKey('preset_action_discord')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
   });
 }
 

@@ -128,7 +128,7 @@ class _PowerToggleState extends State<PowerToggle> {
           ),
         ),
 
-        const SizedBox(height: 18),
+        SizedBox(height: err != null ? 8 : 18),
 
         // Profile block — one large tappable zone (vertically padded, easy to
         // hit with a thumb). [InkWell] supplies the pointer cursor and hover
@@ -223,7 +223,7 @@ class _PowerToggleState extends State<PowerToggle> {
 
                   // Info row — flag + server IP, grouped together and centred.
                   if (active != null && endpoint.isNotEmpty) ...[
-                    const SizedBox(height: 10),
+                    SizedBox(height: err != null ? 4 : 10),
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -256,7 +256,7 @@ class _PowerToggleState extends State<PowerToggle> {
         ),
 
         if (err != null) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: ConstrainedBox(

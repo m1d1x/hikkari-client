@@ -10,14 +10,88 @@ import 'package:simple_icons/simple_icons.dart';
         Icons.account_balance_outlined,
         const Color(0xFF21A038),
       ),
+      'sber' || 'sberbank' => (
+        Icons.account_balance_outlined,
+        const Color(0xFF21A038),
+      ),
+      'tbank' || 'tinkoff' => (
+        Icons.credit_card_outlined,
+        const Color(0xFFFFDD2D),
+      ),
+      'vtb' => (Icons.account_balance_outlined, const Color(0xFF0A2896)),
+      'alfa' || 'alfabank' => (
+        Icons.account_balance_outlined,
+        const Color(0xFFEF3124),
+      ),
       'gosuslugi' => (Icons.verified_user_outlined, const Color(0xFF0D4CD3)),
       'marketplaces' || 'shop' => (
         Icons.shopping_bag_outlined,
         const Color(0xFF005BFF),
       ),
+      'ozon' => (Icons.shopping_bag_outlined, const Color(0xFF005BFF)),
+      'wildberries' || 'wb' => (
+        Icons.shopping_bag_outlined,
+        const Color(0xFFCB11AB),
+      ),
+      'avito' => (Icons.storefront_outlined, const Color(0xFF96D000)),
       'yandex' => (SimpleIcons.yandexcloud, const Color(0xFFFC3F1D)),
+      'yandex-music' || 'yandex_music' || 'yandexmusic' => (
+        Icons.graphic_eq_rounded,
+        const Color(0xFFFFCC00),
+      ),
+      'yandex-taxi' ||
+      'yandex_taxi' ||
+      'yandextaxi' ||
+      'yandex-go' ||
+      'yandex_go' ||
+      'yandexgo' => (
+        Icons.local_taxi_rounded,
+        const Color(0xFFFFDD00),
+      ),
+      'yandex-maps' || 'yandex_maps' || 'yandexmaps' => (
+        Icons.map_rounded,
+        const Color(0xFF3388FF),
+      ),
+      'yandex-disk' || 'yandex_disk' || 'yandexdisk' => (
+        Icons.cloud_queue_rounded,
+        const Color(0xFF2A72F8),
+      ),
+      'yandex-market' || 'yandex_market' || 'yandexmarket' => (
+        Icons.shopping_bag_rounded,
+        const Color(0xFFFFD500),
+      ),
       'vk' => (SimpleIcons.vk, const Color(0xFF0077FF)),
+      'vk-video' || 'vkvideo' => (
+        Icons.video_collection_outlined,
+        const Color(0xFF0077FF),
+      ),
+      'vk-play' || 'vkplay' => (
+        Icons.sports_esports_outlined,
+        const Color(0xFF0077FF),
+      ),
+      'mailru' || 'mail' => (SimpleIcons.maildotru, const Color(0xFF005FF9)),
+      'ok' || 'odnoklassniki' => (
+        SimpleIcons.odnoklassniki,
+        const Color(0xFFEE8208),
+      ),
+      'kinopoisk' => (SimpleIcons.kinopoisk, const Color(0xFFFF6600)),
+      'ivi' => (Icons.smart_display_outlined, const Color(0xFFEA1A4B)),
+      'okko' => (Icons.smart_display_outlined, const Color(0xFF5D12D2)),
+      'wink' => (Icons.smart_display_outlined, const Color(0xFFFF5C00)),
+      'streaming-ru' || 'tv' => (
+        Icons.tv_outlined,
+        const Color(0xFFFF6600),
+      ),
+      'transport-ru' || 'rzd' => (
+        Icons.train_outlined,
+        const Color(0xFFE21A1A),
+      ),
+      'rutube' => (Icons.smart_display_outlined, const Color(0xFF00A8FF)),
+      'habr' => (SimpleIcons.habr, const Color(0xFF6593A6)),
+      'kaspersky' => (SimpleIcons.kaspersky, const Color(0xFF006D55)),
+      '2gis' || 'gis' => (Icons.map_outlined, const Color(0xFF83BA29)),
       'steam' => (SimpleIcons.steam, const Color(0xFFC7D0D8)),
+      'faceit' => (Icons.sports_esports_outlined, const Color(0xFFFF5500)),
       'discord' => (SimpleIcons.discord, const Color(0xFF5865F2)),
       'telegram' => (SimpleIcons.telegram, const Color(0xFF26A5E4)),
       'youtube' => (SimpleIcons.youtube, const Color(0xFFFF0033)),

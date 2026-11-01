@@ -5,12 +5,123 @@ import '../core/routing_presets.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import '../ui/nekko_switch.dart';
+import '../ui/nekko_text_field.dart';
 import 'service_icon.dart';
 
+const _serviceAliases = <String, List<String>>{
+  'steam': ['стим'],
+  'faceit': ['фейсит', 'фасик', 'faceit', 'кс', 'кс2', 'cs2', 'cs', 'кска', 'античит', 'ac'],
+  'discord': ['дискорд', 'дс'],
+  'telegram': ['телеграм', 'телега', 'тг'],
+  'youtube': ['ютуб', 'ютуп'],
+  'openai': ['чатгпт', 'опенаи', 'гпт', 'gpt', 'chatgpt'],
+  'claude': ['клод', 'антропик'],
+  'gemini': ['джемини', 'гемини'],
+  'instagram': ['инстаграм', 'инста'],
+  'x': ['твиттер', 'икс', 'твит'],
+  'spotify': ['спотифай', 'спотик'],
+  'twitch': ['твич'],
+  'notion': ['ноушен', 'нотион'],
+  'figma': ['фигма'],
+  'github': ['гитхаб', 'гит'],
+  'google': ['гугл'],
+  'sber': ['сбер', 'сбербанк', 'sber', 'сберонлайн'],
+  'tbank': ['тинькофф', 'тиньк', 'тбанк', 'т-банк', 'tinkoff', 'tbank'],
+  'vtb': ['втб', 'vtb', 'втб онлайн'],
+  'alfa': ['альфа', 'альфабанк', 'альфа-банк', 'alfa'],
+  'banks': ['банк', 'банки', 'газпромбанк', 'райффайзен', 'мир', 'юмани', 'точка'],
+  'gosuslugi': ['госуслуги', 'налог', 'почта', 'мосуслуги', 'мосру', 'emias'],
+  'transport-ru': [
+    'ржд',
+    'поезд',
+    'билеты',
+    'аэрофлот',
+    's7',
+    'победа',
+    'авиабилеты',
+    'самолет',
+  ],
+  'marketplaces': ['маркетплейсы', 'магазины', 'маркет'],
+  'ozon': ['озон', 'ozon'],
+  'wildberries': ['вайлдберриз', 'вб', 'wildberries', 'wb'],
+  'avito': ['авито', 'avito'],
+  'kinopoisk': ['кинопоиск', 'кино', 'сериалы'],
+  'ivi': ['иви', 'ivi', 'кино'],
+  'okko': ['окко', 'okko', 'кино'],
+  'wink': ['винк', 'wink', 'ростелеком'],
+  'streaming-ru': [
+    'кино',
+    'премьер',
+    'premier',
+    'старт',
+    'start',
+    'кион',
+    'kion',
+    'смотрим',
+  ],
+  'vk': ['вконтакте', 'вк', 'vk'],
+  'vk-video': ['вк видео', 'видео вк', 'vk video'],
+  'vk-play': ['вк плей', 'vk play', 'игры вк'],
+  'mailru': ['мейл', 'майл', 'мэйл', 'почта мейл', 'облако мейл', 'mail'],
+  'ok': ['одноклассники', 'ок', 'однокласники', 'ok'],
+  'rutube': ['рутуб', 'rutube'],
+  'yandex': ['яндекс', 'яша', 'почта', 'браузер'],
+  'yandex-music': [
+    'яндекс музыка',
+    'яндекс звук',
+    'музыка',
+    'треки',
+    'music',
+    'яндексмузыка',
+  ],
+  'yandex-taxi': [
+    'яндекс такси',
+    'яндекс го',
+    'яндекс go',
+    'такси',
+    'го',
+    'go',
+    'яндекс еда',
+    'еда',
+    'лавка',
+    'доставка',
+  ],
+  'yandex-maps': ['яндекс карты', 'карты', 'навигатор', 'пробки', 'maps'],
+  'yandex-disk': ['яндекс диск', 'диск', 'облако', 'disk'],
+  'yandex-market': ['яндекс маркет', 'маркет'],
+};
+
 /// Ready-made groups share the rules list, but keep their own engine choices.
-class ServicePresets extends StatelessWidget {
+class ServicePresets extends StatefulWidget {
   final String category;
   const ServicePresets({super.key, this.category = 'domains'});
+
+  @override
+  State<ServicePresets> createState() => _ServicePresetsState();
+}
+
+class _ServicePresetsState extends State<ServicePresets> {
+  final _searchCtl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtl.dispose();
+    super.dispose();
+  }
+
+  bool _matchesQuery(ServicePreset s, String platform, String q) {
+    if (q.isEmpty) return true;
+    if (s.name.toLowerCase().contains(q)) return true;
+    if (s.id.toLowerCase().contains(q)) return true;
+    final rules = _rules(s, platform, widget.category);
+    if (rules.any((r) => r.toLowerCase().contains(q))) return true;
+    final aliases = _serviceAliases[s.id];
+    if (aliases != null && aliases.any((a) => a.contains(q) || q.contains(a))) {
+      return true;
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,8 +151,12 @@ class ServicePresets extends StatelessWidget {
         ),
       );
     }
-    final services = catalog.services
-        .where((s) => _rules(s, catalog.platform, category).isNotEmpty)
+    final q = _query.trim().toLowerCase();
+    final allCategoryServices = catalog.services
+        .where((s) => _rules(s, catalog.platform, widget.category).isNotEmpty)
+        .toList();
+    final services = allCategoryServices
+        .where((s) => _matchesQuery(s, catalog.platform, q))
         .toList();
     return Padding(
       padding: const EdgeInsets.all(12),
@@ -59,23 +174,55 @@ class ServicePresets extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Divider(height: 1, thickness: 1, color: t.border),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
+          if (allCategoryServices.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: NekkoTextField(
+                key: const ValueKey('preset_search_field'),
+                controller: _searchCtl,
+                hint: 'поиск по сервисам…',
+                prefixIcon: Icon(Icons.search, size: 16, color: t.textFaint),
+                suffixIcon: _query.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(Icons.close, size: 14, color: t.textMuted),
+                        onPressed: () {
+                          _searchCtl.clear();
+                          setState(() => _query = '');
+                        },
+                        hoverColor: Colors.transparent,
+                        splashColor: Colors.transparent,
+                        highlightColor: Colors.transparent,
+                      )
+                    : null,
+                onChanged: (v) => setState(() => _query = v),
+              ),
+            ),
           for (final service in services)
             _ServiceRow(
-              key: ValueKey('${category}_${service.id}'),
+              key: ValueKey('${widget.category}_${service.id}'),
               service: service,
               catalog: catalog,
-              category: category,
+              category: widget.category,
               selected: catalog.selected(service, state.routing.mode),
               onChanged: state.presetsBusy
                   ? null
                   : (on) => state.setServicePreset(service.id, on),
             ),
-          if (services.isEmpty)
+          if (allCategoryServices.isEmpty)
             Text(
               'нет готовых правил для этой категории',
               textAlign: TextAlign.center,
               style: TextStyle(color: t.textFaint, fontSize: 11),
+            )
+          else if (services.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                'ничего не найдено',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: t.textFaint, fontSize: 11),
+              ),
             ),
           if (state.presetError != null)
             Text(
