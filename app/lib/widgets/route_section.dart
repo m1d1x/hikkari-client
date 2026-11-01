@@ -6,6 +6,7 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import '../ui/nekko_animated_height.dart';
+import '../ui/nekko_dialog.dart';
 import '../ui/nekko_segmented.dart';
 import '../ui/nekko_text_field.dart';
 import '../ui/nekko_toast.dart';
@@ -117,6 +118,30 @@ class _RouteSectionState extends State<RouteSection>
     );
     if (exe != null && mounted) {
       await context.read<AppState>().addRule('processes', exe);
+    }
+  }
+
+  Future<void> _resetRules(BuildContext context) async {
+    final confirmed = await NekkoDialog.confirm(
+      context,
+      title: 'Сброс маршрутизации',
+      message: 'Сбросить все правила к стандартным?',
+      confirmLabel: 'сбросить',
+    );
+    if (!confirmed || !context.mounted) return;
+
+    try {
+      final state = context.read<AppState>();
+      await state.resetToDefaults();
+      if (!context.mounted) return;
+      NekkoToast.show(context, 'Правила сброшены к стандартным');
+    } catch (e) {
+      if (!context.mounted) return;
+      NekkoToast.show(
+        context,
+        'не удалось сбросить правила: $e',
+        icon: Icons.error_outline_rounded,
+      );
     }
   }
 
@@ -351,6 +376,7 @@ class _RouteSectionState extends State<RouteSection>
         children: [
           Expanded(
             child: _PresetActionPill(
+              key: const ValueKey('routing_preset_import_button'),
               label: 'импорт',
               icon: Icons.south_rounded,
               onTap: () => ImportRoutingDialog.show(context),
@@ -359,6 +385,7 @@ class _RouteSectionState extends State<RouteSection>
           const SizedBox(width: 6),
           Expanded(
             child: _PresetActionPill(
+              key: const ValueKey('routing_preset_export_button'),
               label: 'экспорт',
               icon: Icons.north_rounded,
               onTap: () async {
@@ -378,6 +405,13 @@ class _RouteSectionState extends State<RouteSection>
                 }
               },
             ),
+          ),
+          const SizedBox(width: 6),
+          _PresetActionIcon(
+            key: const ValueKey('reset_routing_button_pill'),
+            icon: Icons.restart_alt_rounded,
+            tooltip: 'сбросить к стандартным',
+            onTap: () => _resetRules(context),
           ),
         ],
       ),
@@ -872,6 +906,7 @@ class _ItemRowState extends State<_ItemRow> {
 /// Visual preview: file import/export will be connected after design approval.
 class _PresetActionPill extends StatefulWidget {
   const _PresetActionPill({
+    super.key,
     required this.label,
     required this.icon,
     this.onTap,
@@ -891,6 +926,7 @@ class _PresetActionPillState extends State<_PresetActionPill> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final color = _hovered ? t.primary : t.textMuted;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
@@ -900,6 +936,7 @@ class _PresetActionPillState extends State<_PresetActionPill> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: AppDurations.fast,
+          curve: AppCurves.fastInSlowOut,
           height: 34,
           decoration: BoxDecoration(
             color: _hovered ? t.surface2 : t.bg,
@@ -911,22 +948,96 @@ class _PresetActionPillState extends State<_PresetActionPill> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                widget.icon,
-                size: 14,
-                color: _hovered ? t.primary : t.textMuted,
+              TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: color),
+                duration: AppDurations.fast,
+                curve: AppCurves.fastInSlowOut,
+                builder: (_, c, __) => Icon(
+                  widget.icon,
+                  size: 14,
+                  color: c,
+                ),
               ),
               const SizedBox(width: 7),
-              Text(
-                widget.label,
-                style: TextStyle(
-                  color: _hovered ? t.primary : t.textMuted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  height: 1,
+              TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: color),
+                duration: AppDurations.fast,
+                curve: AppCurves.fastInSlowOut,
+                builder: (_, c, __) => Text(
+                  widget.label,
+                  style: TextStyle(
+                    color: c,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    height: 1,
+                  ),
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PresetActionIcon extends StatefulWidget {
+  const _PresetActionIcon({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  @override
+  State<_PresetActionIcon> createState() => _PresetActionIconState();
+}
+
+class _PresetActionIconState extends State<_PresetActionIcon> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final color = _hovered ? t.primary : t.textMuted;
+    return Tooltip(
+      message: widget.tooltip,
+      waitDuration: const Duration(milliseconds: 300),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: AppDurations.fast,
+            curve: AppCurves.fastInSlowOut,
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: _hovered ? t.surface2 : t.bg,
+              border: Border.all(
+                color: t.primary.withValues(alpha: _hovered ? .35 : 0),
+              ),
+              borderRadius: BorderRadius.circular(t.radius),
+            ),
+            child: Center(
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: color),
+                duration: AppDurations.fast,
+                curve: AppCurves.fastInSlowOut,
+                builder: (_, c, __) => Icon(
+                  widget.icon,
+                  size: 15,
+                  color: c,
+                ),
+              ),
+            ),
           ),
         ),
       ),

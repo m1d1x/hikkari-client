@@ -6,7 +6,7 @@ import 'package:nekkobox/core/nekkobox_core.dart';
 import 'package:nekkobox/state/app_state.dart';
 import 'package:nekkobox/theme/app_theme.dart';
 import 'package:nekkobox/widgets/import_routing_dialog.dart';
-import 'package:nekkobox/widgets/routing_rules_actions.dart';
+import 'package:nekkobox/widgets/route_section.dart';
 import 'package:provider/provider.dart';
 
 class _MockCore extends NekkoboxCore {
@@ -147,13 +147,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(mock.lastImportedData, validJson);
-      // Dialog should be dismissed
       expect(find.byType(ImportRoutingDialog), findsNothing);
     });
   });
 
-  group('RoutingRulesActions Widget Tests', () {
-    testWidgets('export button copies JSON to clipboard and shows toast', (tester) async {
+  group('RouteSection routing preset actions Tests', () {
+    testWidgets('export button in preset menu copies JSON to clipboard and shows toast', (tester) async {
       final mock = _MockCore();
       final state = AppState(mock);
       addTearDown(state.dispose);
@@ -176,15 +175,21 @@ void main() {
           child: MaterialApp(
             theme: buildAppTheme(),
             home: const Scaffold(
-              body: RoutingRulesActions(),
+              body: SingleChildScrollView(
+                child: RouteSection(),
+              ),
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('export_routing_button')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('export_routing_button')));
+      // Open preset menu via the 3 dots
+      await tester.tap(find.byKey(const ValueKey('routing_presets_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('routing_preset_export_button')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('routing_preset_export_button')));
       await tester.pump();
       await tester.pumpAndSettle();
 
@@ -204,16 +209,22 @@ void main() {
           child: MaterialApp(
             theme: buildAppTheme(),
             home: const Scaffold(
-              body: RoutingRulesActions(),
+              body: SingleChildScrollView(
+                child: RouteSection(),
+              ),
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      // 1. Tap reset button
-      expect(find.byKey(const ValueKey('reset_routing_button')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('reset_routing_button')));
+      // Open preset menu via the 3 dots
+      await tester.tap(find.byKey(const ValueKey('routing_presets_button')));
+      await tester.pumpAndSettle();
+
+      // 1. Tap reset icon button
+      expect(find.byKey(const ValueKey('reset_routing_button_pill')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('reset_routing_button_pill')));
       await tester.pumpAndSettle();
 
       // Confirmation dialog should be visible
@@ -227,7 +238,7 @@ void main() {
       expect(find.text('Сбросить все правила к стандартным?'), findsNothing);
 
       // 2. Tap reset again and confirm
-      await tester.tap(find.byKey(const ValueKey('reset_routing_button')));
+      await tester.tap(find.byKey(const ValueKey('reset_routing_button_pill')));
       await tester.pumpAndSettle();
 
       expect(find.text('Сбросить все правила к стандартным?'), findsOneWidget);

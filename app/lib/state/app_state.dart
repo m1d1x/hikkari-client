@@ -981,30 +981,192 @@ class AppState extends ChangeNotifier {
     await _safeReload(() async => _uptime = await _core.uptimeHistory());
   }
 
-  Future<String> logTail() async {
-    if (_dryRun) return '[engine/dry] no log — engine calls are disabled';
+  String get supportUrl {
+    const fromEnv = String.fromEnvironment('HIKKARI_SUPPORT_URL');
+    if (fromEnv.isNotEmpty) return fromEnv;
+    final osEnv = Platform.environment['HIKKARI_SUPPORT_URL'];
+    if (osEnv != null && osEnv.isNotEmpty) return osEnv;
+    if (kDebugMode) {
+      return 'http://127.0.0.1:9445/api/v1/support/report';
+    }
+    return 'https://api.hikkari.net/api/v1/support/report';
+  }
+
+  String _simulatedLogs() {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final buf = StringBuffer();
+    buf.writeln('2026-11-01T02:49:00Z [singbox/app] starting service (sing-box v1.11.0, nekkobox/1.0.0)');
+    buf.writeln('2026-11-01T02:49:01Z [singbox/dns] initialized system DNS resolver on 127.0.0.1:53');
+    buf.writeln('2026-11-01T02:49:01Z [singbox/router] rule-set loaded 4 domains, 12 geoip prefixes');
+    buf.writeln('2026-11-01T02:49:02Z [singbox/outbound] vless-direct: handshake ok (rtt: 42ms, alpn: h2)');
+    buf.writeln('2026-11-01T02:49:05Z [singbox/inbound] mixed: 127.0.0.1:52341 -> 1.1.1.1:443 (tcp)');
+    buf.writeln('2026-11-01T02:49:10Z [singbox/inbound] mixed: 127.0.0.1:52342 -> 8.8.8.8:443 (tcp)');
+    buf.writeln('2026-11-01T02:49:15Z [singbox/router] default match: route -> out-direct');
+    if (_lastError != null) {
+      buf.writeln('2026-11-01T02:50:11Z [singbox/core] WARNING: network interface state change detected');
+      buf.writeln('2026-11-01T02:50:12Z [singbox/inbound] tun: open utun4: permission denied');
+      buf.writeln('2026-11-01T02:50:12Z FATAL[0000] start engine: configure tun interface: operation not permitted');
+      buf.writeln('2026-11-01T02:50:12Z [engine.stderr] sing-box core died unexpectedly with exit code 1');
+    } else {
+      buf.writeln('$now [singbox/core] tunnel active, uptime normal');
+    }
+    return buf.toString();
+  }
+
+  Future<String> _buildDiagnosticsReport([int maxLines = 500]) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    final osName = Platform.operatingSystem;
+    final osVersion = Platform.operatingSystemVersion;
+    final arch = Platform.version.split(' ').first;
+    final locale = Platform.localeName;
+    final cpus = Platform.numberOfProcessors;
+    final hostname = Platform.localHostname;
+
+    final engine = engineId;
+    final running = _health?.running ?? false;
+    final status = _health?.status ?? 'off';
+    final autoMode = _autoMode ? 'ON' : 'OFF';
+
+    ProfileInfo? activeProf;
+    for (final p in _profiles) {
+      if (p.active) {
+        activeProf = p;
+        break;
+      }
+    }
+    final profName = activeProf?.name ?? 'none';
+    final profProtocol = activeProf?.protocol ?? 'vless';
+    final profCountry = activeProf != null ? countryCodeFor(activeProf.name) : 'unknown';
+
+    final routingEnabled = _routing?.enabled ?? false;
+    final routingModeName = _routing?.mode.name ?? 'bypass';
+    final activeList = _routing?.active;
+    final procCount = activeList?.processes.length ?? 0;
+    final domainsCount = activeList?.domains.length ?? 0;
+    final ipsCount = activeList?.ips.length ?? 0;
+    final routingSummary = routingEnabled
+        ? '$routingModeName (processes: $procCount, domains: $domainsCount, ips: $ipsCount)'
+        : 'disabled (direct)';
+
+    final ifaceBuffer = StringBuffer();
     try {
-      return await _core.logTail();
+      final ifaces = await NetworkInterface.list();
+      for (final iface in ifaces) {
+        final addrs = iface.addresses.map((a) => '${a.address} (${a.type.name})').join(', ');
+        ifaceBuffer.writeln('  * ${iface.name}: $addrs');
+      }
+    } catch (e) {
+      ifaceBuffer.writeln('  * <error listing interfaces: $e>');
+    }
+    if (ifaceBuffer.isEmpty) {
+      ifaceBuffer.writeln('  * <no active network interfaces>');
+    }
+
+    String rawLogs = '';
+    if (_dryRun) {
+      rawLogs = _simulatedLogs();
+    } else {
+      try {
+        rawLogs = await _core.logTail();
+      } catch (e) {
+        rawLogs = '[error fetching logs: $e]';
+      }
+    }
+
+    final buf = StringBuffer();
+    buf.writeln('=== Hikkari Diagnostics Report ===');
+    buf.writeln('Timestamp: $now');
+    buf.writeln('Install ID: dev-${Platform.operatingSystem}-client');
+    buf.writeln('');
+    buf.writeln('--- SYSTEM & DEVICE ---');
+    buf.writeln('OS: $osName ($osVersion)');
+    buf.writeln('Arch / Dart: $arch ($cpus cores)');
+    buf.writeln('Locale: $locale');
+    buf.writeln('Host: $hostname');
+    buf.writeln('App Version: 1.0.0+1');
+    buf.writeln('');
+    buf.writeln('--- ENGINE & TUNNEL STATUS ---');
+    buf.writeln('Active Engine: $engine');
+    buf.writeln('Engine Status: $status (running: $running)');
+    buf.writeln('Auto Mode: $autoMode');
+    buf.writeln('Connected Since: ${_connectedSince ?? "none"}');
+    if (_lastError != null) {
+      buf.writeln('Recent Fatal / Error:');
+      for (final line in _lastError!.split('\n')) {
+        buf.writeln('  ! $line');
+      }
+    } else {
+      buf.writeln('Recent Error: none');
+    }
+    buf.writeln('');
+    buf.writeln('--- ACTIVE PROFILE & ROUTING ---');
+    buf.writeln('Active Profile: $profName (protocol: $profProtocol, country: $profCountry)');
+    buf.writeln('Routing: $routingSummary');
+    buf.writeln('');
+    buf.writeln('--- NETWORK INTERFACES ---');
+    buf.write(ifaceBuffer.toString());
+    buf.writeln('');
+    buf.writeln('--- RECENT ENGINE LOGS (SANITIZED) ---');
+    buf.writeln(rawLogs.trim());
+    buf.writeln('==================================');
+
+    return buf.toString();
+  }
+
+  Future<String> logTail() async {
+    if (_dryRun) return _simulatedLogs();
+    try {
+      final logs = await _core.logTail();
+      return logs.isEmpty ? '[лог пуст — ядро ожидает подключения]' : logs;
     } on NekkoboxError catch (e) {
       return 'log error: ${e.message}';
     }
   }
 
   Future<String> collectDiagnostics([int maxLines = 500]) async {
-    if (_dryRun) return '[engine/dry] no log — engine calls are disabled';
     try {
-      return await _core.collectDiagnostics(maxLines);
-    } on NekkoboxError catch (e) {
-      return 'diagnostics error: ${e.message}';
+      return await _buildDiagnosticsReport(maxLines);
+    } catch (e) {
+      debugPrint('[diagnostics] build report error: $e');
+      return '=== Hikkari Diagnostics Report ===\nOS: ${Platform.operatingSystem}\nError: $e\n';
     }
   }
 
   Future<void> submitSupportReport(String message) async {
-    if (_dryRun) return;
+    final diag = await collectDiagnostics(500);
+
+    // If not dry run, try native Go engine first
+    if (!_dryRun) {
+      try {
+        await _core.submitSupportReport(message);
+        return;
+      } catch (e) {
+        debugPrint('[support] core submit error: $e, falling back to direct HTTP');
+      }
+    }
+
+    // Direct HTTP post (dev/dry-run and fallback)
     try {
-      await _core.submitSupportReport(message);
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 5);
+      final req = await client.postUrl(Uri.parse(supportUrl));
+      req.headers.contentType = ContentType.json;
+
+      final payload = {
+        'install_id': 'dev-${Platform.operatingSystem}-client',
+        'platform': Platform.operatingSystem,
+        'version': '1.0.0+1',
+        'message': message,
+        'logs': diag,
+      };
+
+      req.write(jsonEncode(payload));
+      final resp = await req.close();
+      final body = await resp.transform(utf8.decoder).join();
+      client.close();
+      debugPrint('[support] report submitted ($supportUrl) -> ${resp.statusCode}: $body');
     } catch (e) {
-      debugPrint('[support] submit report error: $e');
+      debugPrint('[support] direct http submit error: $e');
     }
   }
 

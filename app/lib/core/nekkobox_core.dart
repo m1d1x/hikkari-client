@@ -109,10 +109,13 @@ abstract class NekkoboxCore {
 
   // ----- logs -----
 
-  Future<String> logTail() async => await _callAsync('LogTail') as String;
+  Future<String> logTail() async =>
+      ((await _callAsync('LogTail')) as String?) ?? '';
 
   Future<String> collectDiagnostics([int maxLines = 500]) async =>
-      await _callAsync('CollectDiagnostics', {'maxLines': maxLines}) as String;
+      ((await _callAsync('CollectDiagnostics', {'maxLines': maxLines}))
+          as String?) ??
+      '';
 
   Future<Map<String, dynamic>> submitSupportReport(String message) async {
     final res = await _callAsync('SubmitSupportReport', {'message': message});
