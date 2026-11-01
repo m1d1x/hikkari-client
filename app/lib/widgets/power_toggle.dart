@@ -86,6 +86,7 @@ class _PowerToggleState extends State<PowerToggle> {
                 onSecondaryTap: kDebugMode
                     ? () => s.simulateEngineFailure()
                     : null,
+                onLongPress: () => s.simulateEngineFailure(),
                 mouseCursor: busy
                     ? SystemMouseCursors.basic
                     : SystemMouseCursors.click,
@@ -266,44 +267,6 @@ class _PowerToggleState extends State<PowerToggle> {
                 details: err,
                 maxLines: 2,
                 tokens: t,
-              ),
-            ),
-          ),
-        ] else if (kDebugMode) ...[
-          const SizedBox(height: 10),
-          Center(
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => s.simulateEngineFailure(),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: t.bad.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: t.bad.withValues(alpha: 0.22)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.bolt_rounded, size: 13, color: t.bad),
-                      const SizedBox(width: 4),
-                      Text(
-                        'сэмулировать сбой запуска VPN',
-                        style: TextStyle(
-                          color: t.bad,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          fontFamily: t.monoFamily,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ),
             ),
           ),

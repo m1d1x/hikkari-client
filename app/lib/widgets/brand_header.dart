@@ -7,7 +7,6 @@ import '../ui/nekko_segmented.dart';
 import '../ui/nekko_toast.dart';
 import '../theme/tokens.dart';
 import 'route_section.dart';
-import 'routing_rules_actions.dart';
 import 'service_presets.dart';
 import 'update_banner.dart';
 
@@ -118,6 +117,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
   String? _hint;
   int _hintVersion = 0;
   bool _logsHover = false;
+  bool _simulateHover = false;
   bool _donateHover = false;
 
   // Seven quick taps on the title flip the tester mode; a pause starts over.
@@ -278,8 +278,6 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               RouteSettingsSection(onHintChanged: _setHint),
               const SizedBox(height: 10),
               PresetSettingsSection(onHintChanged: _setHint),
-              const SizedBox(height: 12),
-              RoutingRulesActions(onHintChanged: _setHint),
               const SizedBox(height: 8),
               SizedBox(
                 height: 42,
@@ -338,6 +336,50 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                           'логи',
                           style: TextStyle(
                             color: t.text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              MouseRegion(
+                cursor: SystemMouseCursors.click,
+                onEnter: (_) => setState(() => _simulateHover = true),
+                onExit: (_) => setState(() => _simulateHover = false),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    Navigator.of(context).maybePop();
+                    context.read<AppState>().simulateEngineFailure();
+                  },
+                  child: AnimatedContainer(
+                    duration: AppDurations.fast,
+                    curve: AppCurves.fastInSlowOut,
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    decoration: BoxDecoration(
+                      color: _simulateHover
+                          ? t.bad.withValues(alpha: 0.12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(t.radius),
+                      border: Border.all(
+                        color: _simulateHover
+                            ? t.bad.withValues(alpha: 0.6)
+                            : t.borderStrong,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.bug_report_outlined, size: 16, color: t.bad),
+                        const SizedBox(width: 8),
+                        Text(
+                          'симулировать ошибку',
+                          style: TextStyle(
+                            color: t.bad,
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                           ),
