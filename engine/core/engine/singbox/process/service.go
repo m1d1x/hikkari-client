@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"NekkoVPN/core/svcclient"
@@ -31,10 +32,28 @@ type ServiceManager struct {
 	log        LineLogger
 
 	followOnce sync.Once
+	following  atomic.Bool
 }
 
+// attachInterval is how often a manager that has not reached the service yet
+// asks for its status, so the core log is mirrored from the start even when
+// the GUI attaches to a tunnel already running (restart after an update with
+// --reconnect, a GUI crash) and Start is never called.
+const attachInterval = 10 * time.Second
+
 func NewServiceManager(configPath string, log LineLogger) *ServiceManager {
-	return &ServiceManager{configPath: configPath, log: log}
+	m := &ServiceManager{configPath: configPath, log: log}
+	go m.attach()
+	return m
+}
+
+func (m *ServiceManager) attach() {
+	for !m.following.Load() {
+		if _, err := m.call(svcproto.Request{Op: svcproto.OpStatus}, 5*time.Second); err == nil && m.following.Load() {
+			return
+		}
+		time.Sleep(attachInterval)
+	}
 }
 
 func (m *ServiceManager) call(req svcproto.Request, timeout time.Duration) (svcproto.Response, error) {
@@ -42,6 +61,9 @@ func (m *ServiceManager) call(req svcproto.Request, timeout time.Duration) (svcp
 	if errors.Is(err, svcclient.ErrNoService) {
 		m.log.Logf("vpn.service: %v", err)
 		return resp, svcclient.ErrNoService
+	}
+	if err == nil {
+		m.followCore(resp)
 	}
 	return resp, err
 }
@@ -53,7 +75,10 @@ func (m *ServiceManager) followCore(resp svcproto.Response) {
 	if resp.CoreLog == "" {
 		return
 	}
-	m.followOnce.Do(func() { followFile(resp.CoreLog, "service", m.log) })
+	m.followOnce.Do(func() {
+		m.following.Store(true)
+		followFile(resp.CoreLog, "service", m.log)
+	})
 }
 
 func (m *ServiceManager) Start() error {
@@ -64,9 +89,8 @@ func (m *ServiceManager) Start() error {
 	if !json.Valid(raw) {
 		return fmt.Errorf("конфиг sing-box повреждён: %s", m.configPath)
 	}
-	if st, err := m.call(svcproto.Request{Op: svcproto.OpStatus}, 5*time.Second); err == nil {
-		m.followCore(st)
-	}
+	// The status answer starts the core log mirror (call → followCore).
+	_, _ = m.call(svcproto.Request{Op: svcproto.OpStatus}, 5*time.Second)
 	// Generous: the service stops strays, unblocks binaries and flushes DNS
 	// before spawning the core.
 	resp, err := m.call(svcproto.Request{Op: svcproto.OpStart, Config: raw}, 30*time.Second)

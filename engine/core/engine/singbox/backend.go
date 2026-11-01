@@ -140,7 +140,17 @@ func (b *Backend) SelectProfile(id string) error {
 func (b *Backend) Delay(id, url string, timeoutMs int) (int, error) {
 	return b.control.Delay(profileTag(id), url, timeoutMs)
 }
-func (b *Backend) Baseline() { b.diagnostics.Baseline() }
+// Baseline snapshots the machine at engine init. When the core is already up
+// — the GUI attached to a tunnel the service kept or brought back (restart
+// after an update with --reconnect, a GUI crash) — Start is never called, so
+// the session diagnostics start here instead; Stop ends them as usual.
+func (b *Backend) Baseline() {
+	b.diagnostics.Baseline()
+	if b.IsRunning() {
+		b.log.Logf("[diag] core already running at init: attaching session diagnostics")
+		b.diagnostics.AfterStart(context.Background())
+	}
+}
 func (b *Backend) Diagnose(reason string) {
 	if d, ok := b.process.(interface{ Diagnose(string) }); ok {
 		d.Diagnose(reason)

@@ -26,8 +26,9 @@ import (
 var polledMethods = map[string]bool{
 	"IsRunning": true, "Health": true, "ExternalIP": true, "LogTail": true, "CollectDiagnostics": true,
 	"Routing": true, "ServerCleanliness": true, "ListApps": true,
-	"RoutingPresets": true,
-	"UpdateStatus":   true,
+	"RoutingPresets": true, "RoutingStatus": true,
+	"Profiles": true, "AutoMode": true, "UptimeHistory": true, "ServiceUptimeHistory": true,
+	"UpdateStatus": true,
 }
 
 // traceCall writes one line per FFI call into the engine log, so a pasted log
