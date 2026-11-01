@@ -259,6 +259,12 @@ func (c *Core) SubmitSupportReport(message string) (map[string]any, error) {
 
 	var result map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&result)
+	if resp.StatusCode/100 != 2 {
+		if c.logger != nil {
+			c.logger.Logf("[support] report refused: %d %v", resp.StatusCode, result)
+		}
+		return nil, fmt.Errorf("поддержка не приняла отчёт: %d", resp.StatusCode)
+	}
 	if c.logger != nil {
 		c.logger.Logf("[support] report sent, response: %v", result)
 	}

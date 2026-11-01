@@ -1143,41 +1143,45 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Sends a support report through the engine, which attaches the
+  /// sanitized log and the install id. Throws when it was not delivered, so
+  /// the caller can say so; the failure also goes into the engine log.
   Future<void> submitSupportReport(String message) async {
-    final diag = await collectDiagnostics(500);
-
-    // If not dry run, try native Go engine first
-    if (!_dryRun) {
-      try {
-        await _core.submitSupportReport(message);
-        return;
-      } catch (e) {
-        debugPrint('[support] core submit error: $e, falling back to direct HTTP');
-      }
+    if (_dryRun) {
+      await _submitDryRunReport(message);
+      return;
     }
-
-    // Direct HTTP post (dev/dry-run and fallback)
     try {
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 5);
+      await _core.submitSupportReport(message);
+    } catch (e) {
+      unawaited(_core.logUi('support report not sent: $e').catchError((_) {}));
+      rethrow;
+    }
+  }
+
+  /// Dry run has no engine: the report goes straight to [supportUrl] with
+  /// the UI-built diagnostics, marked as a dev install.
+  Future<void> _submitDryRunReport(String message) async {
+    final diag = await collectDiagnostics(500);
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 5);
+    try {
       final req = await client.postUrl(Uri.parse(supportUrl));
       req.headers.contentType = ContentType.json;
-
-      final payload = {
+      req.write(jsonEncode({
         'install_id': 'dev-${Platform.operatingSystem}-client',
         'platform': Platform.operatingSystem,
-        'version': '1.0.0+1',
+        'version': 'dry-run',
         'message': message,
         'logs': diag,
-      };
-
-      req.write(jsonEncode(payload));
+      }));
       final resp = await req.close();
       final body = await resp.transform(utf8.decoder).join();
+      if (resp.statusCode ~/ 100 != 2) {
+        throw HttpException('hub answered ${resp.statusCode}: $body');
+      }
+    } finally {
       client.close();
-      debugPrint('[support] report submitted ($supportUrl) -> ${resp.statusCode}: $body');
-    } catch (e) {
-      debugPrint('[support] direct http submit error: $e');
     }
   }
 

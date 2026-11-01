@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import 'copy_flash.dart';
+import 'nekko_toast.dart';
 
 /// Shared Nekko-styled diagnostic error card with hover «скопировать» hint
 /// and springy [CopyFlash] confirmation when clicked.
@@ -80,6 +81,16 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
     setState(() => _flashing = true);
 
     final text = widget.details ?? widget.summary;
+    // The report goes first and on its own: copying and the confirmation
+    // animation must not decide whether support hears about the error. The
+    // same error is reported at most once per 5 minutes.
+    final now = DateTime.now();
+    final last = _recentlyReported[text];
+    if (last == null || now.difference(last) >= const Duration(minutes: 5)) {
+      _recentlyReported[text] = now;
+      unawaited(_report(context.read<AppState>()));
+    }
+
     if (widget.onCopy != null) {
       await widget.onCopy!();
     } else {
@@ -97,23 +108,28 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
     flash.animation.removeStatusListener(_onFlashStatus);
     flash.animation.addStatusListener(_onFlashStatus);
     flash.flash();
+  }
 
-    // Deduplication check: report to hub at most once per 5 minutes for the same error
-    final now = DateTime.now();
-    final last = _recentlyReported[text];
-    final isDuplicate = last != null && now.difference(last) < const Duration(minutes: 5);
-
-    if (!isDuplicate) {
-      _recentlyReported[text] = now;
-      try {
-        final appState = context.read<AppState?>();
-        if (appState != null) {
-          unawaited(appState.submitSupportReport(
-            'Ошибка подключения: ${widget.title} — ${widget.summary}',
-          ));
-        }
-      } catch (_) {}
+  /// Sends the error to support and says how it went: the card reads
+  /// «отправить поддержке», so a silent failure would be a lie.
+  Future<void> _report(AppState appState) async {
+    var sent = true;
+    try {
+      await appState.submitSupportReport(
+        'Ошибка подключения: ${widget.title} — ${widget.summary}',
+      );
+    } catch (_) {
+      sent = false;
+      // Not sent: a retap within the dedup window must try again.
+      _recentlyReported.remove(widget.details ?? widget.summary);
     }
+    if (!mounted) return;
+    NekkoToast.show(
+      context,
+      sent ? 'отправлено поддержке' : 'не удалось отправить поддержке',
+      icon: sent ? Icons.check_rounded : Icons.error_outline_rounded,
+      hold: NekkoToast.glanceHold,
+    );
   }
 
   void _onFlashStatus(AnimationStatus status) {
@@ -225,19 +241,24 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.send_rounded, size: 15, color: t.bad),
+                                Icon(
+                                  Icons.send_rounded,
+                                  size: 15,
+                                  color: t.bad,
+                                ),
                                 const SizedBox(width: 6),
                                 Flexible(
                                   child: Text(
                                     'отправить поддержке',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    textHeightBehavior: const TextHeightBehavior(
-                                      applyHeightToFirstAscent: false,
-                                      applyHeightToLastDescent: false,
-                                      leadingDistribution:
-                                          TextLeadingDistribution.even,
-                                    ),
+                                    textHeightBehavior:
+                                        const TextHeightBehavior(
+                                          applyHeightToFirstAscent: false,
+                                          applyHeightToLastDescent: false,
+                                          leadingDistribution:
+                                              TextLeadingDistribution.even,
+                                        ),
                                     style: TextStyle(
                                       color: t.bad,
                                       height: 1,
