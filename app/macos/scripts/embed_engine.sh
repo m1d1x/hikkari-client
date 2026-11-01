@@ -32,7 +32,9 @@ if command -v go >/dev/null 2>&1; then
   LDFLAGS=""
   [ -n "${HIKKARI_TELEMETRY_URL:-}" ] && LDFLAGS="-X NekkoVPN/core/telemetry.EventsURL=$HIKKARI_TELEMETRY_URL"
   # Likewise the routing presets catalog and its change stream.
-  [ -n "${HIKKARI_PRESET_CATALOG_URL:-}" ] && LDFLAGS="$LDFLAGS -X NekkoVPN/core/presets.CatalogURL=$HIKKARI_PRESET_CATALOG_URL -X NekkoVPN/core/presets.EventsURL=${HIKKARI_PRESET_EVENTS_URL:-}"
+  CATALOG_URL="${HIKKARI_PRESET_CATALOG_URL:-https://api.hikkari.net/v1/presets/catalog}"
+  EVENTS_URL="${HIKKARI_PRESET_EVENTS_URL:-https://api.hikkari.net/v1/presets/events}"
+  LDFLAGS="$LDFLAGS -X NekkoVPN/core/presets.CatalogURL=$CATALOG_URL -X NekkoVPN/core/presets.EventsURL=$EVENTS_URL"
   for ARCH in ${ARCHS:-$(uname -m)}; do
     case "$ARCH" in
       arm64)  GOARCH=arm64 ;;

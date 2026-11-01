@@ -344,8 +344,7 @@ func (c *Core) BaseDir() string {
 	return c.baseDir
 }
 
-// ensureProfiles seeds profiles.json from the current config.json on first
-// run, so the UI always has at least one profile to render.
+// ensureProfiles normalizes existing profiles in profiles.json if needed.
 func (c *Core) ensureProfiles() {
 	pf, err := c.profiles.Read()
 	if err != nil {
@@ -353,17 +352,6 @@ func (c *Core) ensureProfiles() {
 		return
 	}
 	changed := false
-	if !c.profiles.Exists() {
-		stored, err := legacy.ReadConfig(filepath.Join(c.baseDir, "config.json"))
-		if err != nil {
-			c.logger.Logf("profiles: legacy import failed: %v", err)
-		} else if len(stored) > 0 {
-			pf.Profiles = stored
-			pf.Active = stored[0].Name
-			changed = true
-		}
-	}
-
 	for i, p := range pf.Profiles {
 		if p.Connection != nil {
 			continue
