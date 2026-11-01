@@ -111,6 +111,14 @@ abstract class NekkoboxCore {
 
   Future<String> logTail() async => await _callAsync('LogTail') as String;
 
+  Future<String> collectDiagnostics([int maxLines = 500]) async =>
+      await _callAsync('CollectDiagnostics', {'maxLines': maxLines}) as String;
+
+  Future<Map<String, dynamic>> submitSupportReport(String message) async {
+    final res = await _callAsync('SubmitSupportReport', {'message': message});
+    return (res as Map<String, dynamic>?) ?? {};
+  }
+
   // ----- routing -----
 
   Future<RoutingApplicationSnapshot> routingStatus() async =>
@@ -145,6 +153,14 @@ abstract class NekkoboxCore {
       _callAsync('SetServicePreset', {'mode': mode.wire, 'id': id, 'on': on});
 
   Future<void> refreshRoutingPresets() => _callAsync('RefreshRoutingPresets');
+
+  Future<String> exportRoutingSnapshot() async =>
+      await _callAsync('ExportRoutingSnapshot') as String;
+
+  Future<void> importRoutingSnapshot(String data) =>
+      _callAsync('ImportRoutingSnapshot', {'data': data});
+
+  Future<void> resetToDefaults() => _callAsync('ResetToDefaults');
 
   Future<RoutingState> routing() async => RoutingState.fromJson(
     await _callAsync('Routing') as Map<String, dynamic>,

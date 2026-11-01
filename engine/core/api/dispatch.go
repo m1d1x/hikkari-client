@@ -24,7 +24,7 @@ import (
 // tick would bury everything else, so they are logged only when they fail or
 // run slow.
 var polledMethods = map[string]bool{
-	"IsRunning": true, "Health": true, "ExternalIP": true, "LogTail": true,
+	"IsRunning": true, "Health": true, "ExternalIP": true, "LogTail": true, "CollectDiagnostics": true,
 	"Routing": true, "ServerCleanliness": true, "ListApps": true,
 	"RoutingPresets": true,
 	"UpdateStatus":   true,
@@ -131,6 +131,18 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 	// ----- logging -----
 	case "LogTail":
 		return c.LogTail(), nil
+	case "CollectDiagnostics":
+		var a struct {
+			MaxLines int `json:"maxLines"`
+		}
+		_ = decodeArgs(argsJSON, &a)
+		return c.CollectDiagnostics(a.MaxLines), nil
+	case "SubmitSupportReport":
+		var a struct {
+			Message string `json:"message"`
+		}
+		_ = decodeArgs(argsJSON, &a)
+		return c.SubmitSupportReport(a.Message)
 
 	// ----- routing -----
 	case "RoutingPresets":
@@ -163,6 +175,23 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return nil, c.SetServicePreset(a.Mode, a.ID, a.On)
 	case "RefreshRoutingPresets":
 		return nil, c.RefreshRoutingPresets()
+	case "ExportRoutingSnapshot":
+		return c.ExportRoutingSnapshot()
+	case "ImportRoutingSnapshot":
+		var a struct {
+			Data     string `json:"data"`
+			Snapshot string `json:"snapshot"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		payload := a.Data
+		if payload == "" {
+			payload = a.Snapshot
+		}
+		return nil, c.ImportRoutingSnapshot(payload)
+	case "ResetToDefaults":
+		return nil, c.ResetToDefaults()
 	case "RoutingStatus":
 		return c.RoutingStatus(), nil
 	case "FlushRouting":

@@ -99,11 +99,12 @@ Status machine:
 
 ### Logging
 
-| method    | args | data     |
-|-----------|------|----------|
-| `LogTail` | —    | `string` |
+| method               | args                  | data     |
+|----------------------|-----------------------|----------|
+| `LogTail`            | —                     | `string` |
+| `CollectDiagnostics` | `{"maxLines": <int>}` | `string` |
 
-Returns the last ~16 KB of the log file.
+Returns the last ~16 KB of the log file (`LogTail`), or sanitizes recent logs and prepends platform metadata (`CollectDiagnostics`).
 
 ### Routing (split-tunnel)
 
@@ -136,8 +137,11 @@ Semantics:
 | `Routing`           | —                                                         | `RoutingState` |
 | `SetRoutingEnabled` | `{"on":true}`                                             | `null`         |
 | `SetRoutingMode`    | `{"mode":"bypass"\|"proxy"}`                              | `null`         |
-| `AddRule`           | `{"mode":"...","category":"...","value":"..."}`           | `null`         |
-| `RemoveRule`        | `{"mode":"...","category":"...","value":"..."}`           | `null`         |
+| `AddRule`               | `{"mode":"...","category":"...","value":"..."}`           | `null`          |
+| `RemoveRule`            | `{"mode":"...","category":"...","value":"..."}`           | `null`          |
+| `ExportRoutingSnapshot` | —                                                         | `string` (JSON) |
+| `ImportRoutingSnapshot` | `{"data":"<json snapshot>"}`                              | `null`          |
+| `ResetToDefaults`       | —                                                         | `null`          |
 
 Valid `category` values: `"domains"`, `"ips"`, `"processes"`, `"folders"` (path fragments such as `steamapps/common/`; requires the `folderRouting` capability).
 

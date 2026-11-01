@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
+import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import 'copy_flash.dart';
 
@@ -62,21 +66,26 @@ class NekkoErrorCard extends StatefulWidget {
 }
 
 class _NekkoErrorCardState extends State<NekkoErrorCard> {
+  static final Map<String, DateTime> _recentlyReported = {};
+
   final _flash = GlobalKey<CopyFlashState>();
   bool _hovered = false;
   bool _flashing = false;
+  String _flashLabel = 'скопировано';
 
   Future<void> _copy() async {
     // One confirmation at a time: taps while it plays are ignored instead of
     // restarting it mid-flight.
     if (_flashing) return;
     setState(() => _flashing = true);
+
+    final text = widget.details ?? widget.summary;
     if (widget.onCopy != null) {
       await widget.onCopy!();
     } else {
-      final text = widget.details ?? widget.summary;
       await Clipboard.setData(ClipboardData(text: text));
     }
+
     final flash = _flash.currentState;
     if (!mounted) return;
     if (flash == null) {
@@ -88,6 +97,23 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
     flash.animation.removeStatusListener(_onFlashStatus);
     flash.animation.addStatusListener(_onFlashStatus);
     flash.flash();
+
+    // Deduplication check: report to hub at most once per 5 minutes for the same error
+    final now = DateTime.now();
+    final last = _recentlyReported[text];
+    final isDuplicate = last != null && now.difference(last) < const Duration(minutes: 5);
+
+    if (!isDuplicate) {
+      _recentlyReported[text] = now;
+      try {
+        final appState = context.read<AppState?>();
+        if (appState != null) {
+          unawaited(appState.submitSupportReport(
+            'Ошибка подключения: ${widget.title} — ${widget.summary}',
+          ));
+        }
+      } catch (_) {}
+    }
   }
 
   void _onFlashStatus(AnimationStatus status) {
@@ -119,6 +145,7 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
           child: CopyFlash(
             key: _flash,
             color: t.bad,
+            label: _flashLabel,
             iconSize: 20,
             fontSize: 15,
             bodyOpacity: 1,
@@ -196,14 +223,14 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.copy_rounded, size: 18, color: t.bad),
+                              Icon(Icons.send_rounded, size: 16, color: t.bad),
                               const SizedBox(width: 7),
                               // Lowercase sits low in its em box; lift it so
                               // its x-height centres on the icon.
                               Transform.translate(
                                 offset: const Offset(0, -1.5),
                                 child: Text(
-                                  'скопировать',
+                                  'скопировать и отправить',
                                   textHeightBehavior: const TextHeightBehavior(
                                     applyHeightToFirstAscent: false,
                                     applyHeightToLastDescent: false,

@@ -255,6 +255,43 @@ func (m *Manager) Select(mode routing.RoutingMode, id string, on bool) error {
 	return m.commit(old, next)
 }
 
+func (m *Manager) ResetToDefaults() error {
+	m.tx.Lock()
+	defer m.tx.Unlock()
+	catalog, err := Parse(bundled)
+	if err != nil {
+		return err
+	}
+	old := m.Snapshot().State
+	next := clone(old)
+	next.Catalog = catalog
+	next.Choices = Choices{}
+	next.Source = "bundled"
+	return m.commit(old, next)
+}
+
+func (m *Manager) SetChoices(choices Choices) error {
+	m.tx.Lock()
+	defer m.tx.Unlock()
+	if !validChoices(choices) {
+		return fmt.Errorf("некорректный формат выбора групп")
+	}
+	old := m.Snapshot().State
+	next := clone(old)
+	next.Choices = choices
+	return m.commit(old, next)
+}
+
+func (m *Manager) PersistState(s State) error {
+	return m.persist(s)
+}
+
+func (m *Manager) SetStateDirect(next State) {
+	m.mu.Lock()
+	m.state = next
+	m.mu.Unlock()
+}
+
 func (m *Manager) persist(s State) error {
 	if m.path == "" {
 		return nil

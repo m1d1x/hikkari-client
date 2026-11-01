@@ -6,7 +6,13 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -16,11 +22,11 @@ import (
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
 	"NekkoVPN/core/health"
+	"NekkoVPN/core/logging"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/routing"
 	"NekkoVPN/core/subscription"
 	"NekkoVPN/core/uptime"
-	"net/url"
 )
 
 // Re-exported types — same Go type, shorter name inside api/. JSON shape is
@@ -157,6 +163,84 @@ func (c *Core) ServerCleanliness() CleanlinessReport { return c.cleanliness.Repo
 // ============================================================
 
 func (c *Core) LogTail() string { return c.logger.Tail() }
+
+func (c *Core) CollectDiagnostics(maxLines int) string {
+	if c == nil || c.logger == nil {
+		return ""
+	}
+	if st := c.UpdateStatus(); st.Installed != "" {
+		logging.AppVersion = st.Installed
+	}
+	return c.logger.CollectDiagnostics(maxLines)
+}
+
+func supportEndpoint() string {
+	if v := os.Getenv("HIKKARI_SUPPORT_URL"); v != "" {
+		return v
+	}
+	if v := os.Getenv("HIKKARI_TELEMETRY_URL"); v != "" {
+		u, err := url.Parse(v)
+		if err == nil {
+			u.Path = "/api/v1/support/report"
+			return u.String()
+		}
+	}
+	return "https://api.hikkari.net/api/v1/support/report"
+}
+
+func (c *Core) SubmitSupportReport(message string) (map[string]any, error) {
+	if c == nil {
+		return nil, fmt.Errorf("core is nil")
+	}
+	logs := c.CollectDiagnostics(500)
+	app := c.telemetryApp()
+	installID := ""
+	if c.telemetry != nil {
+		installID = c.telemetry.InstallID()
+	}
+	if installID == "" {
+		installID = "r-unknown"
+	}
+
+	payload := map[string]string{
+		"install_id": installID,
+		"platform":   app.OS,
+		"version":    app.Version,
+		"message":    message,
+		"logs":       logs,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	endpoint := supportEndpoint()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if c.logger != nil {
+			c.logger.Logf("[support] report delivery error: %v", err)
+		}
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+	if c.logger != nil {
+		c.logger.Logf("[support] report sent, response: %v", result)
+	}
+	return result, nil
+}
 
 // ============================================================
 //  Routing (split-tunnel: master toggle + mode + per-mode lists)

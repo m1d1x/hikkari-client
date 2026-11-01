@@ -960,6 +960,20 @@ class AppState extends ChangeNotifier {
 
   Future<void> flushRouting() => _routingCommand(_core.flushRouting);
 
+  Future<String> exportRoutingSnapshot() => _core.exportRoutingSnapshot();
+
+  Future<void> importRoutingSnapshot(String data) async {
+    await _core.importRoutingSnapshot(data);
+    await refreshRoutingState();
+    await refreshPresetState();
+  }
+
+  Future<void> resetToDefaults() async {
+    await _core.resetToDefaults();
+    await refreshRoutingState();
+    await refreshPresetState();
+  }
+
   /// Refreshes uptime history. Cheap-ish (one FFI call + dart-side copies);
   /// call it from the widget that displays uptime, on its own timer.
   Future<void> refreshUptime() async {
@@ -973,6 +987,24 @@ class AppState extends ChangeNotifier {
       return await _core.logTail();
     } on NekkoboxError catch (e) {
       return 'log error: ${e.message}';
+    }
+  }
+
+  Future<String> collectDiagnostics([int maxLines = 500]) async {
+    if (_dryRun) return '[engine/dry] no log — engine calls are disabled';
+    try {
+      return await _core.collectDiagnostics(maxLines);
+    } on NekkoboxError catch (e) {
+      return 'diagnostics error: ${e.message}';
+    }
+  }
+
+  Future<void> submitSupportReport(String message) async {
+    if (_dryRun) return;
+    try {
+      await _core.submitSupportReport(message);
+    } catch (e) {
+      debugPrint('[support] submit report error: $e');
     }
   }
 

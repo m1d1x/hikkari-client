@@ -18,6 +18,7 @@ class CopyFlash extends StatefulWidget {
     this.iconSize = 15,
     this.fontSize = 13,
     this.bodyOpacity = 0.45,
+    this.label = 'скопировано',
   });
 
   /// The body the confirmation replaces while playing. It is dimmed, not
@@ -33,6 +34,9 @@ class CopyFlash extends StatefulWidget {
   /// How far the body fades while the confirmation is up. A host that already
   /// dims its own body under an overlay passes 1.
   final double bodyOpacity;
+
+  /// Text displayed next to the checkmark.
+  final String label;
 
   @override
   State<CopyFlash> createState() => CopyFlashState();
@@ -133,7 +137,7 @@ class CopyFlashState extends State<CopyFlash>
             scale: 0.8 + 0.2 * labelBack,
             alignment: Alignment.centerLeft,
             child: Text(
-              'скопировано',
+              widget.label,
               textHeightBehavior: const TextHeightBehavior(
                 applyHeightToFirstAscent: false,
                 applyHeightToLastDescent: false,

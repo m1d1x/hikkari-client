@@ -7,12 +7,13 @@ import '../ui/nekko_segmented.dart';
 import '../ui/nekko_toast.dart';
 import '../theme/tokens.dart';
 import 'route_section.dart';
+import 'routing_rules_actions.dart';
 import 'service_presets.dart';
 import 'update_banner.dart';
 
 /// Fallback client version displayed in settings when [UpdateStatus.installed]
 /// is not populated yet.
-const String kFallbackClientVersion = '1.0.9';
+const String kFallbackClientVersion = '1.0.11';
 
 /// The top row: the settings action on the right and, when an update is
 /// ready, the [UpdateBanner] beside it. The old brand/IP header was
@@ -277,6 +278,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               RouteSettingsSection(onHintChanged: _setHint),
               const SizedBox(height: 10),
               PresetSettingsSection(onHintChanged: _setHint),
+              const SizedBox(height: 12),
+              RoutingRulesActions(onHintChanged: _setHint),
               const SizedBox(height: 8),
               SizedBox(
                 height: 42,

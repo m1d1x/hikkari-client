@@ -143,6 +143,18 @@ class _LogOverlayState extends State<LogOverlay> {
     );
   }
 
+  Future<void> _sendReport() async {
+    final appState = context.read<AppState>();
+    await appState.submitSupportReport('Отправка журнала логов из приложения');
+    if (!mounted) return;
+    NekkoToast.show(
+      context,
+      'лог отправлен в поддержку',
+      icon: Icons.check_rounded,
+      hold: NekkoToast.glanceHold,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -239,6 +251,15 @@ class _LogOverlayState extends State<LogOverlay> {
           constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           onPressed: _lines.isEmpty ? null : _copy,
           icon: Icon(Icons.copy, color: t.textMuted),
+        ),
+        const SizedBox(width: 4),
+        IconButton(
+          tooltip: 'отправить в поддержку',
+          iconSize: 15,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          onPressed: _lines.isEmpty ? null : _sendReport,
+          icon: Icon(Icons.send_rounded, color: t.textMuted),
         ),
         IconButton(
           tooltip: 'закрыть',

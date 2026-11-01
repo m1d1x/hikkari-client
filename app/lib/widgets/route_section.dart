@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../core/models.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
-import '../ui/nekko_segmented.dart';
 import '../ui/nekko_animated_height.dart';
+import '../ui/nekko_segmented.dart';
 import '../ui/nekko_text_field.dart';
+import '../ui/nekko_toast.dart';
 import 'app_picker_dialog.dart';
+import 'import_routing_dialog.dart';
 import 'service_presets.dart';
 
 /// "Маршрутизация" section — master toggle + three category tabs + the
@@ -345,18 +348,35 @@ class _RouteSectionState extends State<RouteSection>
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         key: const ValueKey('routing_preset_actions'),
-        children: const [
+        children: [
           Expanded(
             child: _PresetActionPill(
               label: 'импорт',
               icon: Icons.south_rounded,
+              onTap: () => ImportRoutingDialog.show(context),
             ),
           ),
-          SizedBox(width: 6),
+          const SizedBox(width: 6),
           Expanded(
             child: _PresetActionPill(
               label: 'экспорт',
               icon: Icons.north_rounded,
+              onTap: () async {
+                try {
+                  final state = context.read<AppState>();
+                  final data = await state.exportRoutingSnapshot();
+                  await Clipboard.setData(ClipboardData(text: data));
+                  if (!context.mounted) return;
+                  NekkoToast.show(context, 'Правила скопированы');
+                } catch (e) {
+                  if (!context.mounted) return;
+                  NekkoToast.show(
+                    context,
+                    'не удалось экспортировать правила: $e',
+                    icon: Icons.error_outline_rounded,
+                  );
+                }
+              },
             ),
           ),
         ],
@@ -851,10 +871,15 @@ class _ItemRowState extends State<_ItemRow> {
 
 /// Visual preview: file import/export will be connected after design approval.
 class _PresetActionPill extends StatefulWidget {
-  const _PresetActionPill({required this.label, required this.icon});
+  const _PresetActionPill({
+    required this.label,
+    required this.icon,
+    this.onTap,
+  });
 
   final String label;
   final IconData icon;
+  final VoidCallback? onTap;
 
   @override
   State<_PresetActionPill> createState() => _PresetActionPillState();
@@ -872,7 +897,7 @@ class _PresetActionPillState extends State<_PresetActionPill> {
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () {},
+        onTap: widget.onTap,
         child: AnimatedContainer(
           duration: AppDurations.fast,
           height: 34,

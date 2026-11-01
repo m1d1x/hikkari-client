@@ -235,6 +235,17 @@ func (a *Agent) SetEnabled(on bool) error {
 	return err
 }
 
+// InstallID returns the persistent anonymous install ID (ensuring it is generated).
+func (a *Agent) InstallID() string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.ensureInstallLocked()
+	return a.st.Install
+}
+
 // Event queues a product event after checking it against the contract.
 // Off → silently nothing; a contract violation → error.
 func (a *Agent) Event(name string, fields map[string]any) error {
