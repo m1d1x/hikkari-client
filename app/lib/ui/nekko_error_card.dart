@@ -229,7 +229,7 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
                                 const SizedBox(width: 6),
                                 Flexible(
                                   child: Text(
-                                    'отправить лог',
+                                    'отправить поддержке',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     textHeightBehavior: const TextHeightBehavior(

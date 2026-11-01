@@ -243,75 +243,20 @@ class _LogOverlayState extends State<LogOverlay> {
     child: Row(
       children: [
         Expanded(
-          child: InkWell(
+          child: _OverlayBtn(
+            icon: Icons.copy_rounded,
+            label: 'скопировать',
             onTap: _lines.isEmpty ? null : _copy,
-            borderRadius: BorderRadius.circular(t.radius),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              decoration: BoxDecoration(
-                color: t.surface2,
-                border: Border.all(color: t.borderStrong),
-                borderRadius: BorderRadius.circular(t.radius),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.copy_rounded,
-                    size: 14,
-                    color: _lines.isEmpty ? t.textFaint : t.textMuted,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'скопировать',
-                    style: TextStyle(
-                      color: _lines.isEmpty ? t.textFaint : t.text,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: InkWell(
+          child: _OverlayBtn(
+            icon: _sending ? Icons.sync_rounded : Icons.send_rounded,
+            label: _sending ? 'отправка...' : 'отправить поддержке',
+            primary: true,
+            busy: _sending,
             onTap: (_lines.isEmpty || _sending) ? null : _sendReport,
-            borderRadius: BorderRadius.circular(t.radius),
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              decoration: BoxDecoration(
-                color: _lines.isEmpty
-                    ? t.surface2
-                    : (_sending ? t.surface2 : t.primary),
-                borderRadius: BorderRadius.circular(t.radius),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    _sending ? Icons.sync_rounded : Icons.send_rounded,
-                    size: 14,
-                    color: _lines.isEmpty
-                        ? t.textFaint
-                        : (_sending ? t.textMuted : Colors.white),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _sending ? 'отправка...' : 'отправить лог',
-                    style: TextStyle(
-                      color: _lines.isEmpty
-                          ? t.textFaint
-                          : (_sending ? t.textMuted : Colors.white),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
         ),
       ],
@@ -340,56 +285,213 @@ class _LogOverlayState extends State<LogOverlay> {
           ),
         ),
         const Spacer(),
-        _chip(
-          t,
+        _ChipBtn(
           icon: Icons.error_outline,
           label: 'ошибки',
           active: _onlyErrors,
           onTap: () => setState(() => _onlyErrors = !_onlyErrors),
         ),
         const SizedBox(width: 6),
-        IconButton(
-          tooltip: 'закрыть',
-          iconSize: 18,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: widget.onClose,
-          icon: Icon(Icons.close, color: t.textMuted),
-        ),
+        _CloseBtn(onTap: widget.onClose),
       ],
     ),
   );
+}
 
-  Widget _chip(
-    NekkoTokens t, {
-    required IconData icon,
-    required String label,
-    required bool active,
-    required VoidCallback onTap,
-  }) => InkWell(
-    onTap: onTap,
-    borderRadius: BorderRadius.circular(t.radius),
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: active ? t.surface2 : Colors.transparent,
-        border: Border.all(color: active ? t.borderStrong : t.border),
-        borderRadius: BorderRadius.circular(t.radius),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: active ? t.bad : t.textMuted),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: active ? t.text : t.textMuted,
-              fontSize: 11,
-            ),
+class _OverlayBtn extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool primary;
+  final bool busy;
+
+  const _OverlayBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.primary = false,
+    this.busy = false,
+  });
+
+  @override
+  State<_OverlayBtn> createState() => _OverlayBtnState();
+}
+
+class _OverlayBtnState extends State<_OverlayBtn> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final enabled = widget.onTap != null;
+
+    Color bg;
+    Border? border;
+    Color fg;
+
+    if (!enabled) {
+      bg = t.surface2.withValues(alpha: 0.4);
+      border = Border.all(color: t.border);
+      fg = t.textFaint;
+    } else if (widget.primary) {
+      bg = _hovered
+          ? Color.alphaBlend(Colors.white.withValues(alpha: 0.14), t.primary)
+          : t.primary;
+      border = null;
+      fg = Colors.white;
+    } else {
+      bg = _hovered ? t.surface2 : t.surface;
+      border = Border.all(color: _hovered ? t.borderStrong : t.border);
+      fg = _hovered ? t.text : t.textMuted;
+    }
+
+    return MouseRegion(
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: AppDurations.fast,
+          curve: AppCurves.fastInSlowOut,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: bg,
+            border: border,
+            borderRadius: BorderRadius.circular(t.radius),
           ),
-        ],
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(widget.icon, size: 14, color: fg),
+              const SizedBox(width: 6),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: fg,
+                  fontSize: 12,
+                  fontWeight: widget.primary ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
-    ),
-  );
+    );
+  }
+}
+
+class _ChipBtn extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _ChipBtn({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  State<_ChipBtn> createState() => _ChipBtnState();
+}
+
+class _ChipBtnState extends State<_ChipBtn> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final active = widget.active;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: AppDurations.fast,
+          curve: AppCurves.fastInSlowOut,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: active
+                ? (_hovered ? t.surface2 : t.surface2.withValues(alpha: 0.8))
+                : (_hovered ? t.surface2.withValues(alpha: 0.5) : Colors.transparent),
+            border: Border.all(
+              color: active
+                  ? (_hovered ? t.bad : t.borderStrong)
+                  : (_hovered ? t.borderStrong : t.border),
+            ),
+            borderRadius: BorderRadius.circular(t.radius),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                widget.icon,
+                size: 12,
+                color: active ? t.bad : (_hovered ? t.text : t.textMuted),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: active ? t.text : (_hovered ? t.text : t.textMuted),
+                  fontSize: 11,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CloseBtn extends StatefulWidget {
+  final VoidCallback onTap;
+
+  const _CloseBtn({required this.onTap});
+
+  @override
+  State<_CloseBtn> createState() => _CloseBtnState();
+}
+
+class _CloseBtnState extends State<_CloseBtn> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: AppDurations.fast,
+          curve: AppCurves.fastInSlowOut,
+          width: 26,
+          height: 26,
+          decoration: BoxDecoration(
+            color: _hovered ? t.surface2 : Colors.transparent,
+            borderRadius: BorderRadius.circular(t.radius),
+          ),
+          alignment: Alignment.center,
+          child: Icon(
+            Icons.close,
+            size: 16,
+            color: _hovered ? t.text : t.textMuted,
+          ),
+        ),
+      ),
+    );
+  }
 }
