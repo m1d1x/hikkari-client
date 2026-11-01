@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -351,8 +352,10 @@ void main() {
       await tester.tap(find.byIcon(Icons.settings_outlined));
       await tester.pumpAndSettle();
 
-      // Default fallback version is shown when updateStatus.installed is empty.
-      expect(find.text('поддержать проект'), findsOneWidget);
+      // Unified footer items: логи, диагностика, поддержать, версия.
+      expect(find.text('логи'), findsOneWidget);
+      expect(find.text('диагностика'), findsOneWidget);
+      expect(find.text('поддержать'), findsOneWidget);
       expect(find.text('hikkari v$kFallbackClientVersion'), findsOneWidget);
 
       // Updating installed version updates the footer label.
@@ -362,11 +365,72 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('hikkari v1.0.9'), findsOneWidget);
 
-      // Tapping «поддержать проект» opens https://hikkari.net.
-      await tester.ensureVisible(find.text('поддержать проект'));
-      await tester.tap(find.text('поддержать проект'));
+      // Tapping «поддержать» opens https://hikkari.net.
+      await tester.ensureVisible(find.text('поддержать'));
+      await tester.tap(find.text('поддержать'));
       await tester.pumpAndSettle();
       expect(launchedDonate, Uri.parse('https://hikkari.net'));
+
+      // Tapping the version label opens https://hikkari.net/changelog.
+      await tester.ensureVisible(find.text('hikkari v1.0.9'));
+      await tester.tap(find.text('hikkari v1.0.9'));
+      await tester.pumpAndSettle();
+      expect(launchedDonate, Uri.parse('https://hikkari.net/changelog'));
+    },
+  );
+
+  testWidgets(
+    'Settings sheet footer unified style, hover transition and callbacks',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 650));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final state = AppState(_TestEngineCore());
+      addTearDown(state.dispose);
+
+      bool logsOpened = false;
+      await tester.pumpWidget(
+        ChangeNotifierProvider<AppState>.value(
+          value: state,
+          child: MaterialApp(
+            theme: buildAppTheme(),
+            home: Scaffold(
+              body: BrandHeader(
+                onOpenLogs: () => logsOpened = true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Open settings sheet
+      await tester.tap(find.byIcon(Icons.settings_outlined));
+      await tester.pumpAndSettle();
+
+      // Check text color initially (t.textMuted)
+      final textWidgetBefore = tester.widget<Text>(find.text('логи'));
+      expect(textWidgetBefore.style?.color, const Color(0xFF8A8A8E));
+
+      // Hover over 'логи'
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      await gesture.moveTo(tester.getCenter(find.text('логи')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 70));
+
+      final textWidgetMid = tester.widget<Text>(find.text('логи'));
+      expect(textWidgetMid.style?.color, isNot(const Color(0xFF8A8A8E)));
+
+      await tester.pumpAndSettle();
+      final textWidgetAfter = tester.widget<Text>(find.text('логи'));
+      expect(textWidgetAfter.style?.color, const Color(0xFFEDEDEE));
+
+      // Tapping 'логи' invokes callback and closes sheet
+      await tester.tap(find.text('логи'));
+      await tester.pumpAndSettle();
+      expect(logsOpened, isTrue);
+      expect(find.text('логи'), findsNothing);
     },
   );
 

@@ -39,11 +39,35 @@ class ProfilesSheet extends StatefulWidget {
   State<ProfilesSheet> createState() => _ProfilesSheetState();
 }
 
-class _ProfilesSheetState extends State<ProfilesSheet> {
+class _ProfilesSheetState extends State<ProfilesSheet>
+    with WidgetsBindingObserver {
   String? _expanded;
   String _query = '';
   String? _lastActive;
   bool _lastActiveInitialized = false;
+  late final AppState _state;
+
+  // Servers are measured only while this list is on screen: open, and the app
+  // not in the background.
+  @override
+  void initState() {
+    super.initState();
+    _state = context.read<AppState>();
+    WidgetsBinding.instance.addObserver(this);
+    _state.setServerListOpen(true);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _state.setServerListOpen(state == AppLifecycleState.resumed);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _state.setServerListOpen(false);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -421,7 +445,8 @@ class _SubscriptionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final title = info.title.isEmpty ? 'подписка' : info.title.toLowerCase();
+    final isHikkari = info.isHikkari;
+    final fullTitle = info.displayTitle;
     final expires = info.expiresAt > 0
         ? DateTime.fromMillisecondsSinceEpoch(info.expiresAt * 1000)
         : null;
@@ -450,11 +475,14 @@ class _SubscriptionCard extends StatelessWidget {
         : usedBytes > 0
         ? '${_formatGigabytes(usedBytes)} ГБ'
         : '';
+    final borderColor = isHikkari
+        ? t.primary.withValues(alpha: 0.6)
+        : t.borderStrong;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
       child: CustomPaint(
         foregroundPainter: _DashedSubscriptionBorder(
-          color: t.borderStrong,
+          color: borderColor,
           radius: t.radiusLg,
         ),
         child: Column(
@@ -464,14 +492,18 @@ class _SubscriptionCard extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: t.text,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                    child: Tooltip(
+                      message: fullTitle,
+                      waitDuration: const Duration(milliseconds: 300),
+                      child: Text(
+                        fullTitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: isHikkari ? t.primary : t.text,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),

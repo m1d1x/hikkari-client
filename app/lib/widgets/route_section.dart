@@ -155,29 +155,24 @@ class _RouteSectionState extends State<RouteSection>
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      child: TapRegion(
-        enabled: _open,
-        behavior: HitTestBehavior.opaque,
-        onTapOutside: (_) => _setOpen(false),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _island(
-              t,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [_head(t, s), _reveal(_tabHeight(_body(t, s)))],
-              ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _island(
+            t,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [_head(t, s), _reveal(_tabHeight(_body(t, s)))],
             ),
-            _itemsBlock(t, reversedItems),
-            _expandingIsland(
-              t,
-              key: const ValueKey('route_presets_surface'),
-              child: _tabHeight(ServicePresets(category: _tab)),
-            ),
-          ],
-        ),
+          ),
+          _itemsBlock(t, reversedItems),
+          _expandingIsland(
+            t,
+            key: const ValueKey('route_presets_surface'),
+            child: _tabHeight(ServicePresets(category: _tab)),
+          ),
+        ],
       ),
     );
   }
@@ -197,7 +192,7 @@ class _RouteSectionState extends State<RouteSection>
       offstage: _expandController.value == 0,
       child: ClipRect(
         child: Align(
-          alignment: Alignment.bottomCenter,
+          alignment: Alignment.topCenter,
           heightFactor: _expandController.value,
           child: child,
         ),
@@ -361,7 +356,9 @@ class _RouteSectionState extends State<RouteSection>
             child: Opacity(
               opacity: progress,
               child: Transform.translate(
-                offset: Offset(0, -8 * (1 - progress)),
+                // whole pixels only: a fractional offset leaves glyphs
+                // subpixel-blurred, then they snap when it lands on 0
+                offset: Offset(0, (-8 * (1 - progress)).roundToDouble()),
                 child: child,
               ),
             ),
@@ -952,11 +949,7 @@ class _PresetActionPillState extends State<_PresetActionPill> {
                 tween: ColorTween(end: color),
                 duration: AppDurations.fast,
                 curve: AppCurves.fastInSlowOut,
-                builder: (_, c, __) => Icon(
-                  widget.icon,
-                  size: 14,
-                  color: c,
-                ),
+                builder: (_, c, __) => Icon(widget.icon, size: 14, color: c),
               ),
               const SizedBox(width: 7),
               TweenAnimationBuilder<Color?>(
@@ -1031,11 +1024,7 @@ class _PresetActionIconState extends State<_PresetActionIcon> {
                 tween: ColorTween(end: color),
                 duration: AppDurations.fast,
                 curve: AppCurves.fastInSlowOut,
-                builder: (_, c, __) => Icon(
-                  widget.icon,
-                  size: 15,
-                  color: c,
-                ),
+                builder: (_, c, __) => Icon(widget.icon, size: 15, color: c),
               ),
             ),
           ),

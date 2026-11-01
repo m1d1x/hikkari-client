@@ -59,6 +59,7 @@ else
 fi
 
 mkdir -p "$FRAMEWORKS"
+rm -f "$FRAMEWORKS/libnekkobox.h"
 cp -f "$OUT_DIR/$LIB" "$FRAMEWORKS/$LIB"
 install_name_tool -id "@rpath/$LIB" "$FRAMEWORKS/$LIB" 2>/dev/null || true
 

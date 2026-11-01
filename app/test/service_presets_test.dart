@@ -213,9 +213,6 @@ void main() {
       skipOffstage: false,
     );
     final naturalRowWidth = tester.getSize(ruleRow).width;
-    final anchoredBottom = tester.getBottomRight(section).dy;
-    final headerInset =
-        tester.getTopLeft(header).dy - tester.getTopLeft(section).dy;
     final surfaces = [
       find.byKey(const ValueKey('route_manual_surface'), skipOffstage: false),
       find.byKey(const ValueKey('route_presets_surface'), skipOffstage: false),
@@ -249,18 +246,6 @@ void main() {
           isTrue,
           reason: 'frame $i: $previous -> $current',
         );
-        if (anchored) {
-          expect(
-            tester.getBottomRight(section).dy,
-            closeTo(anchoredBottom, .01),
-            reason: 'bottom must remain fixed across the flex/scroll threshold',
-          );
-          expect(
-            tester.getTopLeft(header).dy + current,
-            closeTo(anchoredBottom + headerInset, .01),
-            reason: 'header must keep moving as total height grows',
-          );
-        }
         final currentSurfaces = surfaces
             .map((f) => tester.getSize(f).height)
             .toList();
@@ -358,7 +343,7 @@ void main() {
       await tester.tap(find.text('маршрутизация'));
       await tester.pumpAndSettle();
       final domainsHeight = height();
-      final bottom = tester.getBottomRight(section).dy;
+      final top = tester.getTopLeft(section).dy;
       await tester.tap(find.text('ip'));
       await tester.pump();
       expect(
@@ -380,7 +365,7 @@ void main() {
       for (var i = 0; i < 30; i++) {
         await tester.pump(const Duration(milliseconds: 16));
         expect(height(), greaterThanOrEqualTo(previous - .01));
-        expect(tester.getBottomRight(section).dy, closeTo(bottom, .01));
+        expect(tester.getTopLeft(section).dy, closeTo(top, .01));
         expect(tester.takeException(), isNull);
         previous = height();
       }
@@ -405,7 +390,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(height(), closeTo(domainsHeight, .01));
       // A nested group's own animation must not be chased by the tab viewport.
-      await tester.tap(find.text('steam'), buttons: kSecondaryMouseButton);
+      await tester.tap(
+        find.text('steam'),
+        buttons: kSecondaryMouseButton,
+        warnIfMissed: false,
+      );
       await tester.pump();
       expect(height(), closeTo(domainsHeight, .01));
       await tester.pump(AppDurations.routingDetails * .5);
@@ -492,7 +481,7 @@ void main() {
   });
 
   testWidgets(
-    'outside click collapses routing without consuming the target action',
+    'outside click does not collapse routing, tapping header collapses',
     (tester) async {
       var outsideClicks = 0;
       final state = AppState(PresetCore());
@@ -511,7 +500,6 @@ void main() {
                   ),
                   const Expanded(
                     child: SingleChildScrollView(
-                      reverse: true,
                       child: RouteSection(),
                     ),
                   ),
@@ -543,9 +531,12 @@ void main() {
       expect(height(), greaterThan(opened));
       await tester.tap(find.text('снаружи'));
       await tester.pumpAndSettle();
-      expect(height(), closeTo(closed, .01));
+      expect(height(), greaterThan(closed));
       expect(outsideClicks, 1);
       expect(state.routing.enabled, isTrue);
+      await tester.tap(find.text('маршрутизация'));
+      await tester.pumpAndSettle();
+      expect(height(), closeTo(closed, .01));
       await tester.tap(find.text('маршрутизация'));
       await tester.pumpAndSettle();
       expect(
@@ -813,22 +804,67 @@ void main() {
       'ivi',
       'okko',
       'wink',
+      'premier',
+      'start',
+      'kion',
+      'smotrim',
       'streaming-ru',
       'transport-ru',
+      'rzd',
+      'aeroflot',
+      's7',
+      'pobeda',
+      'aviasales',
       'rutube',
       'banks',
+      'sber',
+      'tbank',
+      'vtb',
+      'alfa',
+      'gazprombank',
+      'raiffeisen',
+      'sovcombank',
+      'tochka',
+      'psb',
+      'yoomoney',
+      'mir',
       'gosuslugi',
       'marketplaces',
       'ozon',
       'wildberries',
       'avito',
-      'sber',
-      'tbank',
-      'vtb',
-      'alfa',
+      'megamarket',
+      'lamoda',
+      'dns',
+      'citilink',
+      'mvideo',
+      'samokat',
+      'kuper',
+      'cian',
+      'hh',
+      'mts',
+      'megafon',
+      'beeline',
+      't2',
+      'rostelecom',
       'ok',
       'habr',
+      'pikabu',
+      'vc',
+      'dtf',
+      'rbc',
+      'kommersant',
+      'lenta',
+      'ria',
+      'tass',
       'kaspersky',
+      'selectel',
+      'timeweb',
+      'regru',
+      '1c',
+      'bitrix24',
+      'kontur',
+      'sbis',
       '2gis',
       'steam',
       'faceit',
@@ -850,6 +886,36 @@ void main() {
       final (icon, color) = resolveServiceIcon(id, fallback);
       expect(icon, isNot(Icons.apps), reason: 'icon $id fell back to generic');
       expect(color, isNot(fallback), reason: 'icon $id used fallback color');
+    }
+  });
+
+  test('resolveBrandSvg resolves authentic vector SVG for brands', () {
+    for (final id in [
+      'yandex',
+      'yandex-music',
+      'yandex-taxi',
+      'yandex-maps',
+      'yandex-disk',
+      'yandex-market',
+      'sber',
+      'tbank',
+      'vtb',
+      'alfa',
+      'ozon',
+      'wildberries',
+      'avito',
+      'gosuslugi',
+      'vk',
+      'openai',
+      'steam',
+      'youtube',
+      'telegram',
+      'discord',
+      'github',
+    ]) {
+      final svg = resolveBrandSvg(id);
+      expect(svg, isNotNull, reason: 'brand $id must have authentic SVG');
+      expect(svg, contains('<svg'), reason: 'brand $id SVG is missing <svg tag');
     }
   });
 

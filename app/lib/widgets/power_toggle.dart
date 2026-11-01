@@ -86,7 +86,9 @@ class _PowerToggleState extends State<PowerToggle> {
                 onSecondaryTap: kDebugMode
                     ? () => s.simulateEngineFailure()
                     : null,
-                onLongPress: () => s.simulateEngineFailure(),
+                onLongPress: kDebugMode
+                    ? () => s.simulateEngineFailure()
+                    : null,
                 mouseCursor: busy
                     ? SystemMouseCursors.basic
                     : SystemMouseCursors.click,

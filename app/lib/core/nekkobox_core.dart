@@ -94,6 +94,30 @@ abstract class NekkoboxCore {
   /// Hands over to the launcher; the app must exit right after this returns.
   Future<void> restartToUpdate() => _callAsync('RestartToUpdate');
 
+  // ----- network doctor (see engine core/netdoctor) -----
+
+  /// Read-only check: system proxy verdict and the direct-path selection.
+  Future<Map<String, dynamic>> networkDiagnose() async =>
+      (await _callAsync('NetworkDiagnose') as Map<String, dynamic>?) ?? {};
+
+  /// Soft repair: orphan proxy off, DNS cache flushed, direct path
+  /// re-selected (reconnecting a running tunnel).
+  Future<Map<String, dynamic>> repairNetwork() async =>
+      (await _callAsync('RepairNetwork') as Map<String, dynamic>?) ?? {};
+
+  /// Read-only: what the deep reset would deal with (hosts overrides, DPI
+  /// tools) and the foreign WFP providers nothing touches.
+  Future<Map<String, dynamic>> scanNetworkStack() async =>
+      (await _callAsync('ScanNetworkStack') as Map<String, dynamic>?) ?? {};
+
+  /// Deep reset through the service (Winsock + TCP/IP, needs a reboot).
+  /// Without [force] it is refused while static-IP adapters would lose
+  /// their configuration; the result then lists them.
+  Future<Map<String, dynamic>> resetNetworkStack({bool force = false}) async =>
+      (await _callAsync('ResetNetworkStack', {'force': force})
+          as Map<String, dynamic>?) ??
+      {};
+
   // ----- health -----
 
   Future<HealthInfo> health() async =>
@@ -243,7 +267,17 @@ abstract class NekkoboxCore {
   /// Toggles auto-fastest mode. Reloads the engine if it was running.
   Future<void> setAutoMode(bool on) => _callAsync('SetAutoMode', {'on': on});
 
+  /// The profile traffic goes through: in auto mode the core's own choice.
+  /// Empty while the engine is off.
+  Future<String> carryingProfile() async =>
+      await _callAsync('CarryingProfile') as String? ?? '';
+
   // ----- uptime -----
+
+  /// Tells the engine the server list went on or off screen. Other servers are
+  /// measured only while it is on screen.
+  Future<void> setServerListOpen(bool open) =>
+      _callAsync('SetServerListOpen', {'open': open});
 
   Future<Map<String, List<PingSample>>> uptimeHistory() async {
     final raw = await _callAsync('UptimeHistory') as Map<String, dynamic>;

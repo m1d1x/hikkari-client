@@ -6,6 +6,7 @@ import '../state/app_state.dart';
 import '../ui/nekko_segmented.dart';
 import '../ui/nekko_toast.dart';
 import '../theme/tokens.dart';
+import 'network_doctor_dialog.dart';
 import 'route_section.dart';
 import 'service_presets.dart';
 import 'update_banner.dart';
@@ -26,6 +27,7 @@ class BrandHeader extends StatelessWidget {
   static const double _centredFrom = 420;
 
   static final Uri donateUri = Uri.parse('https://hikkari.net');
+  static final Uri changelogUri = Uri.parse('https://hikkari.net/changelog');
 
   final VoidCallback onOpenLogs;
   final Future<bool> Function(Uri uri)? onLaunchUrl;
@@ -116,9 +118,6 @@ class _SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<_SettingsSheet> {
   String? _hint;
   int _hintVersion = 0;
-  bool _logsHover = false;
-  bool _simulateHover = false;
-  bool _donateHover = false;
 
   // Seven quick taps on the title flip the tester mode; a pause starts over.
   static const _testerTaps = 7;
@@ -303,161 +302,44 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                         ),
                 ),
               ),
-              const SizedBox(height: 4),
-              MouseRegion(
-                cursor: SystemMouseCursors.click,
-                onEnter: (_) => setState(() => _logsHover = true),
-                onExit: (_) => setState(() => _logsHover = false),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    Navigator.of(context).maybePop();
-                    widget.onOpenLogs();
-                  },
-                  child: AnimatedContainer(
-                    duration: AppDurations.fast,
-                    curve: AppCurves.fastInSlowOut,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(
-                      color: _logsHover ? t.surface2 : Colors.transparent,
-                      borderRadius: BorderRadius.circular(t.radius),
-                      border: Border.all(
-                        color: _logsHover
-                            ? t.primary.withValues(alpha: .55)
-                            : t.borderStrong,
-                      ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  runSpacing: 4,
+                  children: [
+                    _FooterButton(
+                      icon: Icons.terminal_rounded,
+                      label: 'логи',
+                      onTap: () {
+                        Navigator.of(context).maybePop();
+                        widget.onOpenLogs();
+                      },
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.terminal, size: 16, color: t.text),
-                        const SizedBox(width: 8),
-                        Text(
-                          'логи',
-                          style: TextStyle(
-                            color: t.text,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+                    _FooterButton(
+                      icon: Icons.auto_fix_high_rounded,
+                      label: 'диагностика',
+                      onTap: () {
+                        Navigator.of(context).maybePop();
+                        NetworkDoctorDialog.show(context);
+                      },
                     ),
-                  ),
+                    _FooterButton(
+                      icon: Icons.favorite_rounded,
+                      iconColor: t.primary,
+                      label: 'поддержать',
+                      onTap: _openDonate,
+                    ),
+                    _FooterButton(
+                      label: versionLabel,
+                      isMono: true,
+                      tooltip: 'история изменений',
+                      onTap: _openChangelog,
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 6),
-              MouseRegion(
-                cursor: SystemMouseCursors.click,
-                onEnter: (_) => setState(() => _simulateHover = true),
-                onExit: (_) => setState(() => _simulateHover = false),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    Navigator.of(context).maybePop();
-                    context.read<AppState>().simulateEngineFailure();
-                  },
-                  child: AnimatedContainer(
-                    duration: AppDurations.fast,
-                    curve: AppCurves.fastInSlowOut,
-                    padding: const EdgeInsets.symmetric(vertical: 11),
-                    decoration: BoxDecoration(
-                      color: _simulateHover
-                          ? t.bad.withValues(alpha: 0.12)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(t.radius),
-                      border: Border.all(
-                        color: _simulateHover
-                            ? t.bad.withValues(alpha: 0.6)
-                            : t.borderStrong,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.bug_report_outlined, size: 16, color: t.bad),
-                        const SizedBox(width: 8),
-                        Text(
-                          'симулировать ошибку',
-                          style: TextStyle(
-                            color: t.bad,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        onEnter: (_) => setState(() => _donateHover = true),
-                        onExit: (_) => setState(() => _donateHover = false),
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: _openDonate,
-                          child: AnimatedContainer(
-                            duration: AppDurations.fast,
-                            curve: AppCurves.fastInSlowOut,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _donateHover
-                                  ? t.primary.withValues(alpha: 0.12)
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _donateHover
-                                      ? Icons.favorite_rounded
-                                      : Icons.favorite_border_rounded,
-                                  size: 14,
-                                  color: t.primary,
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    'поддержать проект',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: _donateHover
-                                          ? t.text
-                                          : t.textMuted,
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    versionLabel,
-                    style: TextStyle(
-                      color: t.textFaint,
-                      fontFamily: t.monoFamily,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
               ),
             ],
           ),
@@ -473,6 +355,18 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     } else {
       await launchUrl(
         BrandHeader.donateUri,
+        mode: LaunchMode.externalApplication,
+      );
+    }
+  }
+
+  Future<void> _openChangelog() async {
+    final launcher = widget.onLaunchUrl;
+    if (launcher != null) {
+      await launcher(BrandHeader.changelogUri);
+    } else {
+      await launchUrl(
+        BrandHeader.changelogUri,
         mode: LaunchMode.externalApplication,
       );
     }
@@ -689,5 +583,109 @@ class _HoverIconState extends State<_HoverIcon> {
         ),
       ),
     );
+  }
+}
+
+class _FooterButton extends StatefulWidget {
+  final String label;
+  final VoidCallback onTap;
+  final IconData? icon;
+  final Color? iconColor;
+  final String? tooltip;
+  final bool isMono;
+
+  const _FooterButton({
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.iconColor,
+    this.tooltip,
+    this.isMono = false,
+  });
+
+  @override
+  State<_FooterButton> createState() => _FooterButtonState();
+}
+
+class _FooterButtonState extends State<_FooterButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _anim;
+  late final Animation<double> _curve;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim = AnimationController(
+      vsync: this,
+      duration: AppDurations.hover,
+    );
+    _curve = CurvedAnimation(parent: _anim, curve: AppCurves.hover);
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+
+    Widget child = MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => _anim.forward(),
+      onExit: (_) => _anim.reverse(),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedBuilder(
+          animation: _curve,
+          builder: (context, _) {
+            final progress = _curve.value;
+            final textColor = Color.lerp(t.textMuted, t.text, progress)!;
+            final iconColor = widget.iconColor != null
+                ? Color.lerp(
+                    widget.iconColor!.withValues(alpha: 0.72),
+                    widget.iconColor!,
+                    progress,
+                  )!
+                : textColor;
+
+            return Container(
+              color: Colors.transparent,
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (widget.icon != null) ...[
+                    Icon(widget.icon, size: 13, color: iconColor),
+                    const SizedBox(width: 5),
+                  ],
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: textColor,
+                      fontFamily: widget.isMono ? t.monoFamily : null,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    if (widget.tooltip != null) {
+      return Tooltip(
+        message: widget.tooltip!,
+        waitDuration: const Duration(milliseconds: 400),
+        child: child,
+      );
+    }
+    return child;
   }
 }

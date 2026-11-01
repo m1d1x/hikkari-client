@@ -20,7 +20,8 @@ import 'sparkline.dart';
 class _ServicePing {
   final String name;
   final String host;
-  final IconData icon;
+  final IconData? icon;
+  final String? iconId;
   final Color color;
   final bool custom;
   // Для кастомных сервисов иконка тянется по сети (favicon домена). Если null —
@@ -32,7 +33,8 @@ class _ServicePing {
   _ServicePing({
     required this.name,
     required this.host,
-    required this.icon,
+    this.icon,
+    this.iconId,
     required this.color,
     this.custom = false,
     this.faviconUrl,
@@ -161,36 +163,42 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
       _ServicePing(
         name: 'YouTube',
         host: 'youtube.com',
+        iconId: 'youtube',
         icon: SimpleIcons.youtube,
         color: SimpleIconColors.youtube,
       ),
       _ServicePing(
         name: 'Telegram',
         host: 'telegram.org',
+        iconId: 'telegram',
         icon: SimpleIcons.telegram,
         color: SimpleIconColors.telegram,
       ),
       _ServicePing(
         name: 'Discord',
         host: 'discord.com',
+        iconId: 'discord',
         icon: SimpleIcons.discord,
         color: SimpleIconColors.discord,
       ),
       _ServicePing(
         name: 'Google',
         host: 'google.com',
+        iconId: 'google',
         icon: SimpleIcons.google,
         color: SimpleIconColors.google,
       ),
       _ServicePing(
         name: 'Instagram',
         host: 'instagram.com',
+        iconId: 'instagram',
         icon: SimpleIcons.instagram,
         color: SimpleIconColors.instagram,
       ),
       _ServicePing(
         name: 'Steam',
         host: 'steampowered.com',
+        iconId: 'steam',
         icon: SimpleIcons.steam,
         // Steam's own brand color is pure black — invisible on our dark
         // surface, so we use a light neutral instead of the official hex.
@@ -199,8 +207,9 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
       _ServicePing(
         name: 'ChatGPT',
         host: 'chat.openai.com',
+        iconId: 'openai',
         icon: Icons.chat_bubble_outline,
-        color: const Color(0xFF7FD9B0),
+        color: const Color(0xFF10A37F),
       ),
     ];
   }
@@ -467,6 +476,7 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
               child: Row(
                 children: [
                   ServiceIconBadge(
+                    iconId: svc.iconId,
                     icon: svc.icon,
                     color: svc.color,
                     faviconUrl: svc.faviconUrl,

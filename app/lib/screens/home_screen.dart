@@ -68,9 +68,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const Expanded(
             child: CustomScrollView(
-              // Keep the bottom edge anchored as routing grows past the
-              // viewport. Its header must keep moving when flex space runs out.
-              reverse: true,
               slivers: [
                 SliverFillRemaining(
                   hasScrollBody: false,

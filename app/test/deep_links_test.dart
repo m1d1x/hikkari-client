@@ -58,5 +58,63 @@ void main() {
       expect(info('https://hikkari.net/').renewUrl, isNull);
       expect(info('').renewUrl, isNull);
     });
+
+    test('isHikkari identifies hikkari subscriptions accurately', () {
+      expect(info('https://hikkari.net/pay#renew=tok123').isHikkari, isTrue);
+      expect(
+        SubscriptionInfo(
+          id: '1',
+          title: 'hk_pelmen',
+          uploadBytes: 0,
+          downloadBytes: 0,
+          totalBytes: 0,
+          expiresAt: 0,
+          updateIntervalSeconds: 0,
+          webPageUrl: '',
+          supportUrl: '',
+        ).isHikkari,
+        isTrue,
+      );
+      expect(
+        SubscriptionInfo(
+          id: '2',
+          title: 'hikkari_123456',
+          uploadBytes: 0,
+          downloadBytes: 0,
+          totalBytes: 0,
+          expiresAt: 0,
+          updateIntervalSeconds: 0,
+          webPageUrl: '',
+          supportUrl: '',
+        ).isHikkari,
+        isTrue,
+      );
+      expect(
+        SubscriptionInfo(
+          id: '3',
+          title: 'pelmeska_s',
+          uploadBytes: 0,
+          downloadBytes: 0,
+          totalBytes: 0,
+          expiresAt: 0,
+          updateIntervalSeconds: 0,
+          webPageUrl: 'https://other-vpn.example',
+          supportUrl: '',
+        ).isHikkari,
+        isFalse,
+      );
+    });
+
+    test('formatProfileLabel formats cities into clean lowercase names', () {
+      expect(formatProfileLabel('ФИНКА СТАРАЯ'), 'хельсинки-01');
+      expect(formatProfileLabel('НИДЕРЛАНДСК'), 'амстердам-01');
+      expect(formatProfileLabel('ГЕРМАНСК'), 'франкфурт-01');
+      expect(formatProfileLabel('Hikkari ams1-1'), 'амстердам-01');
+      expect(formatProfileLabel('Hikkari ams1-2'), 'амстердам-02');
+      expect(formatProfileLabel('Hikkari hel1-1'), 'хельсинки-01');
+      expect(formatProfileLabel('Hikkari fra1-3'), 'франкфурт-03');
+      expect(formatProfileLabel('хельсинки-02'), 'хельсинки-02');
+      expect(formatProfileLabel('Custom-Server-1'), 'custom-server-1');
+    });
   });
 }

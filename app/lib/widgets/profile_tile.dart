@@ -77,7 +77,7 @@ class _ProfileTileState extends State<ProfileTile> {
       onSecondaryTap: () =>
           ServicePingSheet.show(context, widget.profile.label),
       child: ProfileSummaryCard(
-        title: widget.profile.label,
+        title: widget.profile.displayLabel,
         leading: (countryCode == null && !countryLoading)
             ? null
             : ProfileFlagBadge(

@@ -189,6 +189,8 @@ class ProfileInfo {
   final String protocol;
   final SubscriptionInfo? subscription;
 
+  String get displayLabel => formatProfileLabel(label);
+
   const ProfileInfo({
     required this.name,
     required this.label,
@@ -254,6 +256,72 @@ class SubscriptionInfo {
     if (uri.host != 'hikkari.net' && uri.host != 'www.hikkari.net') return null;
     return uri.path == '/pay' ? uri : null;
   }
+
+  /// Whether this subscription is issued by Hikkari (versus third-party).
+  bool get isHikkari {
+    if (renewUrl != null) return true;
+    final web = webPageUrl.toLowerCase();
+    if (web.contains('hikkari.net') || web.contains('hikkari')) return true;
+    final t = title.toLowerCase();
+    if (t.contains('hikkari') || t.startsWith('hk_') || t.contains('хиккари')) {
+      return true;
+    }
+    return false;
+  }
+
+  /// Formatted title for presentation in the UI.
+  String get displayTitle {
+    final t = title.trim();
+    if (t.isEmpty) {
+      return isHikkari ? 'hikkari' : 'подписка';
+    }
+    return t.toLowerCase();
+  }
+}
+
+/// Formats raw relay/profile labels into clean lowercase names (e.g. "хельсинки-01").
+String formatProfileLabel(String label) {
+  final clean = label.trim();
+  final lower = clean.toLowerCase();
+
+  // Known legacy / mockup aliases
+  if (lower == 'финка старая' || lower.contains('финка')) return 'хельсинки-01';
+  if (lower == 'нидерландск') return 'амстердам-01';
+  if (lower == 'германск') return 'франкфурт-01';
+
+  // Hikkari relay name pattern: "Hikkari <city-code><box>-<relay>" e.g. "Hikkari ams1-1"
+  final m = RegExp(
+    r'^(?:hikkari\s+)?([a-z]+)(\d+)[-_](\d+)$',
+    caseSensitive: false,
+  ).firstMatch(clean);
+  if (m != null) {
+    final code = m.group(1)!.toLowerCase();
+    final boxNum = int.tryParse(m.group(2)!) ?? 1;
+    final relayNum = int.tryParse(m.group(3)!) ?? 1;
+    final totalIdx = (boxNum - 1) * 3 + relayNum;
+    final numStr = totalIdx < 10 ? '0$totalIdx' : '$totalIdx';
+
+    const cityMap = {
+      'ams': 'амстердам',
+      'hel': 'хельсинки',
+      'fra': 'франкфурт',
+      'sto': 'стокгольм',
+      'ist': 'стамбул',
+      'rix': 'рига',
+      'rig': 'рига',
+      'tll': 'таллин',
+      'vie': 'вена',
+      'lon': 'лондон',
+      'par': 'париж',
+      'war': 'варшава',
+      'waw': 'варшава',
+      'ber': 'берлин',
+    };
+    final city = cityMap[code] ?? code;
+    return '$city-$numStr';
+  }
+
+  return lower;
 }
 
 /// Split-routing mode. Mirrors Go's `configfile.RoutingMode`.

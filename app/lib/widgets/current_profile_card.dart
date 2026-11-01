@@ -30,9 +30,11 @@ class _CurrentProfileCardState extends State<CurrentProfileCard> {
     final profiles = s.profiles;
     if (profiles.isEmpty) return const SizedBox.shrink();
 
+    // In auto mode the stored selection is not what traffic goes through.
+    final auto = s.autoProfileName;
     ProfileInfo? active;
     for (final p in profiles) {
-      if (p.active) {
+      if (auto != null ? p.name == auto : p.active) {
         active = p;
         break;
       }
@@ -42,7 +44,7 @@ class _CurrentProfileCardState extends State<CurrentProfileCard> {
         ? const <PingSample>[]
         : (s.uptime[active.name] ?? const <PingSample>[]);
 
-    final label = active?.label ?? 'выбрать профиль';
+    final label = active?.displayLabel ?? 'выбрать профиль';
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),

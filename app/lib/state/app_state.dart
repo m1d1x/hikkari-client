@@ -98,6 +98,7 @@ class AppState extends ChangeNotifier {
   String? _routingApplyError;
   String? get routingApplyError => _routingApplyError;
   bool _autoMode = false;
+  String _carryingProfile = '';
   String? _lastErrorValue;
 
   String? get _lastError => _lastErrorValue;
@@ -219,6 +220,19 @@ class AppState extends ChangeNotifier {
   }
 
   bool get autoMode => _autoMode;
+
+  /// The profile carrying traffic in auto mode, or null when the engine has
+  /// not picked one. Differs from [activeProfileName], which is the user's own
+  /// selection and is not what auto mode routes through.
+  String? get autoProfileName =>
+      _autoMode && _carryingProfile.isNotEmpty ? _carryingProfile : null;
+
+  /// Reports the server list going on or off screen, so the engine measures
+  /// the other servers only while someone can see the numbers.
+  void setServerListOpen(bool open) {
+    if (_dryRun) return;
+    unawaited(_core.setServerListOpen(open));
+  }
   String? get lastError => _lastError;
   bool get isRunning => _health?.running ?? false;
 
@@ -1203,6 +1217,56 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Network doctor calls. Dry run has no engine: it answers with a healthy
+  /// machine, marked `simulated` so the window says so.
+  Future<Map<String, dynamic>> networkDiagnose() async {
+    if (_dryRun) {
+      return {
+        'simulated': true,
+        'supported': true,
+        'os': Platform.isMacOS ? 'darwin' : Platform.operatingSystem,
+        'proxy': {'verdict': 'none'},
+        'host': {'iface': 'auto', 'dns': 'system', 'probed': true},
+        'hostsOverrides': 0,
+        'dpiTools': <String>[],
+        'foreignWfp': <String>[],
+      };
+    }
+    return _core.networkDiagnose();
+  }
+
+  Future<Map<String, dynamic>> repairNetwork() async {
+    if (_dryRun) {
+      return {
+        'simulated': true,
+        'actions': [
+          {'name': 'proxy_disable', 'done': false},
+          {'name': 'dns_flush', 'done': true},
+        ],
+      };
+    }
+    return _core.repairNetwork();
+  }
+
+  Future<Map<String, dynamic>> scanNetworkStack() async {
+    if (_dryRun) {
+      return {
+        'simulated': true,
+        'hostsOverrides': 0,
+        'dpiTools': <String>[],
+        'foreignWfp': <String>[],
+      };
+    }
+    return _core.scanNetworkStack();
+  }
+
+  Future<Map<String, dynamic>> resetNetworkStack({bool force = false}) async {
+    if (_dryRun) {
+      return {'simulated': true, 'rebootRequired': true};
+    }
+    return _core.resetNetworkStack(force: force);
+  }
+
   /// Sends a support report through the engine, which attaches the
   /// sanitized log and the install id. Throws when it was not delivered, so
   /// the caller can say so; the failure also goes into the engine log.
@@ -1276,6 +1340,7 @@ class AppState extends ChangeNotifier {
         _uptime = await _core.uptimeHistory();
         _serviceUptime = await _core.serviceUptimeHistory();
         _cleanliness = await _core.serverCleanliness();
+        _carryingProfile = await _core.carryingProfile();
       });
     } finally {
       _ticking = false;

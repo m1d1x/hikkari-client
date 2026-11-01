@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 /// System animation curves.
 abstract final class AppCurves {
   /// Shared hover easing for buttons, labels, and icons.
-  static const Curve hover = Curves.easeInOutCubic;
+  /// Snappy responsive start with smooth fluid deceleration.
+  static const Curve hover = Cubic(0.16, 1.0, 0.3, 1.0);
 
   /// Snappy start with smooth deceleration ("fast in, slow out").
   /// Matches standard fluid desktop curve cubic-bezier(0.16, 1, 0.3, 1).
@@ -13,7 +14,7 @@ abstract final class AppCurves {
 /// Standard system transition durations.
 abstract final class AppDurations {
   /// Shared hover transition for coordinated foreground and surface changes.
-  static const Duration hover = Duration(milliseconds: 120);
+  static const Duration hover = Duration(milliseconds: 140);
 
   /// Fast UI transitions (e.g. icon tint, text highlights).
   static const Duration fast = Duration(milliseconds: 160);

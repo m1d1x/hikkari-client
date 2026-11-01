@@ -49,6 +49,54 @@ const _serviceAliases = <String, List<String>>{
   'ivi': ['иви', 'ivi', 'кино'],
   'okko': ['окко', 'okko', 'кино'],
   'wink': ['винк', 'wink', 'ростелеком'],
+  'premier': ['премьер', 'premier', 'сериалы', 'тнт'],
+  'start': ['старт', 'start', 'сериалы'],
+  'kion': ['кион', 'kion'],
+  'smotrim': ['смотрим', 'вгтрк', 'smotrim'],
+  'gazprombank': ['газпромбанк', 'газпром', 'гпб', 'gazprombank', 'gpb'],
+  'raiffeisen': ['райффайзен', 'райф', 'raiffeisen'],
+  'sovcombank': ['совкомбанк', 'совком', 'халва', 'sovcombank'],
+  'tochka': ['точка', 'банк точка', 'tochka'],
+  'psb': ['псб', 'промсвязьбанк', 'psb'],
+  'yoomoney': ['юмани', 'яндекс деньги', 'yoomoney'],
+  'mir': ['мир', 'мир пей', 'нспк', 'mir', 'mir pay'],
+  'megamarket': ['мегамаркет', 'сбермегамаркет', 'сбермаркет'],
+  'lamoda': ['ламода', 'lamoda'],
+  'dns': ['днс', 'dns'],
+  'citilink': ['ситилинк', 'citilink'],
+  'mvideo': ['мвидео', 'м.видео', 'эльдорадо', 'mvideo', 'eldorado'],
+  'samokat': ['самокат', 'доставка', 'samokat'],
+  'kuper': ['купер', 'kuper'],
+  'cian': ['циан', 'недвижимость', 'cian'],
+  'hh': ['хх', 'хэдхантер', 'работа', 'hh', 'headhunter'],
+  'rzd': ['ржд', 'поезд', 'билеты', 'rzd'],
+  'aeroflot': ['аэрофлот', 'самолет', 'авиабилеты', 'aeroflot'],
+  's7': ['с7', 's7', 'сибирь'],
+  'pobeda': ['победа', 'pobeda'],
+  'aviasales': ['авиасейлс', 'билеты', 'aviasales'],
+  'mts': ['мтс', 'mts'],
+  'megafon': ['мегафон', 'megafon'],
+  'beeline': ['билайн', 'beeline'],
+  't2': ['т2', 'tele2', 't2', 'теле2'],
+  'rostelecom': ['ростелеком', 'рт', 'rt', 'rostelecom'],
+  'habr': ['хабр', 'habr'],
+  'pikabu': ['пикабу', 'pikabu'],
+  'vc': ['вц', 'vc', 'vcru'],
+  'dtf': ['дтф', 'dtf'],
+  'rbc': ['рбк', 'rbc'],
+  'kommersant': ['коммерсантъ', 'коммерсант', 'kommersant'],
+  'lenta': ['лента', 'лентару', 'lenta'],
+  'ria': ['риа', 'риа новости', 'ria'],
+  'tass': ['тасс', 'tass'],
+  'kaspersky': ['касперский', 'kaspersky'],
+  'selectel': ['селектел', 'selectel'],
+  'timeweb': ['таймвеб', 'timeweb'],
+  'regru': ['регру', 'рег ру', 'regru', 'reg.ru'],
+  '1c': ['1с', '1c', 'предприятие', 'бухгалтерия'],
+  'bitrix24': ['битрикс', 'битрикс24', 'bitrix'],
+  'kontur': ['контур', 'диадок', 'kontur'],
+  'sbis': ['сбис', 'тензор', 'sbis'],
+  '2gis': ['2гис', '2gis', 'дубльгис', 'навигатор'],
   'streaming-ru': [
     'кино',
     'премьер',
@@ -117,7 +165,11 @@ class _ServicePresetsState extends State<ServicePresets> {
     final rules = _rules(s, platform, widget.category);
     if (rules.any((r) => r.toLowerCase().contains(q))) return true;
     final aliases = _serviceAliases[s.id];
-    if (aliases != null && aliases.any((a) => a.contains(q) || q.contains(a))) {
+    if (aliases != null &&
+        aliases.any((a) =>
+            a.contains(q) ||
+            (a.length >= 3 && q.contains(a)) ||
+            q.split(RegExp(r'\s+')).contains(a))) {
       return true;
     }
     return false;
@@ -394,6 +446,7 @@ class _ServiceRowState extends State<_ServiceRow>
                                   curve: AppCurves.fastInSlowOut,
                                   builder: (context, tint, child) =>
                                       ServiceIconBadge(
+                                        iconId: widget.service.icon,
                                         icon: icon,
                                         color: tint ?? color,
                                       ),
@@ -557,7 +610,7 @@ class _ServiceRowState extends State<_ServiceRow>
                     builder: (context, child) => Offstage(
                       offstage: _expandController.value == 0,
                       child: Align(
-                        alignment: Alignment.bottomCenter,
+                        alignment: Alignment.topCenter,
                         heightFactor: _expandController.value,
                         child: child,
                       ),
