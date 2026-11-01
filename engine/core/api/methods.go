@@ -88,6 +88,8 @@ func (c *Core) startVPN() error {
 	if err := c.requireProfiles(); err != nil {
 		return err
 	}
+	c.sanitizeSystemProxy()
+	c.selectHostLocked()
 	if err := c.rebuildConfig(); err != nil {
 		return err
 	}
@@ -96,6 +98,24 @@ func (c *Core) startVPN() error {
 	}
 	return c.backend.Start(c.ctx)
 }
+
+// sanitizeSystemProxy turns off a system proxy that a crashed proxy tool
+// left pointing at a dead local port: browsers, Steam and Discord follow it
+// and fail on everything the routing sends direct. It never blocks a
+// connect — a failure is only logged.
+func (c *Core) sanitizeSystemProxy() {
+	a, err := sanitizeHostProxy()
+	if c.logger == nil {
+		return
+	}
+	switch {
+	case err != nil:
+		c.logger.Logf("[netdoctor] system proxy check failed: %v", err)
+	case a.Done:
+		c.logger.Logf("[netdoctor] disabled orphan system proxy")
+	}
+}
+
 func (c *Core) StopVPN() error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()

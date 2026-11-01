@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // PipeName is the service's control pipe on Windows.
@@ -57,6 +58,18 @@ const (
 	OpRecoverUpdate  = "recover_update"
 	OpConfirmUpdate  = "confirm_update"
 	OpRollbackUpdate = "rollback_update"
+
+	// OpResetNetwork resets the OS network stack: Winsock and TCP/IP on
+	// Windows (`netsh winsock reset`, `netsh int ip reset`), the routing
+	// table on macOS. See NetworkReset.
+	OpResetNetwork = "reset_network"
+	// OpRepairNetwork is the soft repair where its settings belong to the
+	// machine (macOS). The service decides what is orphaned; see
+	// NetworkRepair.
+	OpRepairNetwork = "repair_network"
+	// OpScanNetwork looks, read-only, for what the deep reset would deal
+	// with and what nothing should touch; see NetworkScan.
+	OpScanNetwork = "scan_network"
 )
 
 type Request struct {
@@ -71,6 +84,12 @@ type Request struct {
 	// Reconnect, for OpApplyUpdate: the tunnel was up when the user asked
 	// to restart, so bring the core back on the new version right away.
 	Reconnect bool `json:"reconnect,omitempty"`
+	// Force, for OpResetNetwork: reset even though adapters with a static
+	// IPv4 configuration would lose it. The user confirmed that explicitly.
+	Force bool `json:"force,omitempty"`
+	// ProxyOnly, for OpRepairNetwork: only the system proxy, as before a
+	// connect.
+	ProxyOnly bool `json:"proxyOnly,omitempty"`
 }
 
 type Response struct {
@@ -96,6 +115,77 @@ type Response struct {
 	// From / To: the versions an apply, recovery or rollback moved between.
 	From string `json:"from,omitempty"`
 	To   string `json:"to,omitempty"`
+
+	NetworkReset  *NetworkReset  `json:"networkReset,omitempty"`
+	NetworkScan   *NetworkScan   `json:"networkScan,omitempty"`
+	NetworkRepair *NetworkRepair `json:"networkRepair,omitempty"`
+}
+
+// NetworkRepair is the outcome of OpRepairNetwork.
+type NetworkRepair struct {
+	Actions []NetworkAction `json:"actions"`
+}
+
+// NetworkAction is one repair step. Done is false when it was skipped or
+// failed; Detail says which.
+type NetworkAction struct {
+	Name   string `json:"name"`
+	Done   bool   `json:"done"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// NetworkScan is the outcome of OpScanNetwork.
+type NetworkScan struct {
+	// HostsOverrides counts hosts entries that override protected domains,
+	// -1 when the file could not be read.
+	HostsOverrides int `json:"hostsOverrides"`
+	// DPITools are the classes (winws, goodbyedpi, windivert) of DPI tools
+	// the deep reset would stop. Null when they could not be checked, which
+	// is also what a GUI reads from a service older than this field; empty
+	// when none were found.
+	DPITools []string `json:"dpiTools"`
+	// ForeignWFP names the firewall owners that are not the system's, for
+	// the report only: nothing removes them. WFP providers on Windows, pf
+	// anchors of an enabled pf on macOS. Null and empty as for DPITools.
+	ForeignWFP []string `json:"foreignWfp"`
+}
+
+// ScanList renders a NetworkScan list for a log line, keeping "could not
+// check" apart from "none found".
+func ScanList(items []string) string {
+	switch {
+	case items == nil:
+		return "unknown"
+	case len(items) == 0:
+		return "none"
+	}
+	return strings.Join(items, ", ")
+}
+
+// NetworkReset is the outcome of OpResetNetwork.
+type NetworkReset struct {
+	// Refused: nothing was changed, because StaticAdapters would lose
+	// their manual addresses. Repeat with Force after the user agrees.
+	Refused bool `json:"refused,omitempty"`
+	// StaticAdapters are the connected adapters configured with a static
+	// IPv4 address, by friendly name.
+	StaticAdapters []string `json:"staticAdapters,omitempty"`
+	// RebootRequired: the reset ran; Windows applies it on the next boot.
+	// macOS applies it at once.
+	RebootRequired bool `json:"rebootRequired,omitempty"`
+	// NetworkPending: the reset ran, but the network was not back when the
+	// service stopped waiting for it (macOS). It may still come up.
+	NetworkPending bool `json:"networkPending,omitempty"`
+	// Output is what netsh printed, for the diagnostic log.
+	Output string `json:"output,omitempty"`
+	// HostsDisabled counts hosts entries commented out (backup kept).
+	HostsDisabled int `json:"hostsDisabled,omitempty"`
+	// DPIStopped are the classes of DPI tools stopped or moved to manual
+	// start; the original start types are in core\netreset-backup.json.
+	DPIStopped []string `json:"dpiStopped,omitempty"`
+	// DPIFailed are the classes still running or still starting by
+	// themselves. The reset itself went on without them.
+	DPIFailed []string `json:"dpiFailed,omitempty"`
 }
 
 // Update states, as the GUI shows them.

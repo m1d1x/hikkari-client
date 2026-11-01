@@ -19,6 +19,10 @@ import (
 // a TCP-connect probe when the engine isn't up (weak signal: is the host
 // reachable at all).
 //
+// An empty TCP connect to a foreign :443 is itself unusual traffic, and a core
+// that is off cannot speak the profile's own protocol. So that path runs only
+// while the user has the server list open (see Tracker.Run), never on a timer.
+//
 // The UI still draws one sparkline per profile, but every sample is tagged
 // with the Source that produced it, so consumers that care about signal
 // strength (the downdetector) can tell them apart.

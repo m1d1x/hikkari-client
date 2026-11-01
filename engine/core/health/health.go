@@ -22,12 +22,11 @@ import (
 // fetched far less often (see EgressInterval).
 const RefreshInterval = 2 * time.Second
 
-// EgressInterval is how often the egress IP is re-fetched while nothing
-// changes. Every fetch goes through the tunnel, and at the old 2s cadence
-// this probe alone was ~30 tunnel sessions a minute competing with user
-// traffic (Discord voice) for the same transport. It is also fetched at
-// once whenever the core comes up or goes down, or the last probe failed.
-const EgressInterval = 60 * time.Second
+// EgressInterval is the backstop for a change nobody announced. Every fetch goes
+// through the tunnel and competes with user traffic (Discord voice) for the same
+// transport, so the IP is otherwise fetched only when it can have changed: the
+// core comes up or goes down, the last probe failed, or RecheckEgress is called.
+const EgressInterval = 15 * time.Minute
 
 // startupGrace is how long after the core comes up the egress probe waits:
 // the engine adapter answers before sing-box has installed the TUN routes, and a
@@ -194,6 +193,14 @@ func (c *Checker) Run(ctx context.Context) {
 			c.refresh()
 		}
 	}
+}
+
+// RecheckEgress makes the next pass fetch the IP: the network or the exit changed,
+// or a person asked.
+func (c *Checker) RecheckEgress() {
+	c.mu.Lock()
+	c.lastEgressAt = time.Time{}
+	c.mu.Unlock()
 }
 
 func (c *Checker) refresh() {
@@ -440,13 +447,15 @@ func (c *Checker) transition(status, ip, msg string) {
 	}
 }
 
-// egressTransport keeps the egress probe's connections alive between
-// fetches, so a steady tunnel costs no new session per probe. A connection
-// opened before sing-box took over routing would keep reporting the ISP IP,
-// so probeOnce drops idle connections whenever the core starts or stops.
+// egressTransport lets the walk over echoServices and a quick recheck share a
+// connection. It does not outlive that: an idle tunnel connection held open for
+// a whole EgressInterval would only hold a slot. A connection opened before
+// sing-box took over routing would keep reporting the ISP IP, so probeOnce drops
+// idle connections whenever the core starts or stops.
 var egressTransport = &http.Transport{
 	Proxy:           nil,
-	IdleConnTimeout: 3 * EgressInterval,
+	MaxIdleConns:    5,
+	IdleConnTimeout: 90 * time.Second,
 }
 
 func egressHTTPClient(timeout time.Duration) *http.Client {

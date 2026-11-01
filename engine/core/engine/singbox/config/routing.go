@@ -185,9 +185,13 @@ func applyBypassDNS(cfg map[string]interface{}, bypass RouteList) {
 
 // isBypassDNSRule recognises the rules applyBypassDNS owns: any
 // process_name or process_path_regex → dns-direct rule, and a domain_suffix → dns-direct rule
-// other than the fixed one that keeps the VPN servers' own names real.
+// other than the fixed ones: the VPN servers' own names and realAddressRule,
+// which is the only rule carrying domain_regex.
 func isBypassDNSRule(m map[string]interface{}) bool {
 	if m["server"] != "dns-direct" {
+		return false
+	}
+	if _, fixed := m["domain_regex"]; fixed {
 		return false
 	}
 	if _, has := m["process_name"]; has {

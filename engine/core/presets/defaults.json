@@ -3,83 +3,6 @@
   "version": 2,
   "services": [
     {
-      "id": "ru",
-      "name": "Сайты РФ (.RU)",
-      "icon": "ru",
-      "domains": [
-        "ru",
-        "xn--p1ai",
-        "su",
-        "xn--p1acf",
-        "xn--80adxhks",
-        "moscow",
-        "tatar",
-        "xn--d1acj3b",
-        "mts.ru",
-        "megafon.ru",
-        "beeline.ru",
-        "t2.ru",
-        "tele2.ru",
-        "rt.ru",
-        "rostelecom.ru",
-        "selectel.ru",
-        "selectel.com",
-        "timeweb.com",
-        "timeweb.cloud",
-        "reg.ru",
-        "beget.com",
-        "habr.com",
-        "habrastorage.org",
-        "pikabu.ru",
-        "vc.ru",
-        "dtf.ru",
-        "rbc.ru",
-        "kommersant.ru",
-        "lenta.ru",
-        "ria.ru",
-        "tass.ru",
-        "interfax.ru",
-        "fontanka.ru",
-        "gismeteo.ru",
-        "gismeteo.net",
-        "kaspersky.ru",
-        "kaspersky.com",
-        "drweb.ru",
-        "drweb.com",
-        "1c.ru",
-        "bitrix24.ru",
-        "bitrix24.com",
-        "kontur.ru",
-        "diadoc.ru",
-        "tensor.ru",
-        "sbis.ru"
-      ],
-      "ips": [
-        "79.137.128.0/17",
-        "91.194.226.0/23",
-        "95.213.0.0/16",
-        "128.140.168.0/21",
-        "178.22.88.0/21",
-        "185.5.136.0/22",
-        "185.16.148.0/22",
-        "185.71.64.0/22",
-        "185.71.68.0/22",
-        "185.71.76.0/22",
-        "185.157.96.0/22",
-        "185.207.88.0/22",
-        "188.93.56.0/21",
-        "194.186.0.0/16",
-        "195.146.66.0/23",
-        "199.36.240.0/22",
-        "212.49.96.0/19",
-        "217.12.96.0/20"
-      ],
-      "processes": {},
-      "defaultModes": [
-        "bypass"
-      ]
-    },
-    {
       "id": "yandex",
       "name": "Яндекс",
       "icon": "yandex",
@@ -342,6 +265,20 @@
       ]
     },
     {
+      "id": "rutube",
+      "name": "Rutube",
+      "icon": "rutube",
+      "domains": [
+        "rutube.ru",
+        "rtbcdn.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
       "id": "ivi",
       "name": "Иви",
       "icon": "ivi",
@@ -381,14 +318,11 @@
       ]
     },
     {
-      "id": "streaming-ru",
-      "name": "Онлайн-кинотеатры РФ",
-      "icon": "streaming-ru",
+      "id": "premier",
+      "name": "Premier",
+      "icon": "premier",
       "domains": [
-        "premier.one",
-        "start.ru",
-        "kion.ru",
-        "smotrim.ru"
+        "premier.one"
       ],
       "ips": [],
       "processes": {},
@@ -397,12 +331,37 @@
       ]
     },
     {
-      "id": "rutube",
-      "name": "Rutube",
-      "icon": "rutube",
+      "id": "start",
+      "name": "START",
+      "icon": "start",
       "domains": [
-        "rutube.ru",
-        "rtbcdn.ru"
+        "start.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "kion",
+      "name": "KION",
+      "icon": "kion",
+      "domains": [
+        "kion.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "smotrim",
+      "name": "Смотрим",
+      "icon": "smotrim",
+      "domains": [
+        "smotrim.ru"
       ],
       "ips": [],
       "processes": {},
@@ -477,23 +436,94 @@
       ]
     },
     {
-      "id": "banks",
-      "name": "Другие банки РФ",
-      "icon": "banks",
+      "id": "gazprombank",
+      "name": "Газпромбанк",
+      "icon": "gazprombank",
       "domains": [
         "gazprombank.ru",
-        "raiffeisen.ru",
-        "psbank.ru",
+        "gpb.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "raiffeisen",
+      "name": "Райффайзенбанк",
+      "icon": "raiffeisen",
+      "domains": [
+        "raiffeisen.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "sovcombank",
+      "name": "Совкомбанк",
+      "icon": "sovcombank",
+      "domains": [
         "sovcombank.ru",
-        "rshb.ru",
-        "mkb.ru",
-        "uralsib.ru",
-        "tochka.com",
+        "halvacard.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "tochka",
+      "name": "Банк Точка",
+      "icon": "tochka",
+      "domains": [
+        "tochka.com"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "psb",
+      "name": "ПСБ (Промсвязьбанк)",
+      "icon": "psb",
+      "domains": [
+        "psbank.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "yoomoney",
+      "name": "ЮMoney",
+      "icon": "yoomoney",
+      "domains": [
+        "yoomoney.ru",
+        "yoomoney.com"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "mir",
+      "name": "Платёжная система «Мир»",
+      "icon": "mir",
+      "domains": [
         "nspk.ru",
         "mirpay.ru",
-        "yoomoney.ru",
-        "qiwi.com",
-        "moex.com"
+        "mironline.ru"
       ],
       "ips": [],
       "processes": {},
@@ -516,24 +546,6 @@
       "ips": [
         "109.207.1.0/24"
       ],
-      "processes": {},
-      "defaultModes": [
-        "bypass"
-      ]
-    },
-    {
-      "id": "transport-ru",
-      "name": "РЖД и Авиабилеты",
-      "icon": "transport-ru",
-      "domains": [
-        "rzd.ru",
-        "aeroflot.ru",
-        "s7.ru",
-        "pobeda.aero",
-        "tutu.ru",
-        "aviasales.ru"
-      ],
-      "ips": [],
       "processes": {},
       "defaultModes": [
         "bypass"
@@ -590,28 +602,504 @@
       ]
     },
     {
-      "id": "marketplaces",
-      "name": "Маркетплейсы",
-      "icon": "marketplaces",
+      "id": "megamarket",
+      "name": "Мегамаркет",
+      "icon": "megamarket",
+      "domains": [
+        "megamarket.ru",
+        "sbermegamarket.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "lamoda",
+      "name": "Lamoda",
+      "icon": "lamoda",
       "domains": [
         "lamoda.ru",
         "lamoda.by",
-        "lamoda.kz",
-        "dns-shop.ru",
-        "citilink.ru",
+        "lamoda.kz"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "dns",
+      "name": "DNS",
+      "icon": "dns",
+      "domains": [
+        "dns-shop.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "citilink",
+      "name": "Ситилинк",
+      "icon": "citilink",
+      "domains": [
+        "citilink.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "mvideo",
+      "name": "М.Видео / Эльдорадо",
+      "icon": "mvideo",
+      "domains": [
         "mvideo.ru",
-        "eldorado.ru",
-        "detmir.ru",
-        "vseinstrumenti.ru",
-        "aliexpress.ru",
-        "kuper.ru",
-        "samokat.ru",
-        "cian.ru",
-        "domclick.ru",
+        "eldorado.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "samokat",
+      "name": "Самокат",
+      "icon": "samokat",
+      "domains": [
+        "samokat.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "kuper",
+      "name": "Купер",
+      "icon": "kuper",
+      "domains": [
+        "kuper.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "cian",
+      "name": "Циан",
+      "icon": "cian",
+      "domains": [
+        "cian.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "hh",
+      "name": "HeadHunter",
+      "icon": "hh",
+      "domains": [
         "hh.ru",
-        "drom.ru",
+        "headhunter.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "rzd",
+      "name": "РЖД",
+      "icon": "rzd",
+      "domains": [
+        "rzd.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "aeroflot",
+      "name": "Аэрофлот",
+      "icon": "aeroflot",
+      "domains": [
+        "aeroflot.ru",
+        "aeroflot.com"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "s7",
+      "name": "S7 Airlines",
+      "icon": "s7",
+      "domains": [
+        "s7.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "pobeda",
+      "name": "Авиакомпания Победа",
+      "icon": "pobeda",
+      "domains": [
+        "pobeda.aero"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "aviasales",
+      "name": "Авиасейлс",
+      "icon": "aviasales",
+      "domains": [
+        "aviasales.ru",
+        "aviasales.com"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "mts",
+      "name": "МТС",
+      "icon": "mts",
+      "domains": [
+        "mts.ru",
+        "mts.by"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "megafon",
+      "name": "МегаФон",
+      "icon": "megafon",
+      "domains": [
+        "megafon.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "beeline",
+      "name": "Билайн",
+      "icon": "beeline",
+      "domains": [
+        "beeline.ru"
+      ],
+      "ips": [
+        "217.12.96.0/20"
+      ],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "t2",
+      "name": "Т2 (Tele2)",
+      "icon": "t2",
+      "domains": [
+        "t2.ru",
+        "tele2.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "rostelecom",
+      "name": "Ростелеком",
+      "icon": "rostelecom",
+      "domains": [
+        "rt.ru",
+        "rostelecom.ru"
+      ],
+      "ips": [
+        "194.186.0.0/16"
+      ],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "2gis",
+      "name": "2ГИС",
+      "icon": "2gis",
+      "domains": [
         "2gis.ru",
         "2gis.com"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "habr",
+      "name": "Хабр",
+      "icon": "habr",
+      "domains": [
+        "habr.com",
+        "habrastorage.org"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "pikabu",
+      "name": "Пикабу",
+      "icon": "pikabu",
+      "domains": [
+        "pikabu.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "vc",
+      "name": "VC.ru",
+      "icon": "vc",
+      "domains": [
+        "vc.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "dtf",
+      "name": "DTF",
+      "icon": "dtf",
+      "domains": [
+        "dtf.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "rbc",
+      "name": "РБК",
+      "icon": "rbc",
+      "domains": [
+        "rbc.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "kommersant",
+      "name": "Коммерсантъ",
+      "icon": "kommersant",
+      "domains": [
+        "kommersant.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "lenta",
+      "name": "Лента.ру",
+      "icon": "lenta",
+      "domains": [
+        "lenta.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "ria",
+      "name": "РИА Новости",
+      "icon": "ria",
+      "domains": [
+        "ria.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "tass",
+      "name": "ТАСС",
+      "icon": "tass",
+      "domains": [
+        "tass.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "kaspersky",
+      "name": "Лаборатория Касперского",
+      "icon": "kaspersky",
+      "domains": [
+        "kaspersky.ru",
+        "kaspersky.com"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "selectel",
+      "name": "Selectel",
+      "icon": "selectel",
+      "domains": [
+        "selectel.ru",
+        "selectel.com"
+      ],
+      "ips": [
+        "95.213.0.0/16",
+        "188.93.56.0/21"
+      ],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "timeweb",
+      "name": "Timeweb",
+      "icon": "timeweb",
+      "domains": [
+        "timeweb.com",
+        "timeweb.cloud"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "regru",
+      "name": "Рег.ру",
+      "icon": "regru",
+      "domains": [
+        "reg.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "1c",
+      "name": "1С",
+      "icon": "1c",
+      "domains": [
+        "1c.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "bitrix24",
+      "name": "Битрикс24",
+      "icon": "bitrix24",
+      "domains": [
+        "bitrix24.ru",
+        "bitrix24.com"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "kontur",
+      "name": "Контур",
+      "icon": "kontur",
+      "domains": [
+        "kontur.ru",
+        "diadoc.ru"
+      ],
+      "ips": [],
+      "processes": {},
+      "defaultModes": [
+        "bypass"
+      ]
+    },
+    {
+      "id": "sbis",
+      "name": "СБИС",
+      "icon": "sbis",
+      "domains": [
+        "sbis.ru",
+        "tensor.ru"
       ],
       "ips": [],
       "processes": {},
@@ -1186,6 +1674,34 @@
         ],
         "linux": [
           "github-desktop"
+        ]
+      },
+      "defaultModes": [
+        "proxy"
+      ]
+    },
+    {
+      "id": "google",
+      "name": "Google",
+      "icon": "google",
+      "domains": [
+        "google.com",
+        "google.ru",
+        "googleapis.com",
+        "gstatic.com",
+        "googleusercontent.com",
+        "ggpht.com"
+      ],
+      "ips": [],
+      "processes": {
+        "windows": [
+          "chrome.exe"
+        ],
+        "darwin": [
+          "Google Chrome"
+        ],
+        "linux": [
+          "google-chrome"
         ]
       },
       "defaultModes": [

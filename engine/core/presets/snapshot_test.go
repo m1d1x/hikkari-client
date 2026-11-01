@@ -45,7 +45,7 @@ func TestRoutingSnapshot_Roundtrip(t *testing.T) {
 		},
 		routing.ModeBypass: {
 			"telegram": true,
-			"ru":       true,
+			"yandex":   true,
 			"steam":    false,
 		},
 	}
@@ -238,7 +238,7 @@ func TestManager_ResetToDefaults(t *testing.T) {
 	if err := m.Select(routing.ModeBypass, "discord", true); err != nil {
 		t.Fatalf("failed to select: %v", err)
 	}
-	if err := m.Select(routing.ModeProxy, "ru", true); err != nil {
+	if err := m.Select(routing.ModeProxy, "yandex", true); err != nil {
 		t.Fatalf("failed to select: %v", err)
 	}
 

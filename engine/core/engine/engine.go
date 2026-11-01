@@ -40,6 +40,19 @@ type Configuration struct {
 	ActiveProfile string
 	AutoSelect    bool
 	Routing       routing.RoutingState
+	Host          HostNetwork
+}
+
+// HostNetwork adapts the core's direct (bypass) path to the machine. The
+// zero value keeps the core's defaults: the OS's own default interface and
+// the system resolver. See core/netdoctor for how it is chosen.
+type HostNetwork struct {
+	// DirectInterface is the OS interface name to bind direct traffic to
+	// instead of auto-detecting it.
+	DirectInterface string
+	// DirectDNS is a plain DNS server (IP) for direct lookups instead of
+	// the system resolver.
+	DirectDNS string
 }
 
 type Backend interface {
@@ -62,6 +75,21 @@ type Backend interface {
 }
 
 type Factory func(baseDir string, log Logger) (Backend, error)
+
+// RouteObserver is optional: what the running engine can report about itself
+// without sending anything over the network. Adapters without such a view leave
+// the background checks to fall back on Delay.
+type RouteObserver interface {
+	// RoutedProfile is the profile auto mode currently sends new connections
+	// through. "" when auto mode is off or the engine is not answering.
+	RoutedProfile() string
+	// ReceivedBytes is the bytes received per open connection through a profile,
+	// keyed by connection ID.
+	ReceivedBytes(profileID string) (map[string]uint64, error)
+	// LastDelay is the engine's own last probe of a profile. known is false when
+	// the engine is not probing it itself.
+	LastDelay(profileID string) (ok bool, rttMs int, known bool)
+}
 
 // LegacyProfileSource is optional and used once when upgrading an install
 // whose profiles existed only inside an engine-native configuration file.

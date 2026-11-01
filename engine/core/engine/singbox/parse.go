@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"NekkoVPN/core/profile"
+	"NekkoVPN/core/profile/legacy"
 	"NekkoVPN/core/subscription"
 )
 
@@ -433,7 +434,79 @@ func buildTransport(q url.Values, fallbackHost string) map[string]interface{} {
 			mode = "auto"
 		}
 		tr["mode"] = mode
+		applyXHTTPExtra(tr, q.Get("extra"))
 		return tr
+	}
+	return nil
+}
+
+// xhttpStringOptions are the fields the core declares as "min-max" strings, while
+// Xray links carry them as a number or a {from,to} object.
+var xhttpStringOptions = map[string]bool{
+	"x_padding_bytes":          true,
+	"uplink_chunk_size":        true,
+	"sc_max_each_post_bytes":   true,
+	"sc_min_posts_interval_ms": true,
+}
+
+// applyXHTTPExtra merges the JSON blob a subscription passes in &extra= into the
+// transport. A malformed blob is ignored rather than failing the import: the link
+// still connects with default tuning, which is what it did before extra was read.
+func applyXHTTPExtra(tr map[string]interface{}, raw string) {
+	if raw == "" {
+		return
+	}
+	var extra map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &extra); err != nil {
+		return
+	}
+	for from, to := range legacy.XHTTPExtraFields {
+		value, ok := extra[from]
+		if !ok {
+			continue
+		}
+		if xhttpStringOptions[to] {
+			value = xhttpRange(value)
+		}
+		if value != nil {
+			tr[to] = value
+		}
+	}
+	if headers, ok := extra["headers"].(map[string]interface{}); ok && len(headers) > 0 {
+		tr["headers"] = headers
+	}
+	xmux, _ := extra["xmux"].(map[string]interface{})
+	options := map[string]interface{}{}
+	for from, to := range legacy.XHTTPExtraXmuxFields {
+		value, ok := xmux[from]
+		if !ok {
+			continue
+		}
+		if to == "h_keep_alive_period" {
+			options[to] = value
+		} else if ranged := xhttpRange(value); ranged != nil {
+			options[to] = ranged
+		}
+	}
+	if len(options) > 0 {
+		tr["xmux"] = options
+	}
+}
+
+// xhttpRange normalizes Xray's number, "min-max" string and {from,to} object
+// spellings to the "min-max" string the core takes. Anything else yields nil.
+func xhttpRange(value interface{}) interface{} {
+	switch v := value.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', 0, 64)
+	case map[string]interface{}:
+		from, okFrom := v["from"].(float64)
+		to, okTo := v["to"].(float64)
+		if okFrom && okTo {
+			return fmt.Sprintf("%.0f-%.0f", from, to)
+		}
 	}
 	return nil
 }
@@ -1411,6 +1484,11 @@ func parseXrayMap(xrayMap map[string]interface{}, rootHost string, item, sub map
 				}
 				if m := getMapString(xh, "mode"); m != "" {
 					tr["mode"] = m
+				}
+				if extra, ok := xh["extra"].(map[string]interface{}); ok {
+					if raw, err := json.Marshal(extra); err == nil {
+						applyXHTTPExtra(tr, string(raw))
+					}
 				}
 			}
 			cfg["transport"] = tr

@@ -27,7 +27,7 @@ var polledMethods = map[string]bool{
 	"IsRunning": true, "Health": true, "ExternalIP": true, "LogTail": true, "CollectDiagnostics": true,
 	"Routing": true, "ServerCleanliness": true, "ListApps": true,
 	"RoutingPresets": true, "RoutingStatus": true,
-	"Profiles": true, "AutoMode": true, "UptimeHistory": true, "ServiceUptimeHistory": true,
+	"Profiles": true, "AutoMode": true, "CarryingProfile": true, "UptimeHistory": true, "ServiceUptimeHistory": true,
 	"UpdateStatus": true,
 	// LogUI writes its own [ui] line; tracing it would print it twice.
 	"LogUI": true,
@@ -318,6 +318,17 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return nil, c.SetAutoMode(a.On)
 
 	// ----- uptime -----
+	case "CarryingProfile":
+		return c.carryingProfile(), nil
+	case "SetServerListOpen":
+		var a struct {
+			Open bool `json:"open"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		c.SetServerListOpen(a.Open)
+		return nil, nil
 	case "UptimeHistory":
 		return c.UptimeHistory(), nil
 
@@ -334,6 +345,22 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return c.DowndetectorLastReport(), nil
 
 	// ----- telemetry -----
+	// ----- network doctor -----
+	case "NetworkDiagnose":
+		return c.NetworkDiagnose()
+	case "RepairNetwork":
+		return c.NetworkRepair()
+	case "ResetNetworkStack":
+		var a struct {
+			Force bool `json:"force"`
+		}
+		if err := decodeArgs(argsJSON, &a); err != nil {
+			return nil, err
+		}
+		return c.ResetNetworkStack(a.Force)
+	case "ScanNetworkStack":
+		return c.ScanNetworkStack()
+
 	case "TelemetrySettings":
 		return c.TelemetrySettings(), nil
 	case "SetTelemetryEnabled":

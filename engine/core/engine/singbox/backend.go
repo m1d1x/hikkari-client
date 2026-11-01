@@ -9,6 +9,8 @@ import (
 	"net"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"time"
 
 	"NekkoVPN/core/engine"
@@ -85,7 +87,10 @@ func (b *Backend) Configure(c engine.Configuration) error {
 	if active == "" && len(specs) > 0 {
 		active = specs[0].Tag
 	}
-	return b.config.RebuildActiveWithRouting(specs, active, c.AutoSelect, legacyTags, c.Routing)
+	return b.config.RebuildActiveWithRouting(specs, active, c.AutoSelect, legacyTags, c.Routing, configfile.HostNetwork{
+		DirectInterface: c.Host.DirectInterface,
+		DirectDNS:       c.Host.DirectDNS,
+	})
 }
 func (b *Backend) Start(ctx context.Context) error {
 	if !b.stoppedAt.IsZero() {
@@ -140,6 +145,51 @@ func (b *Backend) SelectProfile(id string) error {
 func (b *Backend) Delay(id, url string, timeoutMs int) (int, error) {
 	return b.control.Delay(profileTag(id), url, timeoutMs)
 }
+
+// RoutedProfile asks the auto group which profile it holds.
+func (b *Backend) RoutedProfile() string {
+	group, err := b.control.Proxy(configfile.AutoTag)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(group.Now, "p-")
+}
+
+// ReceivedBytes keeps only the connections whose chain passes through the
+// profile: the core's totals also count everything routed direct, which says
+// nothing about the tunnel.
+func (b *Backend) ReceivedBytes(id string) (map[string]uint64, error) {
+	connections, err := b.control.Connections()
+	if err != nil {
+		return nil, err
+	}
+	tag := profileTag(id)
+	out := map[string]uint64{}
+	for _, connection := range connections {
+		if slices.Contains(connection.Chains, tag) {
+			out[connection.ID] = connection.Download
+		}
+	}
+	return out, nil
+}
+
+// LastDelay reads the probe the auto group runs on the node it holds, so the
+// graph needs no second request for the same answer. With auto off the core does
+// not probe on its own, and the history only holds what Delay left there.
+func (b *Backend) LastDelay(id string) (bool, int, bool) {
+	if b.RoutedProfile() != id {
+		return false, 0, false
+	}
+	node, err := b.control.Proxy(profileTag(id))
+	if err != nil {
+		return false, 0, false
+	}
+	if len(node.History) == 0 {
+		return false, 0, true
+	}
+	return true, node.History[0].Delay, true
+}
+
 // Baseline snapshots the machine at engine init. When the core is already up
 // — the GUI attached to a tunnel the service kept or brought back (restart
 // after an update with --reconnect, a GUI crash) — Start is never called, so

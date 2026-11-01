@@ -114,45 +114,82 @@ func tunInbound() map[string]interface{} {
 	return in
 }
 
+// canonicalDNS is the one DNS block the engine runs with. Every A/AAAA query
+// from the TUN gets a fake address and the name travels to the exit server, so
+// proxied names never touch a resolver here. dns-direct answers only what must
+// not be faked (realAddressRule) and the core's own lookups; dns.final is not
+// reached by TUN traffic, which is why it needs no tunnelled resolver.
+func canonicalDNS() map[string]interface{} {
+	return map[string]interface{}{
+		"servers": []interface{}{
+			map[string]interface{}{
+				"tag":         "fakeip-dns",
+				"type":        "fakeip",
+				"inet4_range": "198.18.0.0/15",
+			},
+			map[string]interface{}{
+				"tag":  "dns-direct",
+				"type": "local",
+			},
+		},
+		"rules": []interface{}{
+			map[string]interface{}{
+				"domain_suffix": []interface{}{"zovfy.ru"},
+				"server":        "dns-direct",
+			},
+			// fakeip only answers A/AAAA; anything else (HTTPS, SVCB,
+			// PTR…) used to come back as an error the OS kept retrying
+			// every second. An empty NOERROR ends the retry loop.
+			map[string]interface{}{
+				"inbound":    []interface{}{"tun-in"},
+				"query_type": []interface{}{"A", "AAAA"},
+				"invert":     true,
+				"action":     "predefined",
+				"rcode":      "NOERROR",
+			},
+			realAddressRule(),
+			map[string]interface{}{
+				"inbound": []interface{}{"tun-in"},
+				"server":  "fakeip-dns",
+			},
+		},
+		"final":           "dns-direct",
+		"strategy":        "ipv4_only",
+		"reverse_mapping": true,
+	}
+}
+
+// realAddressRule lists the names whose answer is itself the signal, so a
+// 198.18.x.x reply breaks them: Windows NCSI compares dns.msftncsi.com against
+// a fixed address and reports "no internet" otherwise, WebRTC peers exchange
+// the STUN address they resolved, NTP and captive-portal clients start before
+// any tunnel is usable, and LAN names exist only on the local resolver. Only
+// the DNS answer changes here; routing still decides where the connection goes.
+func realAddressRule() map[string]interface{} {
+	return map[string]interface{}{
+		"domain": []interface{}{
+			"captive.apple.com",
+			"connectivitycheck.android.com",
+			"connectivitycheck.gstatic.com",
+			"detectportal.firefox.com",
+		},
+		"domain_suffix": []interface{}{
+			"msftconnecttest.com", "msftncsi.com",
+			"time.windows.com", "time.apple.com", "time.google.com", "time.cloudflare.com", "ntp.org",
+			"lan", "local", "internal", "home.arpa", "localhost",
+		},
+		"domain_regex": []interface{}{
+			`^time[0-9]*\.[^.]+\.com$`,
+			`(^|\.)stun[0-9]*\.`,
+		},
+		"server": "dns-direct",
+	}
+}
+
 func DefaultConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"log": singboxLogBlock(),
-		"dns": map[string]interface{}{
-			"servers": []interface{}{
-				map[string]interface{}{
-					"tag":         "fakeip-dns",
-					"type":        "fakeip",
-					"inet4_range": "198.18.0.0/15",
-				},
-				map[string]interface{}{
-					"tag":  "dns-direct",
-					"type": "local",
-				},
-			},
-			"rules": []interface{}{
-				map[string]interface{}{
-					"domain_suffix": []interface{}{"zovfy.ru"},
-					"server":        "dns-direct",
-				},
-				// fakeip only answers A/AAAA; anything else (HTTPS, SVCB,
-				// PTR…) used to come back as an error the OS kept retrying
-				// every second. An empty NOERROR ends the retry loop.
-				map[string]interface{}{
-					"inbound":    []interface{}{"tun-in"},
-					"query_type": []interface{}{"A", "AAAA"},
-					"invert":     true,
-					"action":     "predefined",
-					"rcode":      "NOERROR",
-				},
-				map[string]interface{}{
-					"inbound": []interface{}{"tun-in"},
-					"server":  "fakeip-dns",
-				},
-			},
-			"final":           "dns-direct",
-			"strategy":        "ipv4_only",
-			"reverse_mapping": true,
-		},
+		"dns": canonicalDNS(),
 		"inbounds": []interface{}{
 			tunInbound(),
 		},
@@ -251,9 +288,9 @@ func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, autoMode bo
 	if err != nil {
 		return err
 	}
-	return s.RebuildActiveWithRouting(specs, activeTag, autoMode, legacyTags, state)
+	return s.RebuildActiveWithRouting(specs, activeTag, autoMode, legacyTags, state, HostNetwork{})
 }
-func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, autoMode bool, legacyTags map[string]bool, routing RoutingState) error {
+func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, autoMode bool, legacyTags map[string]bool, routing RoutingState, host HostNetwork) error {
 	cfg, err := s.Read()
 	if err != nil {
 		return err
@@ -267,6 +304,9 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 		profileTags = append(profileTags, p.Tag)
 		if p.Kind == kindOutbound {
 			healOutboundConfig(p.Config)
+			if autoMode {
+				applyAutoDialBudget(p.Config)
+			}
 			outboundBlocks = append(outboundBlocks, p.Config)
 			hasOutbound = true
 		} else {
@@ -327,6 +367,7 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 		head = AutoTag
 	}
 	rewriteRouteRefs(cfg, head, legacyTags)
+	applyHostNetwork(cfg, host)
 
 	// Keep ICMP routed direct whenever ANY profile is outbound-kind —
 	// the active selection might flip to one via Clash API at any time.
@@ -338,6 +379,45 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 	ApplyRouting(cfg, routing, head)
 
 	return s.Write(cfg)
+}
+
+// HostNetwork is engine.HostNetwork for this package (it does not import
+// the engine contract).
+type HostNetwork struct {
+	DirectInterface string
+	DirectDNS       string
+}
+
+// applyHostNetwork points the direct path at what core/netdoctor chose.
+// Applied on every rebuild, so a selection that went back to defaults is
+// undone too. Runs after rewriteRouteRefs, which rewrites the dns block.
+func applyHostNetwork(cfg map[string]interface{}, h HostNetwork) {
+	if route, ok := cfg["route"].(map[string]interface{}); ok {
+		if h.DirectInterface != "" {
+			// sing-box ignores default_interface while auto-detect is on.
+			route["auto_detect_interface"] = false
+			route["default_interface"] = h.DirectInterface
+		} else {
+			route["auto_detect_interface"] = true
+			delete(route, "default_interface")
+		}
+	}
+	if h.DirectDNS == "" {
+		return
+	}
+	dns, _ := cfg["dns"].(map[string]interface{})
+	servers, _ := dns["servers"].([]interface{})
+	for i, sv := range servers {
+		if m, ok := sv.(map[string]interface{}); ok && m["tag"] == "dns-direct" {
+			// A new-style server without detour dials like an empty
+			// direct outbound — outside the tunnel, on the interface above.
+			servers[i] = map[string]interface{}{
+				"tag":    "dns-direct",
+				"type":   "udp",
+				"server": h.DirectDNS,
+			}
+		}
+	}
 }
 
 func containsTag(arr []interface{}, tag string) bool {
@@ -385,39 +465,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 	}
 	// Always enforce canonical FakeIP DNS (IPv4 only, local direct resolver).
 	// Eliminates UDP 53 foreign drops by TSPU and dual-stack ICE timeouts in Discord.
-	cfg["dns"] = map[string]interface{}{
-		"servers": []interface{}{
-			map[string]interface{}{
-				"tag":         "fakeip-dns",
-				"type":        "fakeip",
-				"inet4_range": "198.18.0.0/15",
-			},
-			map[string]interface{}{
-				"tag":  "dns-direct",
-				"type": "local",
-			},
-		},
-		"rules": []interface{}{
-			map[string]interface{}{
-				"domain_suffix": []interface{}{"zovfy.ru"},
-				"server":        "dns-direct",
-			},
-			map[string]interface{}{
-				"inbound":    []interface{}{"tun-in"},
-				"query_type": []interface{}{"A", "AAAA"},
-				"invert":     true,
-				"action":     "predefined",
-				"rcode":      "NOERROR",
-			},
-			map[string]interface{}{
-				"inbound": []interface{}{"tun-in"},
-				"server":  "fakeip-dns",
-			},
-		},
-		"final":           "dns-direct",
-		"strategy":        "ipv4_only",
-		"reverse_mapping": true,
-	}
+	cfg["dns"] = canonicalDNS()
 	exp, ok := cfg["experimental"].(map[string]interface{})
 	if !ok {
 		exp = map[string]interface{}{}
@@ -452,18 +500,40 @@ func healOutboundConfig(cfg map[string]interface{}) {
 	}
 }
 
-// autoOutbound builds the `urltest` block that wraps every profile and
-// continuously picks the fastest live one. Settings mirror what Karing /
-// Stash ship by default; tolerance=50 means "don't flap unless the new
-// candidate is at least 50ms faster than the current pick".
+// autoDialBudget caps a dial when there is another server to go to. A path that
+// went silent gives no error to react to, so this is the time the first request
+// waits before the group moves on. The core's default for a TLS handshake is 15s,
+// fair with one server and far too long with a fallback ready.
+const autoDialBudget = "5s"
+
+func applyAutoDialBudget(cfg map[string]interface{}) {
+	cfg["connect_timeout"] = autoDialBudget
+	if tls, ok := cfg["tls"].(map[string]interface{}); ok {
+		tls["handshake_timeout"] = autoDialBudget
+	}
+}
+
+// autoProbeInterval is how often the group probes the node it holds. In failover
+// mode that is one request per tick, whatever the size of the subscription. It
+// only has to catch a node dying while nothing is using it: under traffic a
+// connection left without an answer triggers a probe at once (patch 0002).
+const autoProbeInterval = "120s"
+
+// autoOutbound builds the `urltest` block behind auto mode. mode=failover holds
+// a working node instead of chasing the fastest one, so ordinary jitter never
+// changes the exit IP: the group leaves only when the node stops answering, when
+// a live dial through it times out, or when it turns at least 2x slower than a
+// neighbour and a fresh run confirms one 1.5x faster. Established connections stay on
+// their node across a move (interrupt_exist_connections stays off).
 func autoOutbound(profileTags []interface{}) map[string]interface{} {
 	return map[string]interface{}{
-		"tag":       AutoTag,
-		"type":      "urltest",
-		"outbounds": profileTags,
-		"url":       "http://cp.cloudflare.com/generate_204",
-		"interval":  "30s",
-		"tolerance": 50,
+		"tag":          AutoTag,
+		"type":         "urltest",
+		"mode":         "failover",
+		"outbounds":    profileTags,
+		"url":          "http://cp.cloudflare.com/generate_204",
+		"interval":     autoProbeInterval,
+		"idle_timeout": "30m",
 	}
 }
 

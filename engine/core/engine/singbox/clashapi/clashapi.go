@@ -1,12 +1,14 @@
 // Package clashapi is a tiny HTTP client for the sing-box Clash API,
 // exposed locally at experimental.clash_api.external_controller (the
-// engine's config pins this to 127.0.0.1:9090). We use it for two things:
+// engine's config pins this to 127.0.0.1:9090). We use it for:
 //
 //   - SelectProxy: instant profile switch without restarting the core.
 //   - Delay: end-to-end probe through a specific proxy. This is the
 //     real-world signal the uptime tracker uses — "did a request from
 //     this machine succeed all the way to a foreign endpoint, through
 //     this protocol, just now."
+//   - Proxy, Connections: what the core already knows. Both are answered from
+//     its memory, so reading them costs no network at all.
 package clashapi
 
 import (
@@ -131,4 +133,53 @@ func (c *Client) Delay(tag, probeURL string, timeoutMs int) (int, error) {
 		return 0, fmt.Errorf("%s", out.Error)
 	}
 	return out.Delay, nil
+}
+
+// ProxyInfo is the part of GET /proxies/{name} we read. Now is set on groups;
+// History holds the outbound's last probe and is empty once a probe failed.
+type ProxyInfo struct {
+	Now     string `json:"now"`
+	History []struct {
+		Delay int `json:"delay"`
+	} `json:"history"`
+}
+
+// Proxy reads one outbound or group. A missing tag is an error, which is how
+// the auto group answers while auto mode is off.
+func (c *Client) Proxy(tag string) (ProxyInfo, error) {
+	var out ProxyInfo
+	err := c.getJSON("/proxies/"+url.PathEscape(tag), &out)
+	return out, err
+}
+
+// Connection is the part of one GET /connections entry we read. Chains lists
+// the outbounds it passes through, the leaf first.
+type Connection struct {
+	ID       string   `json:"id"`
+	Download uint64   `json:"download"`
+	Chains   []string `json:"chains"`
+}
+
+// Connections lists the open connections.
+func (c *Client) Connections() ([]Connection, error) {
+	var out struct {
+		Connections []Connection `json:"connections"`
+	}
+	err := c.getJSON("/connections", &out)
+	return out.Connections, err
+}
+
+func (c *Client) getJSON(path string, out interface{}) error {
+	resp, err := c.HTTP.Get(c.BaseURL + path)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("clashapi: %s: %s", path, resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("clashapi: %s: decode: %w", path, err)
+	}
+	return nil
 }

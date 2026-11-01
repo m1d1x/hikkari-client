@@ -28,7 +28,10 @@ func (c *Core) configureRouting(policy routing.RoutingState) error {
 	if err != nil {
 		return err
 	}
-	configuration := engine.Configuration{Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, Routing: policy}
+	configuration := engine.Configuration{Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, Routing: policy, Host: engine.HostNetwork{
+		DirectInterface: c.host.DirectInterface,
+		DirectDNS:       c.host.DirectDNS,
+	}}
 	if err := engine.ValidateConfiguration(configuration, c.backend.Info().Capabilities); err != nil {
 		return err
 	}

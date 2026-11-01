@@ -11,6 +11,7 @@
 package api
 
 import (
+	"NekkoVPN/core/netdoctor"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,10 +74,17 @@ type Core struct {
 	// telemetry queues product events and scrubbed errors for the hub
 	// (docs/TELEMETRY.md). Its switch also governs the downdetector.
 	telemetry *telemetry.Agent
+	// host is the direct-path selection for this machine (hostnet.go).
+	// Guarded by operationMu.
+	host netdoctor.Selection
 	// testerLog streams the engine log to the hub while tester mode is on
 	testerLog *testerlog.Shipper
 	// support delivers support reports, retrying until the hub takes them
 	support *supportqueue.Queue
+
+	// routed is the profile traffic goes through, kept by watchRoute.
+	routedMu sync.RWMutex
+	routed   string
 
 	customServicesMu   sync.RWMutex
 	customServicesPath string
@@ -238,11 +246,10 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	probe := uptime.NewLiveProbe(c.backend)
 	// Join every background observer before this Core can be initialized again.
 	// Their providers refer to Core fields, so cancellation alone is insufficient.
-	ctx, tracker, serviceTracker, checker, cleanliness, backend, reporter, tel := c.ctx, c.uptime, c.serviceUptime, c.health, c.cleanliness, c.backend, c.downdetector, c.telemetry
+	ctx, tracker, checker, cleanliness, backend, reporter, tel := c.ctx, c.uptime, c.health, c.cleanliness, c.backend, c.downdetector, c.telemetry
 	var workers sync.WaitGroup
 	run := func(fn func()) { workers.Add(1); go func() { defer workers.Done(); fn() }() }
-	run(func() { tracker.Run(ctx, c.uptimeHosts, probe) })
-	run(func() { serviceTracker.RunServices(ctx, c.activeProfileProvider, c.allServiceTargets, backend) })
+	run(func() { tracker.Run(ctx, c.uptimeHosts, c.carryingProfile, probe, c.uptimeObserver()) })
 	run(func() { reporter.Run(ctx) })
 	run(func() { tel.Run(ctx) })
 	testerLog := c.testerLog
@@ -253,6 +260,8 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {
 		run(backend.Baseline)
+		run(func() { c.watchNetwork(ctx) })
+		run(func() { c.watchRoute(ctx) })
 	}
 	c.workerDone = make(chan struct{})
 	workerDone := c.workerDone
@@ -474,15 +483,6 @@ func (c *Core) activeProfileProvider() string {
 	return active
 }
 
-func (c *Core) allServiceTargets() []uptime.ServiceTarget {
-	defaults := defaultServiceTargets()
-	c.customServicesMu.RLock()
-	custom := make([]uptime.ServiceTarget, len(c.customServices))
-	copy(custom, c.customServices)
-	c.customServicesMu.RUnlock()
-	return append(defaults, custom...)
-}
-
 func (c *Core) loadCustomServices() {
 	data, err := os.ReadFile(c.customServicesPath)
 	if err != nil {
@@ -511,17 +511,4 @@ func readOptionalKey(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
-}
-
-func defaultServiceTargets() []uptime.ServiceTarget {
-	return []uptime.ServiceTarget{
-		{Name: "YouTube", URL: "https://youtube.com/generate_204"},
-		{Name: "Google", URL: "https://google.com/generate_204"},
-		{Name: "Telegram", URL: "https://telegram.org/generate_204"},
-		{Name: "Discord", URL: "https://discord.com/generate_204"},
-		{Name: "ChatGPT", URL: "https://chatgpt.com/generate_204"},
-		{Name: "Instagram", URL: "https://instagram.com/generate_204"},
-		{Name: "Steam", URL: "https://store.steampowered.com/generate_204"},
-		{Name: "X", URL: "https://x.com/generate_204"},
-	}
 }

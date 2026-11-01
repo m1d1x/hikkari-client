@@ -91,6 +91,22 @@ type Config struct {
 	// replaced and the platform has arranged for the new one to start once
 	// this one exits — Serve then returns ErrRestart. Optional.
 	SyncBinaries func() (restart bool)
+
+	// NetworkStack resets the OS network stack (OpResetNetwork). Nil: the
+	// platform has no such reset and the op is refused.
+	NetworkStack NetworkStack
+
+	// HostRepair runs the soft repair (OpRepairNetwork) on platforms where
+	// the settings belong to the machine, not to the signed-in user. Nil:
+	// the GUI repairs them itself and the op is refused.
+	HostRepair HostRepair
+}
+
+// HostRepair is the platform's privileged soft repair.
+type HostRepair interface {
+	// Repair changes only what is provably orphaned. With proxyOnly it does
+	// just the system proxy, as before a connect.
+	Repair(proxyOnly bool) (svcproto.NetworkRepair, error)
 }
 
 // SystemDNS owns the system resolver setting on the service's behalf. Its
@@ -103,6 +119,19 @@ type SystemDNS interface {
 	// Restore puts the user's setting back; a no-op when nothing is
 	// overridden.
 	Restore() error
+}
+
+// NetworkStack is the platform's network stack reset.
+type NetworkStack interface {
+	// StaticAdapters names the connected adapters with a manual IPv4
+	// configuration, which a reset would wipe.
+	StaticAdapters() ([]string, error)
+	// Reset resets the stack; the result says whether that takes a reboot.
+	// It carries what the tools printed, also when they failed.
+	Reset() (svcproto.NetworkReset, error)
+	// Scan reports, read-only, what Reset would deal with and the foreign
+	// software that nothing touches.
+	Scan() (svcproto.NetworkScan, error)
 }
 
 // ErrRestart: Serve returned because an update replaced the service.
@@ -337,6 +366,39 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 			return fail(err)
 		}
 		return s.status()
+	case svcproto.OpResetNetwork:
+		if s.cfg.NetworkStack == nil {
+			return fail(errors.New("сброс сетевого стека не поддерживается на этой системе"))
+		}
+		return s.resetNetwork(req.Force, fail)
+	case svcproto.OpScanNetwork:
+		if s.cfg.NetworkStack == nil {
+			return fail(errors.New("проверка системы не поддерживается на этой системе"))
+		}
+		scan, err := s.cfg.NetworkStack.Scan()
+		if err != nil {
+			return fail(err)
+		}
+		s.log.Logf("service: network scan: hosts overrides: %d, dpi tools: %s, foreign wfp: %s",
+			scan.HostsOverrides, svcproto.ScanList(scan.DPITools), svcproto.ScanList(scan.ForeignWFP))
+		resp := s.status()
+		resp.NetworkScan = &scan
+		return resp
+	case svcproto.OpRepairNetwork:
+		if s.cfg.HostRepair == nil {
+			return fail(errors.New("исправление сети службой не поддерживается на этой системе"))
+		}
+		repair, err := s.cfg.HostRepair.Repair(req.ProxyOnly)
+		if err != nil {
+			return fail(err)
+		}
+		// Details can name a proxy endpoint; the log keeps only the outcome.
+		for _, a := range repair.Actions {
+			s.log.Logf("service: network repair: %s done=%v", a.Name, a.Done)
+		}
+		resp := s.status()
+		resp.NetworkRepair = &repair
+		return resp
 	case svcproto.OpStop:
 		s.log.Logf("service: stop")
 		if err := s.stopCore(); err != nil {
@@ -346,6 +408,42 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 	default:
 		return fail(fmt.Errorf("unknown op %q", req.Op))
 	}
+}
+
+// resetNetwork refuses, changing nothing, while adapters with a static
+// address would lose it and the user has not confirmed that (force). Then
+// it stops the core — the reset rebuilds the stack the TUN sits on — and
+// resets. The run marker goes with the core: after the reset the user comes
+// back to a working network, not a tunnel that starts before they looked at
+// it. Callers hold mu.
+func (s *Server) resetNetwork(force bool, fail func(error) svcproto.Response) svcproto.Response {
+	stack := s.cfg.NetworkStack
+	static, err := stack.StaticAdapters()
+	if err != nil {
+		return fail(fmt.Errorf("проверка сетевых адаптеров: %w", err))
+	}
+	s.log.Logf("service: network reset requested (force=%v, static adapters: %d)", force, len(static))
+	if len(static) > 0 && !force {
+		resp := s.status()
+		resp.NetworkReset = &svcproto.NetworkReset{Refused: true, StaticAdapters: static}
+		return resp
+	}
+	if err := s.stopCore(); err != nil {
+		return fail(fmt.Errorf("остановка ядра перед сбросом сети: %w", err))
+	}
+	res, err := stack.Reset()
+	if res.Output != "" {
+		s.log.Logf("service: network reset output:\n%s", res.Output)
+	}
+	if err != nil {
+		return fail(err)
+	}
+	s.log.Logf("service: network reset done (hosts entries disabled: %d, dpi stopped: %v, dpi failed: %v, reboot required: %v)",
+		res.HostsDisabled, res.DPIStopped, res.DPIFailed, res.RebootRequired)
+	res.StaticAdapters = static
+	resp := s.status()
+	resp.NetworkReset = &res
+	return resp
 }
 
 func (s *Server) onVersion(v string) {

@@ -9,7 +9,8 @@
 //	    HikkariService.exe         this service, LocalSystem
 //	    hikkari-updater.exe
 //	    app\                       GUI, engine DLL, sing-box.exe, wintun.dll
-//	    core\                      service-owned: config.json, cache.db, service.log
+//	    core\                      service-owned: config.json, cache.db, service.log,
+//	                               netreset-backup.json
 //
 // Everything the service executes or writes lives under <root>, which only
 // administrators can modify.
@@ -38,8 +39,9 @@ const createNoWindow = 0x08000000
 func NewServer(root string) (*service.Server, error) {
 	appDir := filepath.Join(root, "app")
 	bins := &binaries{root: root}
+	stack := &netStack{coreDir: filepath.Join(root, "core")}
 	srv, err := service.NewServer(service.Config{
-		CoreDir: filepath.Join(root, "core"),
+		CoreDir: stack.coreDir,
 		// The core runs from app\ (wintun.dll and libcronet.dll sit beside
 		// it). app\ is replaced whole by an update, which is fine: the core
 		// is stopped before that.
@@ -67,10 +69,12 @@ func NewServer(root string) (*service.Server, error) {
 		// marker — as it does after a crash or a reboot with it up.
 		SyncBinaries: bins.sync,
 		ResumeCore:   true,
+		NetworkStack: stack,
 	})
 	if err != nil {
 		return nil, err
 	}
 	bins.log = srv.Log()
+	stack.log = srv.Log()
 	return srv, nil
 }

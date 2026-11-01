@@ -333,7 +333,7 @@ func TestBundledDefaultsAndUpgradePreserveExplicitChoices(t *testing.T) {
 	if upgraded.SyncEnabled || Selected(upgraded.Catalog, upgraded.Choices, routing.ModeBypass, "steam") {
 		t.Fatal("upgrade overwrote explicit opt-outs")
 	}
-	if !Selected(upgraded.Catalog, upgraded.Choices, routing.ModeBypass, "ru") {
+	if !Selected(upgraded.Catalog, upgraded.Choices, routing.ModeBypass, "yandex") {
 		t.Fatal("bundled bypass defaults were not upgraded")
 	}
 	if !Selected(upgraded.Catalog, upgraded.Choices, routing.ModeProxy, "discord") {

@@ -35,7 +35,7 @@ func TestCore_RoutingSnapshot_Roundtrip(t *testing.T) {
 	if err := c.SetServicePreset("bypass", "telegram", false); err != nil {
 		t.Fatalf("SetServicePreset failed: %v", err)
 	}
-	if err := c.SetServicePreset("proxy", "ru", true); err != nil {
+	if err := c.SetServicePreset("proxy", "yandex", true); err != nil {
 		t.Fatalf("SetServicePreset failed: %v", err)
 	}
 

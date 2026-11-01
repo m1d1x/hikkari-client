@@ -7,6 +7,7 @@ package legacy
 import (
 	"NekkoVPN/core/profile"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -290,7 +291,78 @@ func writeTransportQuery(q url.Values, tr map[string]interface{}) {
 		if m := cfgString(tr, "mode"); m != "" {
 			q.Set("mode", m)
 		}
+		if extra := xhttpExtra(tr); extra != "" {
+			q.Set("extra", extra)
+		}
 	}
+}
+
+// XHTTPExtraFields maps the camelCase keys of Xray's xhttpSettings (the &extra=
+// blob of a link) onto the sing-box-lx transport options, for both directions:
+// ParseURI reads them, ExportURI writes them back, and an import goes through
+// both, so a field missing on either side is lost. Fields only a server reads
+// are left out: on a client they would suggest a setting that has no effect.
+var XHTTPExtraFields = map[string]string{
+	"xPaddingBytes":        "x_padding_bytes",
+	"xPaddingObfsMode":     "x_padding_obfs_mode",
+	"xPaddingKey":          "x_padding_key",
+	"xPaddingHeader":       "x_padding_header",
+	"xPaddingPlacement":    "x_padding_placement",
+	"xPaddingMethod":       "x_padding_method",
+	"noGRPCHeader":         "no_grpc_header",
+	"sessionPlacement":     "session_placement",
+	"sessionKey":           "session_key",
+	"seqPlacement":         "seq_placement",
+	"seqKey":               "seq_key",
+	"uplinkDataPlacement":  "uplink_data_placement",
+	"uplinkDataKey":        "uplink_data_key",
+	"uplinkChunkSize":      "uplink_chunk_size",
+	"uplinkHTTPMethod":     "uplink_http_method",
+	"scMaxEachPostBytes":   "sc_max_each_post_bytes",
+	"scMinPostsIntervalMs": "sc_min_posts_interval_ms",
+}
+
+// XHTTPExtraXmuxFields is the same mapping for the nested xmux object.
+var XHTTPExtraXmuxFields = map[string]string{
+	"maxConcurrency":   "max_concurrency",
+	"maxConnections":   "max_connections",
+	"cMaxReuseTimes":   "c_max_reuse_times",
+	"hMaxRequestTimes": "h_max_request_times",
+	"hMaxReusableSecs": "h_max_reusable_secs",
+	"hKeepAlivePeriod": "h_keep_alive_period",
+}
+
+// xhttpExtra is the inverse of the parser's applyXHTTPExtra. Empty when the
+// transport carries no tuning, so plain links stay as short as they came.
+func xhttpExtra(tr map[string]interface{}) string {
+	extra := map[string]interface{}{}
+	for from, to := range XHTTPExtraFields {
+		if value, ok := tr[to]; ok {
+			extra[from] = value
+		}
+	}
+	if headers, ok := tr["headers"].(map[string]interface{}); ok && len(headers) > 0 {
+		extra["headers"] = headers
+	}
+	if options := cfgMap(tr, "xmux"); len(options) > 0 {
+		xmux := map[string]interface{}{}
+		for from, to := range XHTTPExtraXmuxFields {
+			if value, ok := options[to]; ok {
+				xmux[from] = value
+			}
+		}
+		if len(xmux) > 0 {
+			extra["xmux"] = xmux
+		}
+	}
+	if len(extra) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(extra)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 // iniKey capitalises an AWG config key ("jmin" → "Jmin") for the .conf.

@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-)
 
-const networksetup = "/usr/sbin/networksetup"
+	"NekkoVPN/core/netdoctor"
+)
 
 // systemDNS points every network service's resolver at the core while Xray
 // runs. A resolver on the local network is reached on-link, past the TUN
@@ -29,7 +28,7 @@ func (d systemDNS) Override(addr string) error {
 	if net.ParseIP(addr) == nil {
 		return fmt.Errorf("%q is not an IP address", addr)
 	}
-	services, err := networkServices()
+	services, err := netdoctor.NetworkServices()
 	if err != nil {
 		return err
 	}
@@ -42,7 +41,7 @@ func (d systemDNS) Override(addr string) error {
 		if _, err := os.Stat(backup); os.IsNotExist(err) {
 			// Back up once: a second Override must not save its own
 			// address as the user's.
-			servers, err := currentServers(service)
+			servers, err := netdoctor.ManualDNS(service)
 			if err != nil {
 				return err
 			}
@@ -51,7 +50,7 @@ func (d systemDNS) Override(addr string) error {
 				return err
 			}
 		}
-		if err := setServers(service, addr); err != nil {
+		if err := netdoctor.SetManualDNS(service, addr); err != nil {
 			return err
 		}
 	}
@@ -74,7 +73,7 @@ func (d systemDNS) Restore() error {
 			// The user had none set: hand the service back to DHCP.
 			servers = []string{"Empty"}
 		}
-		if err := setServers(lines[0], servers...); err != nil {
+		if err := netdoctor.SetManualDNS(lines[0], servers...); err != nil {
 			errs = append(errs, err.Error())
 			continue
 		}
@@ -84,46 +83,5 @@ func (d systemDNS) Restore() error {
 		return errors.New(strings.Join(errs, "; "))
 	}
 	_ = os.Remove(d.dir)
-	return nil
-}
-
-// networkServices lists the services networksetup knows, without the
-// header line and without disabled ones (marked with *).
-func networkServices() ([]string, error) {
-	out, err := exec.Command(networksetup, "-listallnetworkservices").Output()
-	if err != nil {
-		return nil, fmt.Errorf("networksetup -listallnetworkservices: %w", err)
-	}
-	var services []string
-	for i, line := range strings.Split(string(out), "\n") {
-		if i == 0 || line == "" || strings.HasPrefix(line, "*") {
-			continue
-		}
-		services = append(services, line)
-	}
-	return services, nil
-}
-
-// currentServers is the service's manually set resolvers; none when it
-// takes them from DHCP ("There aren't any DNS Servers set on …").
-func currentServers(service string) ([]string, error) {
-	out, err := exec.Command(networksetup, "-getdnsservers", service).Output()
-	if err != nil {
-		return nil, fmt.Errorf("networksetup -getdnsservers %q: %w", service, err)
-	}
-	var servers []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if ip := strings.TrimSpace(line); net.ParseIP(ip) != nil {
-			servers = append(servers, ip)
-		}
-	}
-	return servers, nil
-}
-
-func setServers(service string, servers ...string) error {
-	args := append([]string{"-setdnsservers", service}, servers...)
-	if out, err := exec.Command(networksetup, args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("networksetup -setdnsservers %q: %v: %s", service, err, strings.TrimSpace(string(out)))
-	}
 	return nil
 }

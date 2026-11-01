@@ -80,6 +80,7 @@ func Run() error {
 	if err := checkBundle(); err != nil {
 		return err
 	}
+	stack := &netStack{}
 	srv, err := service.NewServer(service.Config{
 		CoreDir: CoreDir,
 		CoreBin: coreBin,
@@ -95,10 +96,13 @@ func Run() error {
 		// The swap replaces this binary; launchd starts the new one.
 		RestartAfterApply: true,
 		TrialDeadline:     trialDeadline,
+		NetworkStack:      stack,
+		HostRepair:        stack,
 	})
 	if err != nil {
 		return err
 	}
+	stack.log = srv.Log()
 	ctx, stop := signalContext()
 	defer stop()
 	err = srv.Serve(ctx)
