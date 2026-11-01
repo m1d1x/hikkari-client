@@ -98,7 +98,18 @@ class AppState extends ChangeNotifier {
   String? _routingApplyError;
   String? get routingApplyError => _routingApplyError;
   bool _autoMode = false;
-  String? _lastError;
+  String? _lastErrorValue;
+
+  String? get _lastError => _lastErrorValue;
+
+  /// Every new error the user is shown also goes into the engine log, so a
+  /// support report or the tester stream carries the words the user saw.
+  set _lastError(String? value) {
+    if (value != null && value != _lastErrorValue) {
+      unawaited(_core.logUi('error shown: $value').catchError((_) {}));
+    }
+    _lastErrorValue = value;
+  }
   // Timestamp of the last VPN start / profile switch. The tunnel needs a
   // moment to actually pass traffic (handshake, routing table settle), so
   // the very first probe(s) right after this genuinely fail — that's not

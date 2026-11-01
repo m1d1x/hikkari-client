@@ -149,6 +149,10 @@ abstract class NekkoboxCore {
   Future<void> setPresetSync(bool on) =>
       _callAsync('SetPresetSync', {'on': on});
 
+  /// Writes what the user was shown into the engine log as an `[ui]` line.
+  Future<void> logUi(String message) =>
+      _callAsync('LogUI', {'message': message});
+
   Future<void> setPresetTester(bool on) =>
       _callAsync('SetPresetTester', {'on': on});
 

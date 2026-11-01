@@ -398,7 +398,7 @@ func (u *updates) settle() {
 	restart := sync()
 	u.opMu.Unlock()
 	if restart {
-		u.srv.requestRestart()
+		u.srv.requestRestartWhenIdle()
 	}
 }
 

@@ -29,6 +29,8 @@ var polledMethods = map[string]bool{
 	"RoutingPresets": true, "RoutingStatus": true,
 	"Profiles": true, "AutoMode": true, "UptimeHistory": true, "ServiceUptimeHistory": true,
 	"UpdateStatus": true,
+	// LogUI writes its own [ui] line; tracing it would print it twice.
+	"LogUI": true,
 }
 
 // traceCall writes one line per FFI call into the engine log, so a pasted log
@@ -144,6 +146,13 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		}
 		_ = decodeArgs(argsJSON, &a)
 		return c.SubmitSupportReport(a.Message)
+	case "LogUI":
+		var a struct {
+			Message string `json:"message"`
+		}
+		_ = decodeArgs(argsJSON, &a)
+		c.LogUI(a.Message)
+		return nil, nil
 
 	// ----- routing -----
 	case "RoutingPresets":

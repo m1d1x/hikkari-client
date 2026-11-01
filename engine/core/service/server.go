@@ -122,6 +122,11 @@ type Server struct {
 	mu sync.Mutex
 
 	restart chan struct{}
+	// restartWhenIdle holds a restart into updated binaries until the core
+	// is stopped: the first connect after an update is exactly when the
+	// version gets confirmed and the binaries synced, and restarting then
+	// would kill the tunnel the user has just brought up.
+	restartWhenIdle atomic.Bool
 }
 
 // NewServer prepares the service's own directory and the core manager.
@@ -237,12 +242,30 @@ func (s *Server) handle(conn net.Conn) {
 	switch {
 	case req.Op == svcproto.OpApplyUpdate && s.cfg.RestartAfterApply:
 		s.requestRestart()
+	case req.Op == svcproto.OpStop && s.restartWhenIdle.Load():
+		s.log.Logf("service: core stopped, restarting into the updated binaries now")
+		s.requestRestart()
 	case req.Op == svcproto.OpConfirmUpdate, req.Op == svcproto.OpRollbackUpdate:
 		// The installed version is settled: bring the binaries outside
 		// it in line — after the answer is out, since that may restart
 		// the service.
 		go s.updates.settle()
 	}
+}
+
+// requestRestartWhenIdle restarts now when no core runs, and otherwise at
+// the next stop (handle → OpStop). The new binaries are already in place;
+// the running service only waits to hand over to them.
+func (s *Server) requestRestartWhenIdle() {
+	s.mu.Lock()
+	engine, pid := s.running()
+	s.mu.Unlock()
+	if pid == 0 {
+		s.requestRestart()
+		return
+	}
+	s.restartWhenIdle.Store(true)
+	s.log.Logf("service: updated binaries in place; restart deferred until %s (pid=%d) is stopped", engine, pid)
 }
 
 // requestRestart makes Serve return ErrRestart.

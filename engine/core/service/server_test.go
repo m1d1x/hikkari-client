@@ -4,9 +4,11 @@ package service
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/engine/xray"
@@ -81,5 +83,62 @@ func TestServiceRefusesAnEngineItDoesNotShip(t *testing.T) {
 	}
 	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Engine: svcproto.EngineXray, Config: json.RawMessage(`{}`)}); resp.OK {
 		t.Fatal("started Xray without a bundled binary")
+	}
+}
+
+// Updated binaries synced while the core runs (the first connect after an
+// update confirms the version) must not restart the service under the
+// tunnel: the restart waits for the core to be stopped.
+func TestBinaryRestartWaitsForTheCoreToStop(t *testing.T) {
+	dir := t.TempDir()
+	core := filepath.Join(dir, "core")
+	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.stopCores()
+	restarted := func() bool {
+		select {
+		case <-s.restart:
+			return true
+		default:
+			return false
+		}
+	}
+
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`)}); !resp.OK {
+		t.Fatalf("start: %+v", resp)
+	}
+	s.requestRestartWhenIdle()
+	if restarted() {
+		t.Fatal("service restarted under a running core")
+	}
+
+	client, server := net.Pipe()
+	go s.handle(server)
+	if err := svcproto.WriteMessage(client, svcproto.Request{Op: svcproto.OpStop}); err != nil {
+		t.Fatal(err)
+	}
+	var resp svcproto.Response
+	if err := svcproto.ReadMessage(client, &resp); err != nil || !resp.OK {
+		t.Fatalf("stop: %+v %v", resp, err)
+	}
+	client.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for !restarted() {
+		if time.Now().After(deadline) {
+			t.Fatal("service did not restart after the core stopped")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// With no core running the restart is immediate.
+	s.restartWhenIdle.Store(false)
+	s.requestRestartWhenIdle()
+	if !restarted() {
+		t.Fatal("idle service did not restart at once")
 	}
 }

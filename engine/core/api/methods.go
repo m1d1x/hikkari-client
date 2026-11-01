@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -164,6 +165,22 @@ func (c *Core) ServerCleanliness() CleanlinessReport { return c.cleanliness.Repo
 // ============================================================
 
 func (c *Core) LogTail() string { return c.logger.Tail() }
+
+// maxUILogBytes cuts a UI message before it reaches the log.
+const maxUILogBytes = 2000
+
+// LogUI records what the user was shown — an error card, a failed action —
+// so a log read later (a support report, the tester stream) has the same
+// words the user saw. Multi-line text stays one log line.
+func (c *Core) LogUI(message string) {
+	if c == nil || c.logger == nil || message == "" {
+		return
+	}
+	if len(message) > maxUILogBytes {
+		message = message[:maxUILogBytes] + "…"
+	}
+	c.logger.Logf("[ui] %s", strings.ReplaceAll(message, "\n", " ⏎ "))
+}
 
 func (c *Core) CollectDiagnostics(maxLines int) string {
 	if c == nil || c.logger == nil {
