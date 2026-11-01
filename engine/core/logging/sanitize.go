@@ -46,6 +46,9 @@ var (
 	reIPv4 = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 )
 
+// home is the user's home directory, replaced with "~" in sanitized text.
+var home, _ = os.UserHomeDir()
+
 // SanitizeLog strips sensitive information from log text:
 // - Config URIs (vless://, trojan://, vpn://, ss://) -> [REDACTED_URI]
 // - WireGuard / AmneziaWG private keys -> [REDACTED_KEY]
@@ -55,6 +58,11 @@ var (
 func SanitizeLog(text string) string {
 	if text == "" {
 		return ""
+	}
+
+	// 0. Home directory: process and config paths carry the user name.
+	if home != "" {
+		text = strings.ReplaceAll(text, home, "~")
 	}
 
 	// 1. Config URIs
@@ -145,21 +153,7 @@ func (l *Logger) CollectDiagnostics(maxLines int) string {
 		maxLines = 300
 	}
 
-	var rawLogs string
-	if l != nil && l.path != "" {
-		data, err := os.ReadFile(l.path)
-		if err == nil && len(data) > 0 {
-			lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-			// Trim empty trailing line if present
-			if len(lines) > 0 && lines[len(lines)-1] == "" {
-				lines = lines[:len(lines)-1]
-			}
-			if len(lines) > maxLines {
-				lines = lines[len(lines)-maxLines:]
-			}
-			rawLogs = strings.Join(lines, "\n")
-		}
-	}
+	rawLogs := strings.Join(l.TailLines(maxLines), "\n")
 
 	sanitized := SanitizeLog(rawLogs)
 

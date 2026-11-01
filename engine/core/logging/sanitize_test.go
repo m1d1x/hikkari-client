@@ -281,3 +281,13 @@ func TestCollectDiagnostics(t *testing.T) {
 		t.Fatalf("Diagnostics leaked secret data:\n%s", diag)
 	}
 }
+
+func TestSanitizeLogHidesHomeDirectory(t *testing.T) {
+	saved := home
+	home = "/Users/alice"
+	t.Cleanup(func() { home = saved })
+	got := SanitizeLog("process=/Users/alice/Applications/Discord.app/Contents/MacOS/Discord")
+	if got != "process=~/Applications/Discord.app/Contents/MacOS/Discord" {
+		t.Fatalf("got %q", got)
+	}
+}

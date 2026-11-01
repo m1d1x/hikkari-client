@@ -32,6 +32,7 @@ import (
 	"NekkoVPN/core/profile/legacy"
 	"NekkoVPN/core/routing"
 	"NekkoVPN/core/telemetry"
+	"NekkoVPN/core/testerlog"
 	"NekkoVPN/core/uptime"
 )
 
@@ -71,6 +72,8 @@ type Core struct {
 	// telemetry queues product events and scrubbed errors for the hub
 	// (docs/TELEMETRY.md). Its switch also governs the downdetector.
 	telemetry *telemetry.Agent
+	// testerLog streams the engine log to the hub while tester mode is on
+	testerLog *testerlog.Shipper
 
 	customServicesMu   sync.RWMutex
 	customServicesPath string
@@ -218,6 +221,8 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	c.telemetry.Load()
 	c.syncDowndetectorSwitch()
 	c.telemetry.Start(true)
+	c.testerLog = c.newTesterLog()
+	c.logger.SetTap(c.testerLog.Tap)
 	c.customServicesPath = filepath.Join(baseDir, "custom-services.json")
 	c.loadCustomServices()
 	geoip.Load(filepath.Join(baseDir, "geoip-cache.json"))
@@ -232,6 +237,8 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	run(func() { serviceTracker.RunServices(ctx, c.activeProfileProvider, c.allServiceTargets, backend) })
 	run(func() { reporter.Run(ctx) })
 	run(func() { tel.Run(ctx) })
+	testerLog := c.testerLog
+	run(func() { testerLog.Run(ctx) })
 	run(func() { checker.Run(ctx) })
 	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {

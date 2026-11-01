@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MaxBytes is the rotation threshold. When the active log grows past this,
@@ -48,6 +49,16 @@ type Logger struct {
 	file  *os.File
 	std   *log.Logger
 	bytes int64
+	tap   func(line string)
+}
+
+// SetTap installs a function that receives every line Logf writes, stamped
+// the way the file is. It runs under the logger's lock, so it must return at
+// once and must not log. nil removes it.
+func (l *Logger) SetTap(tap func(line string)) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.tap = tap
 }
 
 // New opens (or creates) the log file. If the file is already past MaxBytes
@@ -83,6 +94,9 @@ func (l *Logger) Logf(format string, args ...interface{}) {
 	}
 	msg := fmt.Sprintf(format, args...)
 	l.std.Println(msg)
+	if l.tap != nil {
+		l.tap(time.Now().Format("2006/01/02 15:04:05.000000") + " " + msg)
+	}
 	l.bytes += int64(len(msg)) + 32
 	if l.file != nil && l.bytes > MaxBytes {
 		_ = l.file.Close()
@@ -106,6 +120,25 @@ func (l *Logger) Tail() string {
 		data = data[len(data)-TailBytes:]
 	}
 	return string(data)
+}
+
+// TailLines returns the last n lines of the active log file, unsanitized.
+func (l *Logger) TailLines(n int) []string {
+	if l == nil || l.path == "" || n <= 0 {
+		return nil
+	}
+	data, err := os.ReadFile(l.path)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines
 }
 
 var (

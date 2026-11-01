@@ -6,6 +6,7 @@
 package api
 
 import (
+	"NekkoVPN/core/testerlog"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -178,14 +179,19 @@ func supportEndpoint() string {
 	if v := os.Getenv("HIKKARI_SUPPORT_URL"); v != "" {
 		return v
 	}
+	return supportPath("/api/v1/support/report")
+}
+
+// supportPath places a support endpoint on the hub: the host of
+// HIKKARI_TELEMETRY_URL when set, production otherwise.
+func supportPath(path string) string {
 	if v := os.Getenv("HIKKARI_TELEMETRY_URL"); v != "" {
-		u, err := url.Parse(v)
-		if err == nil {
-			u.Path = "/api/v1/support/report"
+		if u, err := url.Parse(v); err == nil {
+			u.Path, u.RawQuery = path, ""
 			return u.String()
 		}
 	}
-	return "https://api.hikkari.net/api/v1/support/report"
+	return "https://api.hikkari.net" + path
 }
 
 func (c *Core) SubmitSupportReport(message string) (map[string]any, error) {
@@ -660,4 +666,19 @@ func (c *Core) RemoveCustomService(name string) error {
 		}
 	}
 	return fmt.Errorf("service %q not found", name)
+}
+
+// newTesterLog builds the tester log stream. It ships only while the tester
+// switch (presets.State.Tester) is on.
+func (c *Core) newTesterLog() *testerlog.Shipper {
+	presetManager, tel := c.presets, c.telemetry
+	return testerlog.New(testerlog.Options{
+		URL:      supportPath("/api/v1/support/tester-logs"),
+		Enabled:  func() bool { return presetManager.Snapshot().Tester },
+		Backfill: c.logger.TailLines,
+		Identity: func() (string, string, string) {
+			app := c.telemetryApp()
+			return tel.InstallID(), app.OS, app.Version
+		},
+	})
 }

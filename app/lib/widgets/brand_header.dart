@@ -144,7 +144,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
       failed
           ? 'не удалось переключить режим тестера'
           : on
-          ? 'режим тестера включён'
+          ? 'режим тестера включён: лог уходит разработчикам'
           : 'режим тестера выключен',
       icon: failed ? Icons.error_outline_rounded : Icons.science_outlined,
     );
