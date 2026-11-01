@@ -7,8 +7,10 @@ package singbox
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -103,6 +105,16 @@ func parseHysteria2(u *url.URL) (Draft, error) {
 	}
 	if isTruthy(q.Get("insecure")) {
 		tls["insecure"] = true
+	}
+	// hikkari-spki: the hub's pin for a self-signed leaf, hex SHA-256 of its
+	// SubjectPublicKeyInfo — the one pin sing-box takes. A pin that does not
+	// decode is refused, not dropped: the link would dial unverified.
+	if spki := q.Get("hikkari-spki"); spki != "" {
+		pin, err := hex.DecodeString(spki)
+		if err != nil || len(pin) != sha256.Size {
+			return Draft{}, fmt.Errorf("hysteria2: неверный hikkari-spki")
+		}
+		tls["certificate_public_key_sha256"] = []string{base64.StdEncoding.EncodeToString(pin)}
 	}
 
 	cfg := map[string]interface{}{
