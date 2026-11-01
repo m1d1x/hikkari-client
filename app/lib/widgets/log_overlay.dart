@@ -52,6 +52,7 @@ class _LogOverlayState extends State<LogOverlay> {
   List<String> _lines = const [];
   bool _onlyErrors = false;
   bool _autoscroll = true;
+  bool _sending = false;
 
   @override
   void initState() {
@@ -144,15 +145,31 @@ class _LogOverlayState extends State<LogOverlay> {
   }
 
   Future<void> _sendReport() async {
-    final appState = context.read<AppState>();
-    await appState.submitSupportReport('Отправка журнала логов из приложения');
-    if (!mounted) return;
-    NekkoToast.show(
-      context,
-      'лог отправлен в поддержку',
-      icon: Icons.check_rounded,
-      hold: NekkoToast.glanceHold,
-    );
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      final appState = context.read<AppState>();
+      await appState.submitSupportReport('Отправка журнала логов из приложения');
+      if (!mounted) return;
+      NekkoToast.show(
+        context,
+        'лог отправлен в поддержку',
+        icon: Icons.check_rounded,
+        hold: NekkoToast.glanceHold,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      NekkoToast.show(
+        context,
+        'не удалось отправить лог',
+        icon: Icons.error_outline_rounded,
+        hold: NekkoToast.glanceHold,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _sending = false);
+      }
+    }
   }
 
   @override
@@ -176,9 +193,9 @@ class _LogOverlayState extends State<LogOverlay> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               color: t.bg,
-              border: Border(top: BorderSide(color: t.border)),
-              borderRadius: BorderRadius.vertical(
-                bottom: Radius.circular(t.radius),
+              border: Border(
+                top: BorderSide(color: t.border),
+                bottom: BorderSide(color: t.border),
               ),
             ),
             child: visible.isEmpty
@@ -209,13 +226,100 @@ class _LogOverlayState extends State<LogOverlay> {
                     },
                   ),
           ),
+          _actionsBar(t),
         ],
       ),
     );
   }
 
+  Widget _actionsBar(NekkoTokens t) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+    decoration: BoxDecoration(
+      color: t.surface,
+      borderRadius: BorderRadius.vertical(
+        bottom: Radius.circular(t.radius),
+      ),
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: InkWell(
+            onTap: _lines.isEmpty ? null : _copy,
+            borderRadius: BorderRadius.circular(t.radius),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: t.surface2,
+                border: Border.all(color: t.borderStrong),
+                borderRadius: BorderRadius.circular(t.radius),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.copy_rounded,
+                    size: 14,
+                    color: _lines.isEmpty ? t.textFaint : t.textMuted,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'скопировать',
+                    style: TextStyle(
+                      color: _lines.isEmpty ? t.textFaint : t.text,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: InkWell(
+            onTap: (_lines.isEmpty || _sending) ? null : _sendReport,
+            borderRadius: BorderRadius.circular(t.radius),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: _lines.isEmpty
+                    ? t.surface2
+                    : (_sending ? t.surface2 : t.primary),
+                borderRadius: BorderRadius.circular(t.radius),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    _sending ? Icons.sync_rounded : Icons.send_rounded,
+                    size: 14,
+                    color: _lines.isEmpty
+                        ? t.textFaint
+                        : (_sending ? t.textMuted : Colors.white),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _sending ? 'отправка...' : 'отправить лог',
+                    style: TextStyle(
+                      color: _lines.isEmpty
+                          ? t.textFaint
+                          : (_sending ? t.textMuted : Colors.white),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
   Widget _toolbar(NekkoTokens t, int shown, int total) => Padding(
-    padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
+    padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
     child: Row(
       children: [
         Text(
@@ -245,25 +349,8 @@ class _LogOverlayState extends State<LogOverlay> {
         ),
         const SizedBox(width: 6),
         IconButton(
-          tooltip: 'копировать',
-          iconSize: 14,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: _lines.isEmpty ? null : _copy,
-          icon: Icon(Icons.copy, color: t.textMuted),
-        ),
-        const SizedBox(width: 4),
-        IconButton(
-          tooltip: 'отправить в поддержку',
-          iconSize: 15,
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-          onPressed: _lines.isEmpty ? null : _sendReport,
-          icon: Icon(Icons.send_rounded, color: t.textMuted),
-        ),
-        IconButton(
           tooltip: 'закрыть',
-          iconSize: 16,
+          iconSize: 18,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
           onPressed: widget.onClose,

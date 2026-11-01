@@ -220,32 +220,34 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
                               ? AppDurations.hover
                               : AppDurations.normal,
                           curve: AppCurves.fastInSlowOut,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.send_rounded, size: 16, color: t.bad),
-                              const SizedBox(width: 7),
-                              // Lowercase sits low in its em box; lift it so
-                              // its x-height centres on the icon.
-                              Transform.translate(
-                                offset: const Offset(0, -1.5),
-                                child: Text(
-                                  'скопировать и отправить',
-                                  textHeightBehavior: const TextHeightBehavior(
-                                    applyHeightToFirstAscent: false,
-                                    applyHeightToLastDescent: false,
-                                    leadingDistribution:
-                                        TextLeadingDistribution.even,
-                                  ),
-                                  style: TextStyle(
-                                    color: t.bad,
-                                    height: 1,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
+                          child: Center(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.send_rounded, size: 15, color: t.bad),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    'отправить лог',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textHeightBehavior: const TextHeightBehavior(
+                                      applyHeightToFirstAscent: false,
+                                      applyHeightToLastDescent: false,
+                                      leadingDistribution:
+                                          TextLeadingDistribution.even,
+                                    ),
+                                    style: TextStyle(
+                                      color: t.bad,
+                                      height: 1,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
