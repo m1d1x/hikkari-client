@@ -57,7 +57,15 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           const WindowTitlebar(),
           BrandHeader(onOpenLogs: _openLog),
-          if (_logOpen) LogOverlay(onClose: _closeLog),
+          AnimatedSize(
+            duration: AppDurations.expand,
+            curve: AppCurves.fastInSlowOut,
+            alignment: Alignment.topCenter,
+            clipBehavior: Clip.hardEdge,
+            child: _logOpen
+                ? LogOverlay(onClose: _closeLog)
+                : const SizedBox(width: double.infinity, height: 0),
+          ),
           const Expanded(
             child: CustomScrollView(
               // Keep the bottom edge anchored as routing grows past the

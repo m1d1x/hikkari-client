@@ -22,7 +22,8 @@ class LogOverlay extends StatefulWidget {
   State<LogOverlay> createState() => _LogOverlayState();
 }
 
-class _LogOverlayState extends State<LogOverlay> {
+class _LogOverlayState extends State<LogOverlay>
+    with SingleTickerProviderStateMixin {
   static final _ansi = RegExp(r'\x1B\[[0-9;]*[A-Za-z]');
   static final _reConnId = RegExp(r'\[\d+\s+[^\]]+\]');
   static final _reTs = RegExp(
@@ -47,6 +48,10 @@ class _LogOverlayState extends State<LogOverlay> {
     return res.trim();
   }
 
+  late final AnimationController _anim;
+  late final Animation<double> _fade;
+  late final Animation<Offset> _slide;
+
   Timer? _timer;
   final _scroll = ScrollController();
   List<String> _lines = const [];
@@ -57,6 +62,15 @@ class _LogOverlayState extends State<LogOverlay> {
   @override
   void initState() {
     super.initState();
+    _anim = AnimationController(
+      vsync: this,
+      duration: AppDurations.expand,
+    )..forward();
+    _fade = CurvedAnimation(parent: _anim, curve: AppCurves.fastInSlowOut);
+    _slide = Tween<Offset>(
+      begin: const Offset(0, -0.05),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _anim, curve: AppCurves.fastInSlowOut));
     _refresh();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _refresh());
     _scroll.addListener(_onScroll);
@@ -64,6 +78,7 @@ class _LogOverlayState extends State<LogOverlay> {
 
   @override
   void dispose() {
+    _anim.dispose();
     _timer?.cancel();
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
@@ -80,6 +95,7 @@ class _LogOverlayState extends State<LogOverlay> {
   }
 
   Future<void> _refresh() async {
+    if (!mounted) return;
     final tail = await context.read<AppState>().logTail();
     if (!mounted) return;
     final rawLines = tail
@@ -177,57 +193,63 @@ class _LogOverlayState extends State<LogOverlay> {
     final t = context.tokens;
     final visible = _onlyErrors ? _lines.where(_isError).toList() : _lines;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      decoration: BoxDecoration(
-        color: t.surface,
-        border: Border.all(color: t.border),
-        borderRadius: BorderRadius.circular(t.radius),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _toolbar(t, visible.length, _lines.length),
-          Container(
-            height: 220,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: t.bg,
-              border: Border(
-                top: BorderSide(color: t.border),
-                bottom: BorderSide(color: t.border),
-              ),
-            ),
-            child: visible.isEmpty
-                ? Center(
-                    child: Text(
-                      _lines.isEmpty ? 'журнал пуст' : 'нет строк по фильтру',
-                      style: TextStyle(color: t.textFaint, fontSize: 11),
-                    ),
-                  )
-                : ListView.builder(
-                    controller: _scroll,
-                    itemCount: visible.length,
-                    itemExtent: 16,
-                    itemBuilder: (_, i) {
-                      final line = visible[i];
-                      final isErr = _isError(line);
-                      return Text(
-                        line,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isErr ? t.bad : t.textMuted,
-                          fontFamily: t.monoFamily,
-                          fontSize: 11,
-                          height: 1.4,
-                        ),
-                      );
-                    },
-                  ),
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(
+        position: _slide,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          decoration: BoxDecoration(
+            color: t.surface,
+            border: Border.all(color: t.border),
+            borderRadius: BorderRadius.circular(t.radius),
           ),
-          _actionsBar(t),
-        ],
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _toolbar(t, visible.length, _lines.length),
+              Container(
+                height: 220,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: t.bg,
+                  border: Border(
+                    top: BorderSide(color: t.border),
+                    bottom: BorderSide(color: t.border),
+                  ),
+                ),
+                child: visible.isEmpty
+                    ? Center(
+                        child: Text(
+                          _lines.isEmpty ? 'журнал пуст' : 'нет строк по фильтру',
+                          style: TextStyle(color: t.textFaint, fontSize: 11),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scroll,
+                        itemCount: visible.length,
+                        itemExtent: 16,
+                        itemBuilder: (_, i) {
+                          final line = visible[i];
+                          final isErr = _isError(line);
+                          return Text(
+                            line,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: isErr ? t.bad : t.textMuted,
+                              fontFamily: t.monoFamily,
+                              fontSize: 11,
+                              height: 1.4,
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              _actionsBar(t),
+            ],
+          ),
+        ),
       ),
     );
   }
