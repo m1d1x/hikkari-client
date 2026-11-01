@@ -62,10 +62,8 @@ class _LogOverlayState extends State<LogOverlay>
   @override
   void initState() {
     super.initState();
-    _anim = AnimationController(
-      vsync: this,
-      duration: AppDurations.expand,
-    )..forward();
+    _anim = AnimationController(vsync: this, duration: AppDurations.expand)
+      ..forward();
     _fade = CurvedAnimation(parent: _anim, curve: AppCurves.fastInSlowOut);
     _slide = Tween<Offset>(
       begin: const Offset(0, -0.05),
@@ -165,11 +163,13 @@ class _LogOverlayState extends State<LogOverlay>
     setState(() => _sending = true);
     try {
       final appState = context.read<AppState>();
-      await appState.submitSupportReport('Отправка журнала логов из приложения');
+      await appState.submitSupportReport(
+        'Отправка журнала логов из приложения',
+      );
       if (!mounted) return;
       NekkoToast.show(
         context,
-        'лог отправлен в поддержку',
+        'лог передан поддержке',
         icon: Icons.check_rounded,
         hold: NekkoToast.glanceHold,
       );
@@ -177,7 +177,7 @@ class _LogOverlayState extends State<LogOverlay>
       if (!mounted) return;
       NekkoToast.show(
         context,
-        'не удалось отправить лог',
+        'не удалось сохранить отчёт',
         icon: Icons.error_outline_rounded,
         hold: NekkoToast.glanceHold,
       );
@@ -210,7 +210,10 @@ class _LogOverlayState extends State<LogOverlay>
               _toolbar(t, visible.length, _lines.length),
               Container(
                 height: 220,
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: t.bg,
                   border: Border(
@@ -221,7 +224,9 @@ class _LogOverlayState extends State<LogOverlay>
                 child: visible.isEmpty
                     ? Center(
                         child: Text(
-                          _lines.isEmpty ? 'журнал пуст' : 'нет строк по фильтру',
+                          _lines.isEmpty
+                              ? 'журнал пуст'
+                              : 'нет строк по фильтру',
                           style: TextStyle(color: t.textFaint, fontSize: 11),
                         ),
                       )
@@ -258,9 +263,7 @@ class _LogOverlayState extends State<LogOverlay>
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
     decoration: BoxDecoration(
       color: t.surface,
-      borderRadius: BorderRadius.vertical(
-        bottom: Radius.circular(t.radius),
-      ),
+      borderRadius: BorderRadius.vertical(bottom: Radius.circular(t.radius)),
     ),
     child: Row(
       children: [
@@ -393,7 +396,9 @@ class _OverlayBtnState extends State<_OverlayBtn> {
                 style: TextStyle(
                   color: fg,
                   fontSize: 12,
-                  fontWeight: widget.primary ? FontWeight.w600 : FontWeight.w500,
+                  fontWeight: widget.primary
+                      ? FontWeight.w600
+                      : FontWeight.w500,
                 ),
               ),
             ],
@@ -442,7 +447,9 @@ class _ChipBtnState extends State<_ChipBtn> {
           decoration: BoxDecoration(
             color: active
                 ? (_hovered ? t.surface2 : t.surface2.withValues(alpha: 0.8))
-                : (_hovered ? t.surface2.withValues(alpha: 0.5) : Colors.transparent),
+                : (_hovered
+                      ? t.surface2.withValues(alpha: 0.5)
+                      : Colors.transparent),
             border: Border.all(
               color: active
                   ? (_hovered ? t.bad : t.borderStrong)

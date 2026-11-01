@@ -6,12 +6,9 @@
 package api
 
 import (
+	"NekkoVPN/core/supportqueue"
 	"NekkoVPN/core/testerlog"
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -211,11 +208,14 @@ func supportPath(path string) string {
 	return "https://api.hikkari.net" + path
 }
 
+// SubmitSupportReport takes the log snapshot now and queues the report for
+// delivery (core/supportqueue): it is on disk when this returns and reaches
+// the hub as soon as the hub is reachable, across network flaps and restarts.
+// It fails only when the report cannot be saved.
 func (c *Core) SubmitSupportReport(message string) (map[string]any, error) {
-	if c == nil {
-		return nil, fmt.Errorf("core is nil")
+	if c == nil || c.support == nil {
+		return nil, fmt.Errorf("движок не запущен")
 	}
-	logs := c.CollectDiagnostics(500)
 	app := c.telemetryApp()
 	installID := ""
 	if c.telemetry != nil {
@@ -224,51 +224,18 @@ func (c *Core) SubmitSupportReport(message string) (map[string]any, error) {
 	if installID == "" {
 		installID = "r-unknown"
 	}
-
-	payload := map[string]string{
-		"install_id": installID,
-		"platform":   app.OS,
-		"version":    app.Version,
-		"message":    message,
-		"logs":       logs,
-	}
-
-	body, err := json.Marshal(payload)
+	id, err := c.support.Enqueue(supportqueue.Report{
+		InstallID: installID,
+		Platform:  app.OS,
+		Version:   app.Version,
+		Message:   message,
+		Logs:      c.CollectDiagnostics(500),
+	})
 	if err != nil {
+		c.logger.Logf("[support] report not queued: %v", err)
 		return nil, err
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	endpoint := supportEndpoint()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		if c.logger != nil {
-			c.logger.Logf("[support] report delivery error: %v", err)
-		}
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var result map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&result)
-	if resp.StatusCode/100 != 2 {
-		if c.logger != nil {
-			c.logger.Logf("[support] report refused: %d %v", resp.StatusCode, result)
-		}
-		return nil, fmt.Errorf("поддержка не приняла отчёт: %d", resp.StatusCode)
-	}
-	if c.logger != nil {
-		c.logger.Logf("[support] report sent, response: %v", result)
-	}
-	return result, nil
+	return map[string]any{"queued": true, "id": id}, nil
 }
 
 // ============================================================

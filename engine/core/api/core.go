@@ -31,6 +31,7 @@ import (
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/profile/legacy"
 	"NekkoVPN/core/routing"
+	"NekkoVPN/core/supportqueue"
 	"NekkoVPN/core/telemetry"
 	"NekkoVPN/core/testerlog"
 	"NekkoVPN/core/uptime"
@@ -74,6 +75,8 @@ type Core struct {
 	telemetry *telemetry.Agent
 	// testerLog streams the engine log to the hub while tester mode is on
 	testerLog *testerlog.Shipper
+	// support delivers support reports, retrying until the hub takes them
+	support *supportqueue.Queue
 
 	customServicesMu   sync.RWMutex
 	customServicesPath string
@@ -222,6 +225,11 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	c.syncDowndetectorSwitch()
 	c.telemetry.Start(true)
 	c.testerLog = c.newTesterLog()
+	c.support = supportqueue.New(supportqueue.Options{
+		Path: filepath.Join(baseDir, "support-outbox.json"),
+		URL:  supportEndpoint(),
+		Logf: c.logger.Logf,
+	})
 	c.logger.SetTap(c.testerLog.Tap)
 	c.customServicesPath = filepath.Join(baseDir, "custom-services.json")
 	c.loadCustomServices()
@@ -239,6 +247,8 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	run(func() { tel.Run(ctx) })
 	testerLog := c.testerLog
 	run(func() { testerLog.Run(ctx) })
+	support := c.support
+	run(func() { support.Run(ctx) })
 	run(func() { checker.Run(ctx) })
 	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {

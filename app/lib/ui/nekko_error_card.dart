@@ -110,8 +110,9 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
     flash.flash();
   }
 
-  /// Sends the error to support and says how it went: the card reads
-  /// «отправить поддержке», so a silent failure would be a lie.
+  /// Hands the error to support and says so. The engine queues the report on
+  /// disk and delivers it whenever the hub is reachable, so the only failure
+  /// left is a report that could not be saved.
   Future<void> _report(AppState appState) async {
     var sent = true;
     try {
@@ -126,7 +127,7 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
     if (!mounted) return;
     NekkoToast.show(
       context,
-      sent ? 'отправлено поддержке' : 'не удалось отправить поддержке',
+      sent ? 'передано поддержке' : 'не удалось сохранить отчёт',
       icon: sent ? Icons.check_rounded : Icons.error_outline_rounded,
       hold: NekkoToast.glanceHold,
     );

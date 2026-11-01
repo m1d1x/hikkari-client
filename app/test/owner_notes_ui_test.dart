@@ -93,6 +93,18 @@ class _TestEngineCore extends NekkoboxCore {
   }
 }
 
+/// A core that is down right after Start and comes back on its own a moment
+/// later — the service restarting into updated binaries resumes it.
+class _BlipCore extends _TestEngineCore {
+  int healthCalls = 0;
+
+  @override
+  String rawCall(String method, [String argsJson = '']) {
+    if (method == 'Health' && failStart && ++healthCalls >= 4) running = true;
+    return super.rawCall(method, argsJson);
+  }
+}
+
 class _EmptyProfilesState extends AppState {
   _EmptyProfilesState() : super(_TestEngineCore());
 
@@ -148,9 +160,12 @@ void main() {
       );
       await tester.pump();
 
-      // Trigger VPN start that fails and writes the fatal log error.
+      // Trigger VPN start that fails and writes the fatal log error. The
+      // start is judged only after the core stays down for the settle window.
       final toggleFuture = state.toggleVpn();
-      await tester.pump(const Duration(milliseconds: 750));
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
       await toggleFuture;
       await tester.pump();
 
@@ -269,10 +284,8 @@ void main() {
             home: Scaffold(
               body: Builder(
                 builder: (ctx) => TextButton(
-                  onPressed: () => ImportProfileDialog.show(
-                    ctx,
-                    initialLink: deepLinkUrl,
-                  ),
+                  onPressed: () =>
+                      ImportProfileDialog.show(ctx, initialLink: deepLinkUrl),
                   child: const Text('open-direct'),
                 ),
               ),
@@ -356,4 +369,18 @@ void main() {
       expect(launchedDonate, Uri.parse('https://hikkari.net'));
     },
   );
+
+  testWidgets('a core that comes back by itself after start is not an error', (
+    tester,
+  ) async {
+    final state = AppState(_BlipCore(), dryRun: false);
+    addTearDown(state.dispose);
+    final toggle = state.toggleVpn();
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    await toggle;
+    expect(state.lastError, isNull);
+    expect(state.isRunning, isTrue);
+  });
 }

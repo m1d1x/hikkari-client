@@ -16,7 +16,7 @@ class _Core extends NekkoboxCore {
   String rawCall(String method, [String argsJson = '']) {
     calls.add(method);
     if (method == 'SubmitSupportReport' && refuse) {
-      return '{"ok":false,"error":"поддержка не приняла отчёт: 429"}';
+      return '{"ok":false,"error":"сохранение отчёта: disk full"}';
     }
     return '{"ok":true,"data":null}';
   }
@@ -60,11 +60,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(core.calls, contains('SubmitSupportReport'));
-    expect(find.text('отправлено поддержке'), findsOneWidget);
+    expect(find.text('передано поддержке'), findsOneWidget);
     await tester.pumpAndSettle(const Duration(seconds: 5));
   });
 
-  testWidgets('a refused report says so and is logged', (tester) async {
+  testWidgets('a report that could not be saved says so and is logged', (
+    tester,
+  ) async {
     final core = _Core(refuse: true);
     final state = AppState(core, dryRun: false);
     addTearDown(state.dispose);
@@ -76,7 +78,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(core.calls, containsAll(['SubmitSupportReport', 'LogUI']));
-    expect(find.text('не удалось отправить поддержке'), findsOneWidget);
+    expect(find.text('не удалось сохранить отчёт'), findsOneWidget);
     await tester.pumpAndSettle(const Duration(seconds: 5));
   });
 }

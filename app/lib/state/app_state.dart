@@ -110,6 +110,7 @@ class AppState extends ChangeNotifier {
     }
     _lastErrorValue = value;
   }
+
   // Timestamp of the last VPN start / profile switch. The tunnel needs a
   // moment to actually pass traffic (handshake, routing table settle), so
   // the very first probe(s) right after this genuinely fail — that's not
@@ -230,13 +231,15 @@ class AppState extends ChangeNotifier {
 
   /// Simulates a fatal engine crash on VPN start for diagnostic UI testing.
   void simulateEngineFailure([String? message]) {
-    _lastError = message ??
+    _lastError =
+        message ??
         'FATAL[0000] start engine: configure tun interface: operation not permitted\n'
-        '2026-11-01T02:50:12Z [singbox/inbound] tun: open utun4: permission denied\n'
-        '[engine.stderr] sing-box core died unexpectedly with exit code 1';
+            '2026-11-01T02:50:12Z [singbox/inbound] tun: open utun4: permission denied\n'
+            '[engine.stderr] sing-box core died unexpectedly with exit code 1';
     _health = _dryHealthOff;
     notifyListeners();
   }
+
   // True for ~10s after a VPN start / profile switch. During this window
   // uptime cards should show "checking" rather than "down" for probes that
   // fail simply because the tunnel hasn't finished coming up yet.
@@ -694,32 +697,50 @@ class AppState extends ChangeNotifier {
         _health = await _core.health();
         return;
       }
+      final startedAt = DateTime.now();
       await _core.startVpnAsync();
       _connectedSince = DateTime.now();
-      // The engine can exit asynchronously a few hundred ms after Start (e.g.
-      // TUN access denied). Give it a moment, then sample health — if the
-      // core died, pull the last FATAL/[engine.stderr] line from the log so
-      // the UI shows something more actionable than just "выкл".
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      _health = await _core.health();
+      // The engine can exit asynchronously after Start (e.g. TUN access
+      // denied). It can also go down for a moment and come back on its own —
+      // the service restarting into updated binaries resumes it within
+      // seconds — so one early sample is not a verdict: watch for a few
+      // seconds and report only a core that stays down, with the error it
+      // logged after this start.
+      for (
+        var waited = Duration.zero;
+        waited < _startSettle;
+        waited += _startPoll
+      ) {
+        await Future<void>.delayed(_startPoll);
+        _health = await _core.health();
+        if (isRunning) break;
+      }
       if (!isRunning) {
-        final msg = _extractLogError(await _core.logTail());
-        if (msg != null) {
-          throw NekkoboxError(msg);
-        }
+        throw NekkoboxError(
+          _extractLogError(await _core.logTail(), since: startedAt) ??
+              'ядро остановилось сразу после запуска',
+        );
       }
     });
   }
+
+  static const _startPoll = Duration(milliseconds: 500);
+  static const _startSettle = Duration(seconds: 5);
 
   /// Extracts the most recent fatal-ish line from the engine log. We look
   /// for a fatal/error severity marker first, then any [engine.stderr] pipe
   /// line; falls back to the last "failed" line. Returns null if nothing
   /// useful is in the tail (so the caller doesn't overwrite a null error
   /// with garbage).
-  String? _extractLogError(String tail) {
+  String? _extractLogError(String tail, {DateTime? since}) {
     final lines = tail.split('\n');
     String? lastErr;
     for (final raw in lines) {
+      // Lines from before this start describe an earlier session.
+      if (since != null) {
+        final at = _logLineTime(raw);
+        if (at != null && at.isBefore(since)) continue;
+      }
       // Strip ANSI color codes embedded by a native engine (e.g. \x1b[31mFATAL\x1b[0m).
       final line = raw.replaceAll(RegExp(r'\x1B\[[0-9;]*[A-Za-z]'), '');
       if (line.contains('FATAL') ||
@@ -733,6 +754,17 @@ class AppState extends ChangeNotifier {
       }
     }
     return lastErr;
+  }
+
+  /// The engine log's own stamp, "2006/01/02 15:04:05.000000", in local
+  /// time; null for a line without one.
+  static DateTime? _logLineTime(String line) {
+    final m = RegExp(
+      r'^(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2}):(\d{2})',
+    ).firstMatch(line);
+    if (m == null) return null;
+    final p = [for (var i = 1; i <= 6; i++) int.parse(m.group(i)!)];
+    return DateTime(p[0], p[1], p[2], p[3], p[4], p[5]);
   }
 
   Future<void> switchProfile(String name) async {
@@ -1006,18 +1038,40 @@ class AppState extends ChangeNotifier {
   String _simulatedLogs() {
     final now = DateTime.now().toUtc().toIso8601String();
     final buf = StringBuffer();
-    buf.writeln('2026-11-01T02:49:00Z [singbox/app] starting service (sing-box v1.11.0, nekkobox/1.0.0)');
-    buf.writeln('2026-11-01T02:49:01Z [singbox/dns] initialized system DNS resolver on 127.0.0.1:53');
-    buf.writeln('2026-11-01T02:49:01Z [singbox/router] rule-set loaded 4 domains, 12 geoip prefixes');
-    buf.writeln('2026-11-01T02:49:02Z [singbox/outbound] vless-direct: handshake ok (rtt: 42ms, alpn: h2)');
-    buf.writeln('2026-11-01T02:49:05Z [singbox/inbound] mixed: 127.0.0.1:52341 -> 1.1.1.1:443 (tcp)');
-    buf.writeln('2026-11-01T02:49:10Z [singbox/inbound] mixed: 127.0.0.1:52342 -> 8.8.8.8:443 (tcp)');
-    buf.writeln('2026-11-01T02:49:15Z [singbox/router] default match: route -> out-direct');
+    buf.writeln(
+      '2026-11-01T02:49:00Z [singbox/app] starting service (sing-box v1.11.0, nekkobox/1.0.0)',
+    );
+    buf.writeln(
+      '2026-11-01T02:49:01Z [singbox/dns] initialized system DNS resolver on 127.0.0.1:53',
+    );
+    buf.writeln(
+      '2026-11-01T02:49:01Z [singbox/router] rule-set loaded 4 domains, 12 geoip prefixes',
+    );
+    buf.writeln(
+      '2026-11-01T02:49:02Z [singbox/outbound] vless-direct: handshake ok (rtt: 42ms, alpn: h2)',
+    );
+    buf.writeln(
+      '2026-11-01T02:49:05Z [singbox/inbound] mixed: 127.0.0.1:52341 -> 1.1.1.1:443 (tcp)',
+    );
+    buf.writeln(
+      '2026-11-01T02:49:10Z [singbox/inbound] mixed: 127.0.0.1:52342 -> 8.8.8.8:443 (tcp)',
+    );
+    buf.writeln(
+      '2026-11-01T02:49:15Z [singbox/router] default match: route -> out-direct',
+    );
     if (_lastError != null) {
-      buf.writeln('2026-11-01T02:50:11Z [singbox/core] WARNING: network interface state change detected');
-      buf.writeln('2026-11-01T02:50:12Z [singbox/inbound] tun: open utun4: permission denied');
-      buf.writeln('2026-11-01T02:50:12Z FATAL[0000] start engine: configure tun interface: operation not permitted');
-      buf.writeln('2026-11-01T02:50:12Z [engine.stderr] sing-box core died unexpectedly with exit code 1');
+      buf.writeln(
+        '2026-11-01T02:50:11Z [singbox/core] WARNING: network interface state change detected',
+      );
+      buf.writeln(
+        '2026-11-01T02:50:12Z [singbox/inbound] tun: open utun4: permission denied',
+      );
+      buf.writeln(
+        '2026-11-01T02:50:12Z FATAL[0000] start engine: configure tun interface: operation not permitted',
+      );
+      buf.writeln(
+        '2026-11-01T02:50:12Z [engine.stderr] sing-box core died unexpectedly with exit code 1',
+      );
     } else {
       buf.writeln('$now [singbox/core] tunnel active, uptime normal');
     }
@@ -1047,7 +1101,9 @@ class AppState extends ChangeNotifier {
     }
     final profName = activeProf?.name ?? 'none';
     final profProtocol = activeProf?.protocol ?? 'vless';
-    final profCountry = activeProf != null ? countryCodeFor(activeProf.name) : 'unknown';
+    final profCountry = activeProf != null
+        ? countryCodeFor(activeProf.name)
+        : 'unknown';
 
     final routingEnabled = _routing?.enabled ?? false;
     final routingModeName = _routing?.mode.name ?? 'bypass';
@@ -1063,7 +1119,9 @@ class AppState extends ChangeNotifier {
     try {
       final ifaces = await NetworkInterface.list();
       for (final iface in ifaces) {
-        final addrs = iface.addresses.map((a) => '${a.address} (${a.type.name})').join(', ');
+        final addrs = iface.addresses
+            .map((a) => '${a.address} (${a.type.name})')
+            .join(', ');
         ifaceBuffer.writeln('  * ${iface.name}: $addrs');
       }
     } catch (e) {
@@ -1111,7 +1169,9 @@ class AppState extends ChangeNotifier {
     }
     buf.writeln('');
     buf.writeln('--- ACTIVE PROFILE & ROUTING ---');
-    buf.writeln('Active Profile: $profName (protocol: $profProtocol, country: $profCountry)');
+    buf.writeln(
+      'Active Profile: $profName (protocol: $profProtocol, country: $profCountry)',
+    );
     buf.writeln('Routing: $routingSummary');
     buf.writeln('');
     buf.writeln('--- NETWORK INTERFACES ---');
@@ -1168,13 +1228,15 @@ class AppState extends ChangeNotifier {
     try {
       final req = await client.postUrl(Uri.parse(supportUrl));
       req.headers.contentType = ContentType.json;
-      req.write(jsonEncode({
-        'install_id': 'dev-${Platform.operatingSystem}-client',
-        'platform': Platform.operatingSystem,
-        'version': 'dry-run',
-        'message': message,
-        'logs': diag,
-      }));
+      req.write(
+        jsonEncode({
+          'install_id': 'dev-${Platform.operatingSystem}-client',
+          'platform': Platform.operatingSystem,
+          'version': 'dry-run',
+          'message': message,
+          'logs': diag,
+        }),
+      );
       final resp = await req.close();
       final body = await resp.transform(utf8.decoder).join();
       if (resp.statusCode ~/ 100 != 2) {
