@@ -136,6 +136,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		return err
 	}
 	c.logger = logging.New(filepath.Join(baseDir, "nekko-vpn.log"))
+	c.routeSubscriptionAroundTunnel()
 	backend, err := factory(baseDir, c.logger)
 	if err != nil {
 		c.cancel()

@@ -355,3 +355,7 @@ func WatchNetwork(ctx context.Context, onChange func(network string)) error {
 		}
 	}
 }
+
+func (macEnv) dialer(idx int, timeout time.Duration) *net.Dialer { return boundDialer(idx, timeout) }
+
+func hostEnvFor() physicalEnv { return macEnv{} }

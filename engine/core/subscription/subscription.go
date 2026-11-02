@@ -285,6 +285,40 @@ type unreadableError struct {
 func (e *unreadableError) Error() string { return e.err.Error() }
 func (e *unreadableError) Unwrap() error { return e.err }
 
+// DirectDial, when set, dials around the tunnel. A request that failed on the
+// ordinary path is repeated through it: the tunnel's exit may not reach the
+// provider, or the network may cut the handshake the default route makes.
+var DirectDial func(ctx context.Context, network, addr string) (net.Conn, error)
+
+// Logf receives which path answered. Nil discards.
+var Logf func(format string, args ...any)
+
+func logf(format string, args ...any) {
+	if Logf != nil {
+		Logf(format, args...)
+	}
+}
+
+// doRequest sends req on the ordinary path and, when that fails at the
+// transport level, once more around the tunnel.
+func doRequest(ctx context.Context, client *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := client.Do(req)
+	if err == nil || DirectDial == nil || ctx.Err() != nil {
+		return resp, err
+	}
+	direct := &http.Client{
+		Timeout:   client.Timeout,
+		Transport: &http.Transport{DialContext: DirectDial, DisableKeepAlives: true},
+	}
+	resp, directErr := direct.Do(req.Clone(ctx))
+	if directErr != nil {
+		logf("subscription: default path failed (%v), around the tunnel failed too (%v)", requestCause(err), requestCause(directErr))
+		return nil, err
+	}
+	logf("subscription: default path failed (%v), around the tunnel answered", requestCause(err))
+	return resp, nil
+}
+
 func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decode func(string) (T, error)) (Imported[T], error) {
 	client := &http.Client{
 		// Providers assemble configs on request; some take over 20 s to answer.
@@ -307,7 +341,7 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 		req.Header.Set("X-Device-Os", osName)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doRequest(ctx, client, req)
 	if err != nil {
 		return Imported[T]{}, fmt.Errorf("не удалось загрузить подписку: %w", requestCause(err))
 	}

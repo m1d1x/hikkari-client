@@ -254,3 +254,7 @@ var (
 		return 0
 	})
 )
+
+func (winEnv) dialer(idx int, timeout time.Duration) *net.Dialer { return boundDialer(idx, timeout) }
+
+func hostEnvFor() physicalEnv { return winEnv{} }

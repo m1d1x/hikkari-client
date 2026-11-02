@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"NekkoVPN/core/engine"
+	"NekkoVPN/core/netdoctor"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/subscription"
 )
@@ -364,6 +365,17 @@ func subscriptionRetryDelay(failures int, err error) time.Duration {
 	}
 	return delay
 }
+
+// routeSubscriptionAroundTunnel lets a subscription request that failed on the
+// default route repeat over the physical card, and logs which path answered.
+func (c *Core) routeSubscriptionAroundTunnel() {
+	if dial := netdoctor.PhysicalDialContext(); dial != nil {
+		subscription.DirectDial = dial
+	}
+	logger := c.logger
+	subscription.Logf = func(format string, args ...any) { logger.Logf(format, args...) }
+}
+
 func (c *Core) logSubscriptionError(id string, err error) {
 	c.logger.Logf("[subscription %s] %s", id, subscriptionSecret.ReplaceAllString(fmt.Sprint(err), "[redacted-link]"))
 }
