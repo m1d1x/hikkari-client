@@ -159,7 +159,7 @@ func TestOpeningListInterruptsTrafficWindow(t *testing.T) {
 	waitFor(t, "a sweep well before the window ends", func() bool { return probe.total() == 3 })
 }
 
-func TestSkipProbeSeesOnlyGrowth(t *testing.T) {
+func TestWatchTrafficSeesOnlyGrowth(t *testing.T) {
 	tr := newTracker(t)
 	cases := []struct {
 		name          string
@@ -180,8 +180,8 @@ func TestSkipProbeSeesOnlyGrowth(t *testing.T) {
 			var local atomic.Int32
 			values := []map[string]uint64{c.before, c.after}
 			observer := fakeObserver{received: func() map[string]uint64 { return values[local.Add(1)-1] }}
-			if got := tr.skipProbe(context.Background(), observer, "a"); got != c.want {
-				t.Fatalf("skipProbe = %v, want %v", got, c.want)
+			if got, stop := tr.watchTraffic(context.Background(), observer, "a"); got != c.want || stop {
+				t.Fatalf("watchTraffic = %v, %v, want %v, false", got, stop, c.want)
 			}
 		})
 	}
@@ -204,5 +204,31 @@ func TestOwnProbeSamplesWithoutNetwork(t *testing.T) {
 	got := tr.Snapshot()["a"]
 	if len(got) != 1 || got[0].RttMs != 77 || got[0].Src != SrcTunnel {
 		t.Fatalf("samples = %+v", got)
+	}
+}
+
+// A link carrying traffic leaves a success at the delay last measured, with no
+// probe of its own; with no delay measured yet it is probed once.
+func TestTrafficLeavesASampleAtTheLastDelay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the real traffic window")
+	}
+	var n atomic.Uint64
+	observer := fakeObserver{received: func() map[string]uint64 { return map[string]uint64{"x": n.Add(100)} }}
+
+	tr := newTracker(t)
+	probe := &countingProbe{}
+	tr.checkActive(context.Background(), threeHosts[0], probe, observer)
+	if probe.total() != 1 {
+		t.Fatalf("%d probes for a profile never measured", probe.total())
+	}
+	tr.record("a", true, 64, SrcTunnel)
+	tr.checkActive(context.Background(), threeHosts[0], probe, observer)
+	if probe.total() != 1 {
+		t.Fatalf("probed a link carrying traffic: %v", probe.calls)
+	}
+	got := tr.Snapshot()["a"]
+	if last := got[len(got)-1]; !last.OK || last.RttMs != 64 || last.Src != SrcTunnel {
+		t.Fatalf("last sample = %+v", last)
 	}
 }

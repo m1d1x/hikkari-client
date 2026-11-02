@@ -296,12 +296,22 @@ func (t *Tracker) sweep(ctx context.Context, entries []HostEntry, probe Probe) {
 }
 
 // checkActive produces at most one sample for the profile in use, in order of
-// cost: bytes flowing (no sample, nothing to add), the engine's own probe (no
-// network), then one real probe.
+// cost: bytes flowing (a success at the last delay measured, no network), the
+// engine's own probe (no network), then one real probe. A link carrying
+// traffic still leaves a sample: the downdetector reports from this history,
+// and a profile that works for hours would otherwise look unreported.
 func (t *Tracker) checkActive(ctx context.Context, h HostEntry, probe Probe, observer Observer) {
 	if observer != nil {
-		if t.skipProbe(ctx, observer, h.ProfileID) {
+		flowing, stop := t.watchTraffic(ctx, observer, h.ProfileID)
+		if stop {
 			return
+		}
+		if flowing {
+			if rtt, ok := t.lastRtt(h.Profile); ok {
+				t.record(h.Profile, true, rtt, SrcTunnel)
+				t.Save()
+				return
+			}
 		}
 		if ok, rtt, known := observer.OwnProbe(h.ProfileID); known {
 			t.record(h.Profile, ok, rtt, SrcTunnel)
@@ -314,36 +324,49 @@ func (t *Tracker) checkActive(ctx context.Context, h HostEntry, probe Probe, obs
 	t.Save()
 }
 
-// skipProbe watches the profile for trafficWindow and reports whether this check
-// should end without a sample: some connection through it received bytes, or
-// something more urgent came up. The list opening must not wait out the window,
-// so a wake is handed back to Run. Read errors count as a quiet link: the caller
+// watchTraffic watches the profile for trafficWindow. flowing: some connection
+// through it received bytes. stop: something more urgent came up and the check
+// ends without a sample; the list opening must not wait out the window, so a
+// wake is handed back to Run. Read errors count as a quiet link: the caller
 // then measures, as it would anyway.
-func (t *Tracker) skipProbe(ctx context.Context, observer Observer, profileID string) bool {
+func (t *Tracker) watchTraffic(ctx context.Context, observer Observer, profileID string) (flowing, stop bool) {
 	before, err := observer.Received(profileID)
 	if err != nil {
-		return false
+		return false, false
 	}
 	timer := time.NewTimer(trafficWindow)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return true
+		return false, true
 	case <-t.wake:
 		t.Nudge()
-		return true
+		return false, true
 	case <-timer.C:
 	}
 	after, err := observer.Received(profileID)
 	if err != nil {
-		return false
+		return false, false
 	}
 	for id, received := range after {
 		if received > before[id] {
-			return true
+			return true, false
 		}
 	}
-	return false
+	return false, false
+}
+
+// lastRtt is the delay of the profile's latest successful sample.
+func (t *Tracker) lastRtt(profile string) (int, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	hist := t.history[profile]
+	for i := len(hist) - 1; i >= 0; i-- {
+		if hist[i].OK {
+			return hist[i].RttMs, true
+		}
+	}
+	return 0, false
 }
 
 func findHost(entries []HostEntry, profileID string) (HostEntry, bool) {
