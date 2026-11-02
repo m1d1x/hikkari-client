@@ -173,16 +173,40 @@ func register(m *mgr.Mgr, exe string) error {
 		}
 	}
 	defer s.Close()
-	// Crashed? Back in 5 s, twice; then once a minute. The counter resets daily.
-	_ = s.SetRecoveryActions([]mgr.RecoveryAction{
-		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
-		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
-		{Type: mgr.ServiceRestart, Delay: time.Minute},
-	}, 24*60*60)
+	_ = setRecoveryActions(s)
 	if err := s.Start(); err != nil {
 		return fmt.Errorf("starting the service: %w", err)
 	}
 	return nil
+}
+
+// setRecoveryActions: the core dies with the service and comes back with it,
+// so every second of a restart is the user's internet. Back at once; a service
+// that keeps crashing retries every 5 s, which costs little and never leaves
+// the user offline for longer than it has to. The counter resets daily.
+func setRecoveryActions(s *mgr.Service) error {
+	return s.SetRecoveryActions([]mgr.RecoveryAction{
+		{Type: mgr.ServiceRestart, Delay: time.Second},
+		{Type: mgr.ServiceRestart, Delay: time.Second},
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+	}, 24*60*60)
+}
+
+// refreshRecoveryActions brings an install registered by an older version up
+// to the current actions: only the installer's register sets them otherwise,
+// and an update does not run it.
+func refreshRecoveryActions() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(svcproto.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return setRecoveryActions(s)
 }
 
 func stopAndWait(s *mgr.Service) {

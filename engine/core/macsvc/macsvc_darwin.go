@@ -103,6 +103,7 @@ func Run() error {
 		return err
 	}
 	stack.log = srv.Log()
+	srv.CaptureCrashes()
 	ctx, stop := signalContext()
 	defer stop()
 	err = srv.Serve(ctx)

@@ -22,6 +22,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,6 +115,12 @@ func parseArgs(args []string) (apply, reconnect bool, waitPid int, link string) 
 	return
 }
 
+const (
+	// confirmPatience outlasts the SCM's longest restart delay (1 min).
+	confirmPatience   = 3 * time.Minute
+	confirmRetryEvery = 5 * time.Second
+)
+
 // guiInstance is the mutex the GUI holds while its window is open
 // (app/windows/runner/main.cpp).
 const guiInstance = `Local\hikkari-gui`
@@ -166,10 +173,28 @@ func supervise(gui string, exited <-chan int) {
 		}
 	case <-time.After(trialWindow):
 	}
-	if resp, err := svcclient.Call(svcproto.Request{Op: svcproto.OpConfirmUpdate}, time.Minute); err != nil {
+	confirm()
+}
+
+// confirm settles the version on trial, waiting out a service that is down at
+// that moment: the SCM brings a crashed one back within a minute. Given up on,
+// the version stays on trial, the binaries beside app\ stay old, and the next
+// starts count toward a rollback of a version that works.
+func confirm() {
+	deadline := time.Now().Add(confirmPatience)
+	for {
+		resp, err := svcclient.Call(svcproto.Request{Op: svcproto.OpConfirmUpdate}, time.Minute)
+		if err == nil {
+			if resp.Update != nil {
+				log.Logf("launcher: confirmed %s", resp.Update.Installed)
+			}
+			return
+		}
 		log.Logf("launcher: confirm: %v", err)
-	} else if resp.Update != nil {
-		log.Logf("launcher: confirmed %s", resp.Update.Installed)
+		if !errors.Is(err, svcclient.ErrNoService) || time.Now().After(deadline) {
+			return
+		}
+		time.Sleep(confirmRetryEvery)
 	}
 }
 

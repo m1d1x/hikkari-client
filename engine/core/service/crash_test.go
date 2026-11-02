@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -17,6 +18,8 @@ func TestCaptureCrashesMovesThePreviousTraceToTheLog(t *testing.T) {
 	log := logging.New(filepath.Join(dir, "service.log"))
 	defer log.Close()
 
+	// Windows cannot remove the temporary directory while the file is held.
+	t.Cleanup(func() { _ = debug.SetCrashOutput(nil, debug.CrashOptions{}) })
 	captureCrashes(dir, log)
 
 	if !strings.Contains(log.Tail(), "panic: boom") {

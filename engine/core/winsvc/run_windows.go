@@ -53,6 +53,10 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 	if err := registerURLScheme(h.root); err != nil {
 		srv.Log().Logf("winsvc: %v", err)
 	}
+	srv.CaptureCrashes()
+	if err := refreshRecoveryActions(); err != nil {
+		srv.Log().Logf("winsvc: recovery actions: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ctx) }()

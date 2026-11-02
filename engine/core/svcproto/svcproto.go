@@ -110,6 +110,11 @@ type Response struct {
 	// leaves it to the GUI, which has one elevated run of the new service
 	// binary adopt them.
 	SyncsBinaries bool `json:"syncsBinaries,omitempty"`
+	// ScanSafe: OpScanNetwork cannot take this service down. A new GUI runs
+	// against the previous service until the update is confirmed; 1.0.18 died
+	// on the scan, and the tunnel with it, so a service without this is not
+	// asked.
+	ScanSafe bool `json:"scanSafe,omitempty"`
 	// Recovery, for OpRecoverUpdate: nothing | repaired | on_trial | rolled_back.
 	Recovery string `json:"recovery,omitempty"`
 	// From / To: the versions an apply, recovery or rollback moved between.

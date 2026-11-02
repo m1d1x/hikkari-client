@@ -16,6 +16,10 @@ const (
 	crashLogLimit = 16 << 10
 )
 
+// CaptureCrashes keeps the trace of a crash of this process from now on. For
+// the installed service only: the file stays open for the life of the process.
+func (s *Server) CaptureCrashes() { captureCrashes(s.cfg.CoreDir, s.log) }
+
 // captureCrashes keeps the trace of a crash of this process. Nobody reads a
 // service's stderr, so without this a crash leaves only the restart behind and
 // its cause is lost. The trace of the previous run moves to the log, from

@@ -18,6 +18,13 @@ const networkResetTimeout = 120 * time.Second
 // deal with (hosts overrides of protected domains, DPI tools) and which
 // foreign WFP providers are present.
 func (c *Core) ScanNetworkStack() (svcproto.NetworkScan, error) {
+	status, err := svcclient.Call(svcproto.Request{Op: svcproto.OpStatus}, 5*time.Second)
+	if err != nil {
+		return svcproto.NetworkScan{}, err
+	}
+	if !status.ScanSafe {
+		return svcproto.NetworkScan{}, errServiceUpdating
+	}
 	resp, err := svcclient.Call(svcproto.Request{Op: svcproto.OpScanNetwork}, 10*time.Second)
 	if err != nil {
 		return svcproto.NetworkScan{}, err

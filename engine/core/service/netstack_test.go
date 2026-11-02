@@ -145,3 +145,22 @@ func TestNetworkScanIsReadOnly(t *testing.T) {
 		t.Fatalf("scan lost on the way out: %+v", got)
 	}
 }
+
+func TestStatusPromisesASafeScanOnlyWithAStack(t *testing.T) {
+	dir := t.TempDir()
+	with, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, NetworkStack: &fakeStack{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !with.status().ScanSafe {
+		t.Error("a service with a stack must promise a safe scan")
+	}
+	dir = t.TempDir()
+	without, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if without.status().ScanSafe {
+		t.Error("a service without a stack has no scan to promise")
+	}
+}
