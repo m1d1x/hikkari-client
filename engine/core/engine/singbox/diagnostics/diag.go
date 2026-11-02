@@ -266,8 +266,32 @@ func (r *Runner) dumpConfig() {
 		return
 	}
 	redact(cfg)
+	cfg = abridge(cfg)
 	out, _ := json.Marshal(cfg)
 	r.log.Logf("[diag:config] %s", out)
+}
+
+// abridgeOver is the longest list kept whole in the logged config. The line is
+// cut at 8 KB, and the Russian zone's address list alone (core/ruzone) runs to
+// thousands of entries: whole, it would push every rule after it off the line.
+const abridgeOver = 32
+
+// abridge shortens every long list to its first entries and a count of the rest.
+func abridge(v interface{}) interface{} {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		for k, vv := range t {
+			t[k] = abridge(vv)
+		}
+	case []interface{}:
+		if len(t) > abridgeOver {
+			return append(append([]interface{}{}, t[:4]...), fmt.Sprintf("… +%d", len(t)-4))
+		}
+		for i, vv := range t {
+			t[i] = abridge(vv)
+		}
+	}
+	return v
 }
 
 func redact(v interface{}) {

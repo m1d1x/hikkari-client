@@ -3,6 +3,7 @@ package configfile
 import (
 	"NekkoVPN/core/autotunnel"
 	"NekkoVPN/core/routing"
+	"NekkoVPN/core/ruzone"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -115,16 +116,21 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		}
 		appendRule("process_name", list.Processes)
 		appendRule("process_path_regex", folders)
-		if finalTag == "direct" {
-			userRules = append(userRules, escapeDirectRules(route, head)...)
-		}
+	}
+	// After the user's rules, so a Russian site the user sent through the VPN
+	// on purpose stays there; ahead of the default and the escapes, so it never
+	// falls into the tunnel by accident, where our exits refuse it.
+	userRules = append(userRules, ruZoneRules()...)
+	if state.Enabled && ruleOutbound != "" && finalTag == "direct" {
+		userRules = append(userRules, escapeDirectRules(route, head)...)
 	}
 
-	// Bypass rules go ahead of the QUIC reject: an app the user sent direct
+	// Direct rules go ahead of the QUIC reject: an app the user sent direct
 	// must see the network exactly as without the VPN. Behind the reject a
 	// bypassed game still lost all UDP 443 — EOS / PlayFab traffic among it.
+	// With the tunnel as the default every compiled rule is a direct one.
 	insertAt := len(preserved)
-	if ruleOutbound == "direct" {
+	if finalTag != "direct" {
 		for i, r := range preserved {
 			if m, ok := r.(map[string]interface{}); ok && isQUICReject(m) {
 				insertAt = i
@@ -145,6 +151,18 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		bypass = list
 	}
 	applyBypassDNS(cfg, bypass)
+}
+
+// ruZoneRules send the Russian internet direct (core/ruzone): our exits refuse
+// it, so through the tunnel a Russian site does not open at all. The names
+// match whatever resolves them; the addresses catch an app that connects by a
+// real address it resolved itself, such as a browser with Secure DNS.
+func ruZoneRules() []interface{} {
+	return []interface{}{map[string]interface{}{
+		"domain_suffix": toAnySlice(ruzone.Domains()),
+		"ip_cidr":       toAnySlice(ruzone.CIDRs()),
+		"outbound":      "direct",
+	}}
 }
 
 // Public Secure DNS resolvers, as browsers reach them: by name, or by address
@@ -256,6 +274,12 @@ func applyBypassDNS(cfg map[string]interface{}, bypass RouteList) {
 			"server":        "dns-direct",
 		})
 	}
+	// The Russian internet goes direct whatever the mode (ruZoneRules), and
+	// with real answers: Russian CDNs pick a node by the resolver's location.
+	kept = append(kept, map[string]interface{}{
+		"domain_suffix": toAnySlice(ruzone.Domains()),
+		"server":        "dns-direct",
+	})
 	if len(bypass.Processes) > 0 {
 		kept = append(kept, map[string]interface{}{
 			"process_name": toAnySlice(bypass.Processes),
@@ -269,7 +293,7 @@ func applyBypassDNS(cfg map[string]interface{}, bypass RouteList) {
 		})
 	}
 	for _, r := range rules {
-		if m, ok := r.(map[string]interface{}); ok && isBypassDNSRule(m) {
+		if m, ok := r.(map[string]interface{}); ok && (isBypassDNSRule(m) || isRUZoneDNSRule(m)) {
 			continue
 		}
 		kept = append(kept, r)
@@ -298,7 +322,26 @@ func isBypassDNSRule(m map[string]interface{}) bool {
 	if !has {
 		return false
 	}
-	return !(len(suf) == 1 && suf[0] == "zovfy.ru")
+	return !(len(suf) == 1 && suf[0] == "zovfy.ru") && !isRUZoneDNSRule(m)
+}
+
+// isRUZoneDNSRule recognises the Russian zone's dns-direct rule, which
+// applyBypassDNS also owns but keeps whatever the routing state.
+func isRUZoneDNSRule(m map[string]interface{}) bool {
+	if m["server"] != "dns-direct" {
+		return false
+	}
+	suf, _ := m["domain_suffix"].([]interface{})
+	zone := ruzone.Domains()
+	if len(suf) != len(zone) {
+		return false
+	}
+	for i, d := range zone {
+		if suf[i] != d {
+			return false
+		}
+	}
+	return true
 }
 
 func toAnySlice(vals []string) []interface{} {

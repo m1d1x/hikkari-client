@@ -9,6 +9,7 @@ import (
 	config "NekkoVPN/core/engine/singbox/config"
 	"NekkoVPN/core/engine/xray"
 	"NekkoVPN/core/routing"
+	"NekkoVPN/core/ruzone"
 )
 
 // One portable fixture exercises both native compilers, every platform, both
@@ -46,8 +47,12 @@ func TestAdaptersImplementTheSameRoutingIntent(t *testing.T) {
 				for _, item := range route["rules"].([]interface{}) {
 					rule := item.(map[string]interface{})
 					// The Secure DNS rules are the engine's, not the user's:
-					// only they carry ports.
+					// only they carry ports. So is the Russian zone, which
+					// goes direct in every mode (core/ruzone).
 					if _, own := rule["port"]; own {
+						continue
+					}
+					if suffixes, _ := rule["domain_suffix"].([]interface{}); len(suffixes) == len(ruzone.Domains()) && rule["ip_cidr"] != nil {
 						continue
 					}
 					if rule["outbound"] != string(policy.Target) {

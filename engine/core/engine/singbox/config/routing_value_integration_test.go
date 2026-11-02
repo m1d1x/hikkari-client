@@ -23,7 +23,7 @@ func TestApplyRoutingEmitsOnlyParseableIPCIDR(t *testing.T) {
 	var seen []interface{}
 	for _, r := range rules {
 		m := r.(map[string]interface{})
-		if _, secureDNS := m["port"]; secureDNS {
+		if _, secureDNS := m["port"]; secureDNS || isRUZoneRule(m) {
 			continue
 		}
 		if v, ok := m["ip_cidr"]; ok {

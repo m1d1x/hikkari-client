@@ -56,8 +56,8 @@ func TestApplyRouting_Disabled_ClearsOurRules(t *testing.T) {
 	state := RoutingState{Enabled: false, Mode: ModeBypass}
 	ApplyRouting(cfg, state, SelectorTag)
 
-	if got, want := ruleCount(cfg), 2; got != want {
-		t.Fatalf("rules: got %d, want %d (prelude + icmp only)", got, want)
+	if got, want := ruleCount(cfg), 3; got != want {
+		t.Fatalf("rules: got %d, want %d (prelude + icmp + Russian zone)", got, want)
 	}
 	if finalTag(cfg) != SelectorTag {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), SelectorTag)
@@ -81,9 +81,9 @@ func TestApplyRouting_BypassMode_EmitsDirectRules(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), SelectorTag)
 	}
 	rules := rulesOf(cfg)
-	// prelude + icmp + 3 of ours + 2 for Secure DNS
-	if len(rules) != 7 {
-		t.Fatalf("rules: got %d, want 7", len(rules))
+	// prelude + icmp + 3 of ours + 2 for Secure DNS + Russian zone
+	if len(rules) != 8 {
+		t.Fatalf("rules: got %d, want 8", len(rules))
 	}
 	for _, r := range rules[2:] {
 		if _, secureDNS := r["port"]; secureDNS {
@@ -110,8 +110,8 @@ func TestApplyRouting_ProxyMode_PointsAtHeadAndFinalDirect(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), "direct")
 	}
 	rules := rulesOf(cfg)
-	if len(rules) != 5 { // prelude + icmp + 1 ours + 2 for Secure DNS
-		t.Fatalf("rules: got %d, want 5", len(rules))
+	if len(rules) != 6 { // prelude + icmp + 1 ours + Russian zone + 2 for Secure DNS
+		t.Fatalf("rules: got %d, want 6", len(rules))
 	}
 	last := rules[2]
 	if ob, _ := last["outbound"].(string); ob != SelectorTag {
