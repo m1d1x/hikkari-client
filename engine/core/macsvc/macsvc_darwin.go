@@ -88,7 +88,7 @@ func Run() error {
 		// the sanitiser allows none, and the daemon's own dir is the safe one.
 		CoreWorkDir: CoreDir,
 		XrayBin:     xrayBin,
-		SystemDNS:   systemDNS{dir: filepath.Join(CoreDir, "dns-state")},
+		SystemDNS:   systemDNS{dir: filepath.Join(CoreDir, "dns-state"), net: netdoctorDNS{}},
 		Updater:     updaterBin,
 		UpdaterArgs: []string{"--root", filepath.Dir(Bundle), "--layout", "macos"},
 		Listen:      listen,

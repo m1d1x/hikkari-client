@@ -30,6 +30,12 @@ const (
 
 type winEnv struct{}
 
+// PinsSystemResolver: strict_route catches DNS on Windows, so the system
+// setting stays the user's and sing-box's local resolver can read it.
+const PinsSystemResolver = false
+
+func (winEnv) pinsResolver() bool { return PinsSystemResolver }
+
 // SelectHost probes the machine and decides how the core's direct path
 // should be set up. Call it with the tunnel down.
 func SelectHost() Selection { return selectHost(winEnv{}) }

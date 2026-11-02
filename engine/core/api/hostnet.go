@@ -52,7 +52,9 @@ func (c *Core) watchNetwork(ctx context.Context) {
 		}
 		c.operationMu.Lock()
 		defer c.operationMu.Unlock()
-		if ctx.Err() != nil || !c.backend.IsRunning() || c.host.Default() {
+		// Unprobed (a resumed core) is not known to be on defaults where the
+		// resolver is pinned.
+		if ctx.Err() != nil || !c.backend.IsRunning() || (c.host.Default() && !netdoctor.PinsSystemResolver) {
 			return
 		}
 		if c.logger != nil {

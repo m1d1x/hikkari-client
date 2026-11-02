@@ -3,10 +3,12 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,14 +18,34 @@ import (
 	"NekkoVPN/core/svcproto"
 )
 
-type fakeDNS struct{ overridden []string }
+type fakeDNS struct {
+	mu         sync.Mutex
+	overridden []string
+}
 
-func (d *fakeDNS) Override(addr string) error { d.overridden = append(d.overridden, addr); return nil }
-func (d *fakeDNS) Restore() error             { d.overridden = nil; return nil }
+func (d *fakeDNS) Override(addr string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.overridden = append(d.overridden, addr)
+	return nil
+}
 
-// One core at a time: Xray runs with the system resolver pointed at it,
-// starting sing-box takes Xray down and gives the resolver back, and the
-// run marker remembers which engine to resume.
+func (d *fakeDNS) Restore() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.overridden = nil
+	return nil
+}
+
+func (d *fakeDNS) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.overridden)
+}
+
+// One core at a time: each runs with the system resolver pointed at it,
+// starting sing-box takes Xray down, stopping gives the resolver back, and
+// the run marker remembers which engine to resume.
 func TestServiceRunsOneEngineAtATime(t *testing.T) {
 	dir := t.TempDir()
 	core := filepath.Join(dir, "core")
@@ -66,12 +88,15 @@ func TestServiceRunsOneEngineAtATime(t *testing.T) {
 	if s.cores[svcproto.EngineXray].Pid() != 0 {
 		t.Fatal("Xray still runs beside sing-box")
 	}
-	if len(dns.overridden) != 0 {
-		t.Fatalf("system DNS not given back: %v", dns.overridden)
+	if n := len(dns.overridden); n == 0 || dns.overridden[n-1] != svcproto.SingBoxDNS {
+		t.Fatalf("system DNS while sing-box runs: %v", dns.overridden)
 	}
 
 	if resp = s.dispatch(svcproto.Request{Op: svcproto.OpStop}); !resp.OK || resp.Running {
 		t.Fatalf("stop: %+v", resp)
+	}
+	if len(dns.overridden) != 0 {
+		t.Fatalf("system DNS not given back: %v", dns.overridden)
 	}
 }
 
@@ -140,5 +165,109 @@ func TestBinaryRestartWaitsForTheCoreToStop(t *testing.T) {
 	s.requestRestartWhenIdle()
 	if !restarted() {
 		t.Fatal("idle service did not restart at once")
+	}
+}
+
+// A core that cannot start must not leave the system resolver pointed at it.
+func TestFailedSingBoxStartGivesTheResolverBack(t *testing.T) {
+	dir := t.TempDir()
+	dns := &fakeDNS{}
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: filepath.Join(dir, "missing"), CoreWorkDir: dir, SystemDNS: dns})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.stopCores()
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`)}); resp.OK {
+		t.Fatalf("started without a binary: %+v", resp)
+	}
+	if len(dns.overridden) != 0 {
+		t.Fatalf("system DNS left overridden: %v", dns.overridden)
+	}
+}
+
+// Where the platform catches DNS by routing there is no SystemDNS at all.
+func TestSingBoxRunsWithoutSystemDNS(t *testing.T) {
+	dir := t.TempDir()
+	core := filepath.Join(dir, "core")
+	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.stopCores()
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`)}); !resp.OK {
+		t.Fatalf("start: %+v", resp)
+	}
+}
+
+// A service that died with the override in place leaves it behind; the next
+// one puts the user's setting back before anything else, also with no core to
+// resume.
+func TestNextStartRestoresTheResolverAfterACrash(t *testing.T) {
+	dir := t.TempDir()
+	dns := &fakeDNS{overridden: []string{svcproto.SingBoxDNS}}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: "/bin/false", CoreWorkDir: dir, SystemDNS: dns,
+		Listen: func() (net.Listener, error) { return l, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for dns.count() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("override survived the restart")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+}
+
+// A core that dies on its own takes the TUN with it: the override would point
+// nowhere and the machine would stop resolving.
+func TestDeadCoreGivesTheResolverBack(t *testing.T) {
+	dir := t.TempDir()
+	core := filepath.Join(dir, "core")
+	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dns := &fakeDNS{}
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, SystemDNS: dns})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.stopCores()
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`)}); !resp.OK {
+		t.Fatalf("start: %+v", resp)
+	}
+	s.releaseDeadCoreDNS()
+	if dns.count() != 1 {
+		t.Fatalf("running core lost the override: %v", dns.overridden)
+	}
+	proc, err := os.FindProcess(s.cores[svcproto.EngineSingBox].Pid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for s.cores[svcproto.EngineSingBox].Pid() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("core still reported alive")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.releaseDeadCoreDNS()
+	if dns.count() != 0 {
+		t.Fatalf("override outlived the core: %v", dns.overridden)
 	}
 }

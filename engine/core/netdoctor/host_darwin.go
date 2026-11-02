@@ -35,6 +35,14 @@ const (
 
 type macEnv struct{}
 
+// PinsSystemResolver: the service points the system resolver at the core while
+// it runs (macsvc.systemDNS), and sing-box's local resolver reads that setting.
+// So every selection names the network's resolver for direct lookups, and a
+// network change has to restart the tunnel to pick up the new one.
+const PinsSystemResolver = true
+
+func (macEnv) pinsResolver() bool { return PinsSystemResolver }
+
 // SelectHost probes the machine and decides how the core's direct path
 // should be set up. Call it with the tunnel down.
 func SelectHost() Selection { return selectHost(macEnv{}) }

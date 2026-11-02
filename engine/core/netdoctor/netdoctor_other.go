@@ -23,6 +23,9 @@ func SanitizeProxy() (Action, error) {
 // Host selection probes failure modes of those systems; elsewhere the core
 // keeps its defaults.
 
+// PinsSystemResolver: no service here overrides the system resolver.
+const PinsSystemResolver = false
+
 func SelectHost() Selection {
 	return Selection{Iface: IfaceUnchecked, DNS: DNSUnchecked, Probed: true}
 }

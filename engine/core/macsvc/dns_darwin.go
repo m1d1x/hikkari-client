@@ -14,21 +14,42 @@ import (
 	"NekkoVPN/core/netdoctor"
 )
 
-// systemDNS points every network service's resolver at the core while Xray
+// systemDNS points every network service's resolver at the core while it
 // runs. A resolver on the local network is reached on-link, past the TUN
-// routes, so without this DNS would leave unprotected — sing-box hijacks it
-// by itself, Xray does not.
+// routes, so without this DNS would leave unprotected and no name would get a
+// fake address. sing-box's own direct lookups must not read this setting:
+// netdoctor pins them to the network's real resolver (PinsSystemResolver).
 //
 // The user's setting is backed up per service under dir before anything is
 // changed, and the backup is what Restore puts back: after a clean stop, and
 // at the next start of the daemon when it died with the override in place.
-type systemDNS struct{ dir string }
+type systemDNS struct {
+	dir string
+	net dnsSettings
+}
+
+// dnsSettings is the system's per-service resolver setting.
+type dnsSettings interface {
+	NetworkServices() ([]string, error)
+	ManualDNS(service string) ([]string, error)
+	SetManualDNS(service string, servers ...string) error
+}
+
+type netdoctorDNS struct{}
+
+func (netdoctorDNS) NetworkServices() ([]string, error) { return netdoctor.NetworkServices() }
+func (netdoctorDNS) ManualDNS(service string) ([]string, error) {
+	return netdoctor.ManualDNS(service)
+}
+func (netdoctorDNS) SetManualDNS(service string, servers ...string) error {
+	return netdoctor.SetManualDNS(service, servers...)
+}
 
 func (d systemDNS) Override(addr string) error {
 	if net.ParseIP(addr) == nil {
 		return fmt.Errorf("%q is not an IP address", addr)
 	}
-	services, err := netdoctor.NetworkServices()
+	services, err := d.net.NetworkServices()
 	if err != nil {
 		return err
 	}
@@ -41,7 +62,7 @@ func (d systemDNS) Override(addr string) error {
 		if _, err := os.Stat(backup); os.IsNotExist(err) {
 			// Back up once: a second Override must not save its own
 			// address as the user's.
-			servers, err := netdoctor.ManualDNS(service)
+			servers, err := d.net.ManualDNS(service)
 			if err != nil {
 				return err
 			}
@@ -50,7 +71,7 @@ func (d systemDNS) Override(addr string) error {
 				return err
 			}
 		}
-		if err := netdoctor.SetManualDNS(service, addr); err != nil {
+		if err := d.net.SetManualDNS(service, addr); err != nil {
 			return err
 		}
 	}
@@ -73,7 +94,7 @@ func (d systemDNS) Restore() error {
 			// The user had none set: hand the service back to DHCP.
 			servers = []string{"Empty"}
 		}
-		if err := netdoctor.SetManualDNS(lines[0], servers...); err != nil {
+		if err := d.net.SetManualDNS(lines[0], servers...); err != nil {
 			errs = append(errs, err.Error())
 			continue
 		}

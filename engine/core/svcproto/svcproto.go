@@ -48,6 +48,10 @@ const (
 	EngineXray    = "xray"
 )
 
+// SingBoxDNS is the address the core hijacks DNS on: the next one after its
+// TUN address (configfile.tunInbound), which sing-tun picks by itself.
+const SingBoxDNS = "172.19.0.2"
+
 // Ops.
 const (
 	OpStart  = "start"

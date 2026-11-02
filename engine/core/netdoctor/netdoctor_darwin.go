@@ -131,7 +131,7 @@ func SanitizeProxy() (Action, error) { return repairProxies(macProxies{}) }
 
 // resetDeadDNS hands back to DHCP the services whose manual resolvers are a
 // local stub that no longer runs. Everything on such a machine fails to
-// resolve, and the override the core sets while Xray runs is never dead while
+// resolve, and the override the core sets while it runs is never dead while
 // it is in place: the core answers on it.
 func resetDeadDNS() Action {
 	a := Action{Name: "dns_reset"}

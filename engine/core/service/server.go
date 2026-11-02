@@ -52,8 +52,10 @@ type Config struct {
 	// XrayBin is the bundled Xray, run in CoreDir on CoreDir/xray.json.
 	// Empty: this installation has no Xray and refuses to start it.
 	XrayBin string
-	// SystemDNS points the system resolver at the running core while Xray
-	// runs (sing-box takes DNS over by itself). Required with XrayBin.
+	// SystemDNS points the system resolver at the running core, of either
+	// engine: a resolver on the local network is reached on-link, past the
+	// TUN routes. Required with XrayBin. Nil where the core's own routing
+	// catches DNS (strict_route on Windows).
 	SystemDNS SystemDNS
 
 	// Updater is hikkari-updater; UpdaterArgs go after the command (root
@@ -139,6 +141,9 @@ type NetworkStack interface {
 }
 
 // ErrRestart: Serve returned because an update replaced the service.
+// coreExitPoll is how long a dead core can leave the resolver pointed at it.
+const coreExitPoll = 2 * time.Second
+
 var ErrRestart = errors.New("service: restarting into the updated version")
 
 type Server struct {
@@ -206,7 +211,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	defer cancel()
 	go s.updates.loop(ctx)
 	if s.cfg.SystemDNS != nil {
-		// A previous service that died with Xray up left the resolver
+		// A previous service that died with a core up left the resolver
 		// pointed at a core that is gone.
 		if err := s.cfg.SystemDNS.Restore(); err != nil {
 			s.log.Logf("service: restoring system DNS: %v", err)
@@ -215,6 +220,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	if s.cfg.ResumeCore {
 		s.resume()
 	}
+	go s.watchCoreExit(ctx)
 	go s.updates.watchTrial(ctx)
 	go s.updates.settle()
 
@@ -529,8 +535,8 @@ func (s *Server) stopCore() error {
 }
 
 // runCore starts engine's core on its stored config, stopping the other
-// one first. Xray gets the system resolver pointed at it; sing-box hijacks
-// DNS by itself. Callers hold mu.
+// one first. The system resolver is pointed at the core that starts. Callers
+// hold mu.
 func (s *Server) runCore(engine string) error {
 	for name, core := range s.cores {
 		if name != engine && core.Pid() != 0 {
@@ -549,8 +555,9 @@ func (s *Server) runCore(engine string) error {
 			return fmt.Errorf("Xray: не удалось настроить системный DNS: %w", err)
 		}
 	} else if s.cfg.SystemDNS != nil {
-		if err := s.cfg.SystemDNS.Restore(); err != nil {
-			return fmt.Errorf("не удалось вернуть системный DNS: %w", err)
+		if err := s.cfg.SystemDNS.Override(svcproto.SingBoxDNS); err != nil {
+			_ = s.cfg.SystemDNS.Restore()
+			return fmt.Errorf("не удалось настроить системный DNS: %w", err)
 		}
 	}
 	if engine == svcproto.EngineSingBox {
@@ -563,12 +570,45 @@ func (s *Server) runCore(engine string) error {
 		}
 	}
 	if err := s.cores[engine].Start(); err != nil {
-		if engine == svcproto.EngineXray {
+		if s.cfg.SystemDNS != nil {
 			_ = s.cfg.SystemDNS.Restore()
 		}
 		return err
 	}
 	return nil
+}
+
+// watchCoreExit gives the system resolver back when the core dies on its own:
+// with the TUN gone the override points nowhere and the whole machine stops
+// resolving, the direct path included. The next start sets it again.
+func (s *Server) watchCoreExit(ctx context.Context) {
+	if s.cfg.SystemDNS == nil {
+		return
+	}
+	tick := time.NewTicker(coreExitPoll)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		s.mu.Lock()
+		s.releaseDeadCoreDNS()
+		s.mu.Unlock()
+	}
+}
+
+// releaseDeadCoreDNS is one check of watchCoreExit. Callers hold mu.
+func (s *Server) releaseDeadCoreDNS() {
+	for _, core := range s.cores {
+		if core.Pid() != 0 {
+			return
+		}
+	}
+	if err := s.cfg.SystemDNS.Restore(); err != nil {
+		s.log.Logf("service: restoring system DNS after the core exited: %v", err)
+	}
 }
 
 // stopCores takes every core down and gives the system resolver back.

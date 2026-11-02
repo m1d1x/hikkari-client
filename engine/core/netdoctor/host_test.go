@@ -9,6 +9,7 @@ import (
 )
 
 type fakeEnv struct {
+	pins     bool
 	cs       []Candidate
 	bestIdx  int
 	reachOK  map[int]bool
@@ -41,6 +42,7 @@ func (f *fakeEnv) resolve(idx int, server, domain string) bool {
 	return f.dnsOK[server]
 }
 func (f *fakeEnv) sleep(time.Duration) {}
+func (f *fakeEnv) pinsResolver() bool  { return f.pins }
 
 var (
 	wifi = Candidate{Index: 7, Name: "Wi-Fi", Metric: 35, Gateway: "192.168.1.1", DNS: []string{"192.168.1.1"}, Physical: true}
@@ -161,5 +163,42 @@ func TestDetailsExplainAPinnedFallbackWithoutNamesOrAddresses(t *testing.T) {
 func TestLogLineDoesNotReportAnUncheckedSelectionAsFailed(t *testing.T) {
 	if got := (Selection{}).LogLine(); got != "direct unchecked" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestPinningNamesTheNetworksResolverForDirectLookups(t *testing.T) {
+	w := wifi
+	w.DNS = []string{"fe80::1", "192.168.1.1", "192.168.1.2"}
+	env := &fakeEnv{pins: true, cs: []Candidate{w}, bestIdx: w.Index, reachOK: map[int]bool{w.Index: true}, dnsOK: map[string]bool{"fe80::1": true, "192.168.1.1": true}}
+	if s := selectHost(env); s.DNS != DNSSystem || s.DirectDNS != "192.168.1.1" {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestPinningFallsBackWhenNothingAnswers(t *testing.T) {
+	w := wifi
+	w.DNS = []string{"192.168.1.1"}
+	env := &fakeEnv{pins: true, cs: []Candidate{w}, bestIdx: w.Index, reachOK: map[int]bool{w.Index: true}}
+	if s := selectHost(env); s.DNS != DNSUnreachable || s.DirectDNS != FallbackDNS {
+		t.Fatalf("%+v", s)
+	}
+}
+
+// A selection under a tunnel still up reads the override back from the system.
+func TestTheCoresOwnAddressIsNeverTakenForTheResolver(t *testing.T) {
+	w := wifi
+	w.DNS = []string{"172.19.0.2"}
+	env := &fakeEnv{pins: true, cs: []Candidate{w}, bestIdx: w.Index, reachOK: map[int]bool{w.Index: true}, dnsOK: map[string]bool{"172.19.0.2": true, FallbackDNS: true}}
+	if s := selectHost(env); s.DNS != DNSFallback || s.DirectDNS != FallbackDNS {
+		t.Fatalf("%+v", s)
+	}
+}
+
+func TestWithoutPinningTheSystemResolverStaysImplicit(t *testing.T) {
+	w := wifi
+	w.DNS = []string{"192.168.1.1"}
+	env := &fakeEnv{cs: []Candidate{w}, bestIdx: w.Index, reachOK: map[int]bool{w.Index: true}, dnsOK: map[string]bool{"192.168.1.1": true}}
+	if s := selectHost(env); s.DirectDNS != "" {
+		t.Fatalf("%+v", s)
 	}
 }

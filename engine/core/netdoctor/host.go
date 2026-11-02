@@ -151,6 +151,8 @@ type hostEnv interface {
 	// resolve sends one A query for domain to server, bound to idx.
 	resolve(idx int, server, domain string) bool
 	sleep(time.Duration)
+	// pinsResolver: see PinsSystemResolver.
+	pinsResolver() bool
 }
 
 // networkKey identifies a physical network by its adapters and gateways.
@@ -195,6 +197,9 @@ func selectHost(env hostEnv) Selection {
 	sel.DNS = judgeDNS(env, chosen, &sel.Details)
 	if sel.DNS == DNSFallback {
 		sel.DirectDNS = FallbackDNS
+	}
+	if env.pinsResolver() && sel.DirectDNS == "" {
+		sel.DirectDNS = pinnedResolver(env, chosen)
 	}
 	return sel
 }
@@ -265,9 +270,31 @@ func resolverKind(ip string) string {
 	}
 }
 
+// pinnedResolver names the resolver direct lookups use while the system
+// setting points at the core: the first IPv4 one of the network that answers.
+// Offline nothing answers, and the fallback stands in until the network change
+// that follows restarts the tunnel and probes again.
+func pinnedResolver(env hostEnv, c *Candidate) string {
+	for _, s := range c.DNS {
+		if ip := net.ParseIP(s); ip != nil && ip.To4() != nil && resolverWorks(env, c.Index, []string{s}) {
+			return s
+		}
+	}
+	return FallbackDNS
+}
+
 // judgeDNS: the system resolver is broken only if it fails twice, a short
-// while apart — one dropped packet must not switch resolvers.
+// while apart — one dropped packet must not switch resolvers. The core's own
+// address is not a resolver of this network: it shows up here when a selection
+// runs under a tunnel the service already had up.
 func judgeDNS(env hostEnv, c *Candidate, d *Details) string {
+	real := c.DNS[:0:0]
+	for _, s := range c.DNS {
+		if ip := net.ParseIP(s); ip == nil || !tunNet.Contains(ip) {
+			real = append(real, s)
+		}
+	}
+	c.DNS = real
 	seen := map[string]bool{}
 	for _, s := range c.DNS {
 		if k := resolverKind(s); !seen[k] {
