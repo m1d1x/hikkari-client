@@ -31,7 +31,12 @@ func New(path string) *Store {
 	}
 }
 
-func (s *Store) Path() string        { return s.path }
+func (s *Store) Path() string { return s.path }
+
+// AutoTunnelPath is the rule set of hosts core/autotunnel maintains.
+func (s *Store) AutoTunnelPath() string {
+	return filepath.Join(filepath.Dir(s.path), "auto-tunnel.json")
+}
 func (s *Store) RoutingPath() string { return s.routingPath }
 
 // Read loads config.json. Like ReadRouting, a missing file yields the
@@ -376,6 +381,9 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 	// Re-apply routing.json on top — owns route.rules (besides ICMP/prelude)
 	// and route.final whenever proxy-mode is on. Missing routing.json yields
 	// DefaultRoutingState which is effectively a no-op.
+	if err := s.attachAutoTunnel(cfg); err != nil {
+		return err
+	}
 	ApplyRouting(cfg, routing, head)
 
 	return s.Write(cfg)

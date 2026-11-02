@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 
+	"NekkoVPN/core/autotunnel"
 	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/downdetector"
 	"NekkoVPN/core/engine"
@@ -69,7 +70,7 @@ type Core struct {
 	// separate from the per-profile uptime tracker above.
 	serviceUptime *uptime.Tracker
 	// downdetector turns uptime samples into anonymous reports for the
-	// shared downdetector (queued locally only, for now).
+	// shared downdetector.
 	downdetector *downdetector.Agent
 	// telemetry queues product events and scrubbed errors for the hub
 	// (docs/TELEMETRY.md). Its switch also governs the downdetector.
@@ -79,6 +80,8 @@ type Core struct {
 	host netdoctor.Selection
 	// testerLog streams the engine log to the hub while tester mode is on
 	testerLog *testerlog.Shipper
+	// autoTunnel is nil for an engine without a view of its direct traffic.
+	autoTunnel *autotunnel.List
 	// support delivers support reports, retrying until the hub takes them
 	support *supportqueue.Queue
 
@@ -178,6 +181,10 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		return err
 	}
 	c.presetState = c.presets.Snapshot().State
+	if gated, ok := c.backend.(engine.TesterGated); ok {
+		presetManager := c.presets
+		gated.SetTesterGate(func() bool { return presetManager.Snapshot().Tester })
+	}
 	c.profiles = profile.New(filepath.Join(baseDir, "profiles.json"))
 	c.health = health.New(
 		filepath.Join(baseDir, "direct-ip.txt"),
@@ -251,6 +258,13 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	run := func(fn func()) { workers.Add(1); go func() { defer workers.Done(); fn() }() }
 	run(func() { tracker.Run(ctx, c.uptimeHosts, c.carryingProfile, probe, c.uptimeObserver()) })
 	run(func() { reporter.Run(ctx) })
+	reportSender := downdetector.NewSender(
+		reporter,
+		presetEndpoint("HIKKARI_DOWNDETECTOR_URL", downdetector.ReportsURL),
+		presetEndpoint("HIKKARI_DOWNDETECTOR_TOKEN", downdetector.ReportsToken),
+		nil,
+	)
+	run(func() { reportSender.Run(ctx) })
 	run(func() { tel.Run(ctx) })
 	testerLog := c.testerLog
 	run(func() { testerLog.Run(ctx) })
@@ -259,6 +273,11 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	run(func() { checker.Run(ctx) })
 	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {
+		if direct, ok := backend.(engine.DirectTraffic); ok {
+			c.autoTunnel = autotunnel.OpenList(direct.AutoTunnelList())
+			list, logf := c.autoTunnel, c.logger.Logf
+			run(func() { autotunnel.Run(ctx, list, direct.DirectConnections, logf) })
+		}
 		run(c.measureTunnelDown)
 		run(backend.Baseline)
 		run(func() { c.watchNetwork(ctx) })

@@ -3,6 +3,7 @@
 package singbox
 
 import (
+	"NekkoVPN/core/autotunnel"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -34,7 +35,12 @@ type Backend struct {
 	diagnostics *diag.Runner
 	log         engine.Logger
 	stoppedAt   time.Time
+	tester      func() bool // see SetTesterGate
+	active      string      // selector member the last Configure chose
 }
+
+// selectActiveTimeout bounds the wait for a freshly started core's Clash API.
+const selectActiveTimeout = 3 * time.Second
 
 func New(baseDir string, log engine.Logger) (engine.Backend, error) {
 	return NewWithProcess(baseDir, log, vpn.NewProcessManager(filepath.Join(baseDir, vpn.BinaryName), filepath.Join(baseDir, "config.json"), baseDir, log)), nil
@@ -79,6 +85,9 @@ func (b *Backend) Configure(c engine.Configuration) error {
 		}
 		tag := profileTag(p.Name)
 		cfg["tag"] = tag
+		if b.tester != nil && b.tester() && wantsFlowRetry(n.Kind, cfg) {
+			cfg["flow_retry_delay"] = flowRetryDelay
+		}
 		specs = append(specs, configfile.ProfileSpec{Tag: tag, Kind: n.Kind, Config: cfg})
 		if p.Name == c.ActiveProfile {
 			active = tag
@@ -87,10 +96,14 @@ func (b *Backend) Configure(c engine.Configuration) error {
 	if active == "" && len(specs) > 0 {
 		active = specs[0].Tag
 	}
-	return b.config.RebuildActiveWithRouting(specs, active, c.AutoSelect, legacyTags, c.Routing, configfile.HostNetwork{
+	if err := b.config.RebuildActiveWithRouting(specs, active, c.AutoSelect, legacyTags, c.Routing, configfile.HostNetwork{
 		DirectInterface: c.Host.DirectInterface,
 		DirectDNS:       c.Host.DirectDNS,
-	})
+	}); err != nil {
+		return err
+	}
+	b.active = active
+	return nil
 }
 func (b *Backend) Start(ctx context.Context) error {
 	if !b.stoppedAt.IsZero() {
@@ -127,8 +140,32 @@ func (b *Backend) Start(ctx context.Context) error {
 	if err := b.process.Start(); err != nil {
 		return err
 	}
+	b.selectActive(ctx)
 	b.diagnostics.AfterStart(ctx)
 	return nil
+}
+
+// selectActive makes the running selector follow the configured profile. On
+// start sing-box prefers the member stored in cache.db by an earlier live switch
+// over the selector's `default`, so a profile chosen while the core was down
+// would otherwise be silently ignored. A failure is only logged: the core is up.
+func (b *Backend) selectActive(ctx context.Context) {
+	if b.active == "" {
+		return
+	}
+	wait, cancel := context.WithTimeout(ctx, selectActiveTimeout)
+	defer cancel()
+	for !b.control.IsAlive() {
+		select {
+		case <-wait.Done():
+			b.log.Logf("sing-box: select %s: core API did not come up", b.active)
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if err := b.control.SelectProxy(selectorTag, b.active); err != nil {
+		b.log.Logf("sing-box: select %s: %v", b.active, err)
+	}
 }
 func (b *Backend) Stop() error {
 	b.diagnostics.Stop()
@@ -154,6 +191,54 @@ func (b *Backend) CanProbeDirect() bool { return b.control.IsAlive() }
 func (b *Backend) ProbeDirect(url string, timeoutMs int) error {
 	_, err := b.control.Delay("direct", url, timeoutMs)
 	return err
+}
+
+// SetTesterGate implements engine.TesterGated.
+func (b *Backend) SetTesterGate(tester func() bool) {
+	b.tester = tester
+	b.diagnostics.SetReachGate(tester)
+}
+
+// flowRetryDelay is how long a TCP dial to a server stays silent before another
+// attempt starts from a new source port (core-patches/.../0003). Well over any
+// RTT that works, so a path that answers never sees a second SYN.
+const flowRetryDelay = "1s"
+
+// udpProfileTypes have no TCP dial for a flow retry to act on.
+var udpProfileTypes = map[string]bool{"hysteria": true, "hysteria2": true, "tuic": true, "wireguard": true}
+
+func wantsFlowRetry(kind string, cfg map[string]interface{}) bool {
+	kindOf, _ := cfg["type"].(string)
+	return kind == profile.KindOutbound && !udpProfileTypes[kindOf]
+}
+
+// AutoTunnelList implements engine.DirectTraffic.
+func (b *Backend) AutoTunnelList() string { return b.config.AutoTunnelPath() }
+
+// DirectConnections implements engine.DirectTraffic.
+func (b *Backend) DirectConnections() ([]autotunnel.Conn, error) {
+	connections, err := b.control.Connections()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]autotunnel.Conn, 0, len(connections))
+	for _, c := range connections {
+		start, err := time.Parse(time.RFC3339Nano, c.Start)
+		if err != nil {
+			continue
+		}
+		out = append(out, autotunnel.Conn{
+			ID:       c.ID,
+			Host:     c.Metadata.Host,
+			Network:  c.Metadata.Network,
+			Port:     c.Metadata.DestPort,
+			Upload:   c.Upload,
+			Download: c.Download,
+			Direct:   len(c.Chains) > 0 && c.Chains[0] == "direct", // the outbound itself; groups follow it
+			Start:    start,
+		})
+	}
+	return out, nil
 }
 
 // RoutedProfile asks the auto group which profile it holds.

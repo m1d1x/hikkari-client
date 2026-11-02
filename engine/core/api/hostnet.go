@@ -41,6 +41,11 @@ func (c *Core) forgetHostLocked() { c.host = netdoctor.Selection{} }
 func (c *Core) watchNetwork(ctx context.Context) {
 	err := netdoctor.WatchNetwork(ctx, func(string) {
 		c.health.RecheckEgress()
+		if c.autoTunnel != nil {
+			if err := c.autoTunnel.Reset(); err != nil && c.logger != nil {
+				c.logger.Logf("[autotunnel] reset after network change: %v", err)
+			}
+		}
 		c.operationMu.Lock()
 		defer c.operationMu.Unlock()
 		if ctx.Err() != nil || !c.backend.IsRunning() || c.host.Default() {

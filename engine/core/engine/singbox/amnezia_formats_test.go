@@ -98,3 +98,41 @@ func TestAmneziaLinkShapeIsBoundedAndDropsOddNames(t *testing.T) {
 		t.Error("empty link")
 	}
 }
+
+func awgConfWith(extra string) string {
+	return "[Interface]\nPrivateKey = cHJpdmF0ZQ==\nAddress = 10.66.0.7/32\nJc = 4\nJmin = 40\nJmax = 70\nS1 = 20\nS2 = 30\n" +
+		"H1 = 100-200\nH2 = 300-400\nH3 = 500-600\nH4 = 700-800\nI1 = <r 8>\n" + extra +
+		"\n[Peer]\nPublicKey = cHVibGlj\nEndpoint = 203.0.113.5:40001\nAllowedIPs = 0.0.0.0/0\n"
+}
+
+// The hub's link carries both a fixed I1, for released clients, and a request for
+// the live generator. The core refuses the two together, so I1 must go.
+func TestAwgMasqueradeReplacesTheFixedDecoy(t *testing.T) {
+	d, err := parseAmneziaWGIni(awgConfWith("Ip = quic\nId = www.gstatic.com\nIb = chrome\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Config["ip"] != "quic" || d.Config["id"] != "www.gstatic.com" || d.Config["ib"] != "chrome" {
+		t.Fatalf("%v", d.Config)
+	}
+	if _, ok := d.Config["i1"]; ok {
+		t.Fatal("i1 stayed beside the generator: the core refuses that")
+	}
+}
+
+// A link comes from anywhere, and the core refuses a whole config over a value it
+// doesn't know. A bad request is dropped and the link keeps working on its I1.
+func TestAwgMasqueradeIgnoresWhatTheCoreWouldRefuse(t *testing.T) {
+	for _, extra := range []string{
+		"", "Ip = dns\nId = a.example\n", "Ip = quic\n", "Ip = quic\nId = not a domain\n",
+		"Ip = quic\nId = a.example\nIb = chrome-full\n",
+	} {
+		d, err := parseAmneziaWGIni(awgConfWith(extra))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Config["i1"] != "<r 8>" || d.Config["ip"] != nil || d.Config["id"] != nil || d.Config["ib"] != nil {
+			t.Errorf("%q: %v", extra, d.Config)
+		}
+	}
+}

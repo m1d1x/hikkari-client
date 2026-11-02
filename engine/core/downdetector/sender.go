@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+// ReportsURL is the hub's POST /v1/reports endpoint and ReportsToken its invite
+// token, both stamped at build time. An empty URL means the build has no
+// endpoint: reports stay in the bounded outbox.
+var (
+	ReportsURL   = ""
+	ReportsToken = ""
+)
+
 // Sender periodically sends accumulated downdetector reports from the local
 // outbox to the central hub endpoint.
 type Sender struct {
@@ -88,6 +96,13 @@ func isRetryable(err error) bool {
 	return true
 }
 
+// isRejected reports whether the hub refused this report for what it holds. It
+// never accepts it later, so keeping it would block every report queued behind.
+func isRejected(err error) bool {
+	var httpErr *httpStatusError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusBadRequest
+}
+
 func (s *Sender) sendReport(ctx context.Context, r Report) error {
 	data, err := json.Marshal(r)
 	if err != nil {
@@ -151,6 +166,10 @@ func (s *Sender) Run(ctx context.Context) {
 			}
 			for _, r := range reports {
 				if err := s.sendReport(ctx, r); err != nil {
+					if isRejected(err) {
+						s.Agent.AckOutbox(1)
+						continue
+					}
 					failed = true
 					if isRetryable(err) {
 						select {

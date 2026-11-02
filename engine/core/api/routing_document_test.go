@@ -11,7 +11,7 @@ import (
 )
 
 func TestRoutingDocumentPreviewDoesNotMutateOrConfigure(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 	if err := c.AddRule("bypass", "domains", "mine.example"); err != nil {
 		t.Fatal(err)

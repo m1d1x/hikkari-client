@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"NekkoVPN/core/autotunnel"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/routing"
 	"context"
@@ -85,6 +86,23 @@ type DirectProber interface {
 	CanProbeDirect() bool
 	// ProbeDirect returns nil when url answered at all.
 	ProbeDirect(url string, timeoutMs int) error
+}
+
+// TesterGated is optional: the engine has things it does only on a tester's
+// install, while they earn their place: counting the TCP flows that reach each
+// profile, and starting another attempt when a flow stays silent.
+type TesterGated interface {
+	SetTesterGate(tester func() bool)
+}
+
+// DirectTraffic is optional: the engine can show what goes over the direct path
+// and send named hosts from it through the tunnel without restarting.
+type DirectTraffic interface {
+	// DirectConnections lists the open connections. Answered from the core's
+	// memory, it sends nothing over the network.
+	DirectConnections() ([]autotunnel.Conn, error)
+	// AutoTunnelList is the file of hosts the running core follows.
+	AutoTunnelList() string
 }
 
 // RouteObserver is optional: what the running engine can report about itself

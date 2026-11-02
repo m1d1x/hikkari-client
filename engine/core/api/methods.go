@@ -123,6 +123,7 @@ func (c *Core) StopVPN() error {
 		if err := c.backend.Stop(); err != nil {
 			return err
 		}
+		c.health.MarkStopped()
 		go c.measureTunnelDown()
 	}
 	return c.flushRoutingLocked()

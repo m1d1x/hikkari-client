@@ -25,16 +25,26 @@ func (f *fakeStack) Scan() (svcproto.NetworkScan, error) {
 	return svcproto.NetworkScan{HostsOverrides: 1, DPITools: []string{"goodbyedpi"}, ForeignWFP: []string{"ProtonVPN"}}, nil
 }
 
+// newTestServer closes the service log with the test: Windows cannot remove the
+// TempDir while the log is open. t.TempDir ran first, so this cleanup runs before
+// its removal.
+func newTestServer(t *testing.T, cfg Config) *Server {
+	t.Helper()
+	s, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.log.Close() })
+	return s
+}
+
 // A static address is the one thing the reset destroys for good, so the
 // service will not touch the stack — nor stop the tunnel — until the user
 // confirmed it; a confirmed reset stops the core and drops the run marker.
 func TestNetworkResetGuardsStaticAdapters(t *testing.T) {
 	dir := t.TempDir()
 	stack := &fakeStack{static: []string{"Ethernet"}}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, NetworkStack: stack})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, NetworkStack: stack})
 	if err := os.WriteFile(s.runMarker(), []byte(svcproto.EngineSingBox), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -80,10 +90,7 @@ func TestNetworkScanKeepsUnknownApartFromNone(t *testing.T) {
 
 func TestNetworkResetIsRefusedWithoutAStack(t *testing.T) {
 	dir := t.TempDir()
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir})
 	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpResetNetwork}); resp.OK {
 		t.Fatalf("reset without a stack: %+v", resp)
 	}
@@ -99,10 +106,7 @@ func (f *fakeRepair) Repair(proxyOnly bool) (svcproto.NetworkRepair, error) {
 func TestNetworkRepairPassesTheScopeAndKeepsTheAddressOutOfTheLog(t *testing.T) {
 	dir := t.TempDir()
 	repair := &fakeRepair{}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, HostRepair: repair})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, HostRepair: repair})
 	resp := s.dispatch(svcproto.Request{Op: svcproto.OpRepairNetwork, ProxyOnly: true})
 	if !resp.OK || resp.NetworkRepair == nil || !resp.NetworkRepair.Actions[0].Done {
 		t.Fatalf("repair: %+v", resp)
@@ -121,10 +125,7 @@ func TestNetworkRepairPassesTheScopeAndKeepsTheAddressOutOfTheLog(t *testing.T) 
 
 func TestNetworkRepairIsRefusedWhereTheGUIRepairs(t *testing.T) {
 	dir := t.TempDir()
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir})
 	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpRepairNetwork}); resp.OK {
 		t.Fatal("repair ran without a platform side")
 	}
@@ -133,10 +134,7 @@ func TestNetworkRepairIsRefusedWhereTheGUIRepairs(t *testing.T) {
 func TestNetworkScanIsReadOnly(t *testing.T) {
 	dir := t.TempDir()
 	stack := &fakeStack{}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, NetworkStack: stack})
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := newTestServer(t, Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, NetworkStack: stack})
 	resp := s.dispatch(svcproto.Request{Op: svcproto.OpScanNetwork})
 	if !resp.OK || resp.NetworkScan == nil || resp.NetworkScan.HostsOverrides != 1 || stack.resets != 0 {
 		t.Fatalf("%+v resets=%d", resp, stack.resets)
@@ -148,18 +146,12 @@ func TestNetworkScanIsReadOnly(t *testing.T) {
 
 func TestStatusPromisesASafeScanOnlyWithAStack(t *testing.T) {
 	dir := t.TempDir()
-	with, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, NetworkStack: &fakeStack{}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	with := newTestServer(t, Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir, NetworkStack: &fakeStack{}})
 	if !with.status().ScanSafe {
 		t.Error("a service with a stack must promise a safe scan")
 	}
 	dir = t.TempDir()
-	without, err := NewServer(Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir})
-	if err != nil {
-		t.Fatal(err)
-	}
+	without := newTestServer(t, Config{CoreDir: dir, CoreBin: "/nonexistent", CoreWorkDir: dir})
 	if without.status().ScanSafe {
 		t.Error("a service without a stack has no scan to promise")
 	}

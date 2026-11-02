@@ -113,3 +113,27 @@ func TestAwg2FieldsPassTheRealCoresCheck(t *testing.T) {
 		t.Fatalf("sing-box check: %v\n%s", err, out)
 	}
 }
+
+// The real core takes the live generator's request as the parser writes it.
+func TestAwgMasqueradePassesTheRealCoresCheck(t *testing.T) {
+	core, err := filepath.Abs("../../../../../archive/sing-box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(core); err != nil {
+		t.Skip("no sing-box binary at archive/sing-box")
+	}
+	block := awgProfile()
+	block["ip"], block["id"], block["ib"] = "quic", "www.gstatic.com", "chrome"
+	raw, err := json.Marshal(map[string]interface{}{"endpoints": []interface{}{singBoxEndpoint(block)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(core, "check", "-c", path).CombinedOutput(); err != nil {
+		t.Fatalf("sing-box check: %v\n%s", err, out)
+	}
+}

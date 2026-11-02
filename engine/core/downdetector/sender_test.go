@@ -170,6 +170,33 @@ func TestSenderSuccess(t *testing.T) {
 	}
 }
 
+func TestSenderDropsRejectedReportAndSendsTheRest(t *testing.T) {
+	var attempts int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&attempts, 1) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	a := newAgent(t, []Server{{Profile: "pub", ID: "n:fra-1"}})
+	a.tick(t0, t0)
+	a.tick(t0, t0.Add(Window))
+
+	sender := NewSender(a, srv.URL, "", srv.Client())
+	sender.Interval = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sender.Run(ctx)
+
+	waitFor(t, 2*time.Second, func() bool { return len(a.Outbox()) == 0 })
+	if got := atomic.LoadInt32(&attempts); got != 2 {
+		t.Fatalf("server saw %d attempts, want 2", got)
+	}
+}
+
 func TestSenderFailure500AndRetry(t *testing.T) {
 	var attempts int32
 	firstFailedCh := make(chan struct{}, 1)

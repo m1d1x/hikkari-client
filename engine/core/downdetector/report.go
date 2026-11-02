@@ -1,8 +1,6 @@
 // Package downdetector turns the uptime samples the engine already collects
 // into periodic, anonymous reports for the shared downdetector (see
 // docs/DOWNDETECTOR.md). It adds no probes of its own.
-//
-// Phase 0: reports are only queued to a local file. Nothing is sent yet.
 package downdetector
 
 import (

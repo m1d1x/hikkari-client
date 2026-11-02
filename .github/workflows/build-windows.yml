@@ -16,6 +16,9 @@ env:
   RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
   # docs/TELEMETRY.md §9: only releases send; branch builds keep it local.
   HIKKARI_TELEMETRY_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/events' || '' }}
+  # docs/DOWNDETECTOR.md: only releases send, like telemetry.
+  HIKKARI_DOWNDETECTOR_URL: ${{ startsWith(github.ref, 'refs/tags/v') && 'https://api.hikkari.net/v1/reports' || '' }}
+  HIKKARI_DOWNDETECTOR_TOKEN: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.HIKKARI_DOWNDETECTOR_TOKEN || '' }}
   # Routing presets (engine/core/presets): always connect to the production catalog.
   HIKKARI_PRESET_CATALOG_URL: 'https://api.hikkari.net/v1/presets/catalog'
   HIKKARI_PRESET_EVENTS_URL: 'https://api.hikkari.net/v1/presets/events'
@@ -154,6 +157,9 @@ jobs:
           $env:CC = "gcc"
           cd engine
           $ldflags = if ($env:HIKKARI_TELEMETRY_URL) { "-X NekkoVPN/core/telemetry.EventsURL=$env:HIKKARI_TELEMETRY_URL" } else { "" }
+          if ($env:HIKKARI_DOWNDETECTOR_URL -and $env:HIKKARI_DOWNDETECTOR_TOKEN) {
+            $ldflags += " -X NekkoVPN/core/downdetector.ReportsURL=$env:HIKKARI_DOWNDETECTOR_URL -X NekkoVPN/core/downdetector.ReportsToken=$env:HIKKARI_DOWNDETECTOR_TOKEN"
+          }
           $catalogUrl = if ($env:HIKKARI_PRESET_CATALOG_URL) { $env:HIKKARI_PRESET_CATALOG_URL } else { "https://api.hikkari.net/v1/presets/catalog" }
           $eventsUrl = if ($env:HIKKARI_PRESET_EVENTS_URL) { $env:HIKKARI_PRESET_EVENTS_URL } else { "https://api.hikkari.net/v1/presets/events" }
           $ldflags += " -X NekkoVPN/core/presets.CatalogURL=$catalogUrl -X NekkoVPN/core/presets.EventsURL=$eventsUrl"

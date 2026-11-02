@@ -651,11 +651,38 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 				cfg[strings.ToLower(key)] = v
 			}
 		}
+		applyAwgMasquerade(cfg, iface)
 	}
 
 	label := host
 	return Draft{Kind: profile.KindEndpoint, Label: label, Config: cfg}, nil
 }
+
+// applyAwgMasquerade takes Ip, Id and Ib, which ask the core to generate the first
+// packet instead of sending a fixed I1. The core refuses them together with an
+// explicit I1, and refuses a whole config over a value it doesn't know, so the
+// generator replaces I1 only when the values are ones it takes. Otherwise I1, if
+// any, stays and the link still works.
+func applyAwgMasquerade(cfg map[string]interface{}, iface map[string]string) {
+	protocol := strings.ToLower(getIniField(iface, "Ip"))
+	domain := getIniField(iface, "Id")
+	browser := strings.ToLower(getIniField(iface, "Ib"))
+	switch {
+	case protocol != "quic" || !awgDecoyDomain.MatchString(domain):
+		return
+	case browser != "" && browser != "chrome" && browser != "firefox" && browser != "curl":
+		return
+	}
+	for _, key := range []string{"i1", "i2", "i3", "i4", "i5"} {
+		delete(cfg, key)
+	}
+	cfg["ip"], cfg["id"] = protocol, domain
+	if browser != "" {
+		cfg["ib"] = browser
+	}
+}
+
+var awgDecoyDomain = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$`)
 
 // splitIniSections walks a WireGuard-style ini file and returns the
 // key/value pairs of the first [Interface] and first [Peer] section.

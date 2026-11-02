@@ -34,6 +34,8 @@ const EgressInterval = 15 * time.Minute
 // "broken" right after start.
 const startupGrace = 3 * time.Second
 
+const offMessage = "ядро не запущено"
+
 // Consecutive-failure thresholds. A single failed probe means nothing: the
 // engine adapter can miss its 2s budget while the core is busy, and one HTTPS
 // request through a loaded tunnel times out routinely. Reacting to either
@@ -108,7 +110,8 @@ type Checker struct {
 	resolvedHosts   map[string]bool
 	resolvedHostsAt time.Time
 
-	cached Info // last full Probe result; served by [Probe]
+	cached     Info // last full Probe result; served by [Probe]
+	generation int  // bumped by MarkStopped, invalidates a pass in progress
 
 	lastEgressAt time.Time // when the egress IP was last fetched
 	lastRunning  bool      // core liveness seen by the previous pass
@@ -203,10 +206,28 @@ func (c *Checker) RecheckEgress() {
 	c.mu.Unlock()
 }
 
+// MarkStopped publishes "off" right away after the core was stopped on purpose.
+// A silent core is otherwise believed only after several passes, and an off
+// state is published only after the IP fetch that follows them: seconds during
+// which the window still says connected, though the tunnel took 150 ms to stop.
+func (c *Checker) MarkStopped() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.generation++
+	c.downStreak = downStreakThreshold
+	c.cached = Info{Status: "off", Message: offMessage}
+}
+
 func (c *Checker) refresh() {
+	c.mu.Lock()
+	generation := c.generation
+	c.mu.Unlock()
 	hi := c.probeOnce()
 	c.mu.Lock()
-	c.cached = hi
+	// A pass that began before MarkStopped reports the world before it.
+	if generation == c.generation {
+		c.cached = hi
+	}
 	c.mu.Unlock()
 }
 
@@ -274,7 +295,11 @@ func (c *Checker) probeOnce() Info {
 
 	if !hi.Running {
 		hi.Status = "off"
-		hi.Message = "ядро не запущено"
+		hi.Message = offMessage
+		// The fetch can take seconds; the window need not wait for the IP.
+		c.mu.Lock()
+		c.cached = hi
+		c.mu.Unlock()
 		if ip, err := fetchExternalIP(); err == nil {
 			hi.IP = ip
 			c.maybeBaseline(ip)

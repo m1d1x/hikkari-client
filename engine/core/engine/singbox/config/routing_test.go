@@ -380,3 +380,48 @@ func TestSecureDNSRulesOnlyWhenAnAppCanGoDirect(t *testing.T) {
 		}
 	}
 }
+
+func TestAutoTunnelRulesComeBeforeTheAppsAndOnlyWhenDeclared(t *testing.T) {
+	dir := t.TempDir()
+	store := New(filepath.Join(dir, "config.json"))
+	cfg := DefaultConfig()
+	if err := store.attachAutoTunnel(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(store.AutoTunnelPath()); err != nil {
+		t.Fatalf("the core needs the file before it starts: %v", err)
+	}
+	route := cfg["route"].(map[string]interface{})
+	rules0, _ := route["rules"].([]interface{})
+	route["rules"] = append(rules0, map[string]interface{}{"action": "reject", "network": "udp", "port": 443})
+	state := RoutingState{Enabled: true, Mode: ModeBypass, Bypass: RouteList{Domains: []string{"example.ru"}, Processes: []string{"chrome.exe"}}}
+	for i := 0; i < 2; i++ { // second pass checks idempotency
+		ApplyRouting(cfg, state, SelectorTag)
+	}
+	rules := route["rules"].([]interface{})
+	isAuto := func(m map[string]interface{}) bool { return m["rule_set"] != nil && m["outbound"] == SelectorTag }
+	auto := ruleIndex(rules, isAuto)
+	app := ruleIndex(rules, func(m map[string]interface{}) bool { _, has := m["process_name"]; return has })
+	domain := ruleIndex(rules, func(m map[string]interface{}) bool { return m["outbound"] == "direct" && m["domain_suffix"] != nil })
+	if auto < 0 || !(domain < auto && auto < app) {
+		t.Fatalf("order: domain=%d auto=%d app=%d", domain, auto, app)
+	}
+	count := 0
+	for _, r := range rules {
+		if m := r.(map[string]interface{}); m["rule_set"] != nil && m["action"] == "reject" {
+			count++
+			if isQUICReject(m) {
+				t.Error("taken for the QUIC reject, it would be preserved across compiles")
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("QUIC rule compiled %d times", count)
+	}
+
+	bare := DefaultConfig()
+	ApplyRouting(bare, state, SelectorTag)
+	if i := ruleIndex(bare["route"].(map[string]interface{})["rules"].([]interface{}), isAuto); i >= 0 {
+		t.Errorf("rule without a declared set at %d: the core would refuse the config", i)
+	}
+}

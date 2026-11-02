@@ -1,0 +1,247 @@
+diff --git a/common/dialer/default.go b/common/dialer/default.go
+index f202283..c19eaec 100644
+--- a/common/dialer/default.go
++++ b/common/dialer/default.go
+@@ -51,6 +51,7 @@ type DefaultDialer struct {
+ 	fallbackNetworkType    []C.InterfaceType
+ 	networkFallbackDelay   time.Duration
+ 	networkLastFallback    common.TypedValue[time.Time]
++	flowRetryDelay         time.Duration // hikkari: see flow_retry_hikkari.go
+ }
+ 
+ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDialer, error) {
+@@ -248,6 +249,7 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
+ 		networkType:            networkType,
+ 		fallbackNetworkType:    fallbackNetworkType,
+ 		networkFallbackDelay:   networkFallbackDelay,
++		flowRetryDelay:         time.Duration(options.FlowRetryDelay),
+ 	}, nil
+ }
+ 
+@@ -283,11 +285,17 @@ func (d *DefaultDialer) DialContext(ctx context.Context, network string, address
+ 					return d.udpDialer6.DialContext(ctx, network, address.String())
+ 				}
+ 			}
+-			if !address.IsIPv6() {
+-				return DialSlowContext(&d.dialer4, ctx, network, address)
+-			} else {
+-				return DialSlowContext(&d.dialer6, ctx, network, address)
++			tcpDialer := &d.dialer4
++			if address.IsIPv6() {
++				tcpDialer = &d.dialer6
++			}
++			// A namespace belongs to this goroutine's thread: no attempts on others.
++			if d.flowRetryDelay > 0 && d.netns == "" {
++				return dialRetryingFlows(ctx, d.flowRetryDelay, func(ctx context.Context) (net.Conn, error) {
++					return DialSlowContext(tcpDialer, ctx, network, address)
++				})
+ 			}
++			return DialSlowContext(tcpDialer, ctx, network, address)
+ 		})
+ 		return d.trackConn(ctx, address, conn, err)
+ 	} else {
+diff --git a/common/dialer/flow_retry_hikkari.go b/common/dialer/flow_retry_hikkari.go
+new file mode 100644
+index 0000000..445dfd0
+--- /dev/null
++++ b/common/dialer/flow_retry_hikkari.go
+@@ -0,0 +1,74 @@
++package dialer
++
++import (
++	"context"
++	"net"
++	"time"
++)
++
++// A path can lose some TCP flows to an address and carry others, decided by the
++// source port: the SYN goes nowhere and every retransmit of it follows, because
++// a retransmit is the same flow. A new attempt is a new source port, so it has a
++// fresh chance. It starts only after the attempts before it stayed silent for a
++// whole delay, so a path that answers never sees a second SYN.
++const flowRetryAttempts = 3
++
++type flowDialResult struct {
++	conn net.Conn
++	err  error
++}
++
++// dialRetryingFlows returns the first connection that opens. An attempt that
++// fails fast was answered, so the path is not what lost it, and the failure is
++// returned without trying again.
++func dialRetryingFlows(ctx context.Context, delay time.Duration, dial func(context.Context) (net.Conn, error)) (net.Conn, error) {
++	dialCtx, cancel := context.WithCancel(ctx)
++	defer cancel()
++	results := make(chan flowDialResult, flowRetryAttempts)
++	start := func() {
++		go func() {
++			conn, err := dial(dialCtx)
++			results <- flowDialResult{conn, err}
++		}()
++	}
++	start()
++	started, finished := 1, 0
++	abandon := func() {
++		cancel()
++		for i := finished; i < started; i++ {
++			go func() {
++				if result := <-results; result.conn != nil {
++					result.conn.Close()
++				}
++			}()
++		}
++	}
++	timer := time.NewTimer(delay)
++	defer timer.Stop()
++	var firstErr error
++	for {
++		select {
++		case result := <-results:
++			finished++
++			if result.err == nil {
++				abandon()
++				return result.conn, nil
++			}
++			if firstErr == nil {
++				firstErr = result.err
++			}
++			if finished == started {
++				return nil, firstErr
++			}
++		case <-timer.C:
++			if started < flowRetryAttempts {
++				start()
++				started++
++				timer.Reset(delay)
++			}
++		case <-ctx.Done():
++			abandon()
++			return nil, ctx.Err()
++		}
++	}
++}
+diff --git a/common/dialer/flow_retry_hikkari_test.go b/common/dialer/flow_retry_hikkari_test.go
+new file mode 100644
+index 0000000..8caffaa
+--- /dev/null
++++ b/common/dialer/flow_retry_hikkari_test.go
+@@ -0,0 +1,106 @@
++package dialer
++
++import (
++	"context"
++	"errors"
++	"net"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++type closeCounter struct {
++	net.Conn
++	closed *atomic.Int32
++}
++
++func (c closeCounter) Close() error {
++	c.closed.Add(1)
++	return nil
++}
++
++func TestFlowRetryNewFlowGetsThroughWhenTheFirstIsLost(t *testing.T) {
++	var attempts, closed atomic.Int32
++	conn, err := dialRetryingFlows(context.Background(), 10*time.Millisecond, func(ctx context.Context) (net.Conn, error) {
++		if attempts.Add(1) == 1 {
++			<-ctx.Done()
++			return nil, ctx.Err()
++		}
++		return closeCounter{closed: &closed}, nil
++	})
++	if err != nil || conn == nil {
++		t.Fatalf("conn = %v, err = %v", conn, err)
++	}
++	if got := attempts.Load(); got != 2 {
++		t.Fatalf("attempts = %d, want 2", got)
++	}
++}
++
++func TestFlowRetryAnsweringPathSeesOneAttempt(t *testing.T) {
++	var attempts, closed atomic.Int32
++	_, err := dialRetryingFlows(context.Background(), 20*time.Millisecond, func(context.Context) (net.Conn, error) {
++		attempts.Add(1)
++		return closeCounter{closed: &closed}, nil
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	time.Sleep(60 * time.Millisecond)
++	if got := attempts.Load(); got != 1 {
++		t.Fatalf("attempts = %d, want 1", got)
++	}
++}
++
++func TestFlowRetryFastFailureIsNotRetried(t *testing.T) {
++	refused := errors.New("connection refused")
++	var attempts atomic.Int32
++	_, err := dialRetryingFlows(context.Background(), 20*time.Millisecond, func(context.Context) (net.Conn, error) {
++		attempts.Add(1)
++		return nil, refused
++	})
++	if !errors.Is(err, refused) {
++		t.Fatalf("err = %v", err)
++	}
++	time.Sleep(60 * time.Millisecond)
++	if got := attempts.Load(); got != 1 {
++		t.Fatalf("attempts = %d, want 1", got)
++	}
++}
++
++func TestFlowRetryStopsAtTheLimitAndReportsFailure(t *testing.T) {
++	lost := errors.New("i/o timeout")
++	var attempts atomic.Int32
++	_, err := dialRetryingFlows(context.Background(), 5*time.Millisecond, func(context.Context) (net.Conn, error) {
++		attempts.Add(1)
++		time.Sleep(40 * time.Millisecond)
++		return nil, lost
++	})
++	if !errors.Is(err, lost) {
++		t.Fatalf("err = %v", err)
++	}
++	if got := attempts.Load(); got != flowRetryAttempts {
++		t.Fatalf("attempts = %d, want %d", got, flowRetryAttempts)
++	}
++}
++
++func TestFlowRetryClosesTheLoserThatOpenedLate(t *testing.T) {
++	var attempts, closed atomic.Int32
++	release := make(chan struct{})
++	conn, err := dialRetryingFlows(context.Background(), 5*time.Millisecond, func(context.Context) (net.Conn, error) {
++		if attempts.Add(1) == 1 {
++			<-release
++		}
++		return closeCounter{closed: &closed}, nil
++	})
++	if err != nil || conn == nil {
++		t.Fatalf("conn = %v, err = %v", conn, err)
++	}
++	close(release)
++	deadline := time.Now().Add(time.Second)
++	for closed.Load() != 1 && time.Now().Before(deadline) {
++		time.Sleep(5 * time.Millisecond)
++	}
++	if closed.Load() != 1 {
++		t.Fatalf("late loser closed %d times", closed.Load())
++	}
++}
+diff --git a/option/outbound.go b/option/outbound.go
+index 4590b48..d16a431 100644
+--- a/option/outbound.go
++++ b/option/outbound.go
+@@ -106,6 +106,8 @@ type AbstractDialerOptions struct {
+ 	NetworkType                badoption.Listable[InterfaceType] `json:"network_type,omitempty"`
+ 	FallbackNetworkType        badoption.Listable[InterfaceType] `json:"fallback_network_type,omitempty"`
+ 	FallbackDelay              badoption.Duration                `json:"fallback_delay,omitempty"`
++	// hikkari: start another TCP attempt from a new source port after this much silence.
++	FlowRetryDelay badoption.Duration `json:"flow_retry_delay,omitempty"`
+ 
+ 	// Deprecated: migrated to domain resolver
+ 	DomainStrategy DomainStrategy `json:"domain_strategy,omitempty" schema:"omit"`

@@ -1,8 +1,10 @@
 package configfile
 
 import (
+	"NekkoVPN/core/autotunnel"
 	"NekkoVPN/core/routing"
 	"errors"
+	"fmt"
 	"io/fs"
 )
 
@@ -109,12 +111,12 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		// Between the two: a domain or address the user sent direct stays
 		// direct, an app sent direct does not take its Secure DNS with it.
 		if ruleOutbound == "direct" && len(list.Processes)+len(folders) > 0 {
-			userRules = append(userRules, secureDNSRules(head)...)
+			userRules = append(userRules, escapeDirectRules(route, head)...)
 		}
 		appendRule("process_name", list.Processes)
 		appendRule("process_path_regex", folders)
 		if finalTag == "direct" {
-			userRules = append(userRules, secureDNSRules(head)...)
+			userRules = append(userRules, escapeDirectRules(route, head)...)
 		}
 	}
 
@@ -181,6 +183,47 @@ func secureDNSRules(head string) []interface{} {
 	tunnel := match()
 	tunnel["outbound"] = head
 	return []interface{}{reject, tunnel}
+}
+
+// AutoTunnelTag is the rule set of hosts that stay silent on the direct path
+// (core/autotunnel).
+const AutoTunnelTag = "auto-tunnel"
+
+// attachAutoTunnel declares the rule set. The core refuses to start over a file
+// that is missing, so it is created here, before any config can name it.
+func (s *Store) attachAutoTunnel(cfg map[string]interface{}) error {
+	path := s.AutoTunnelPath()
+	if err := autotunnel.EnsureRuleSet(path); err != nil {
+		return fmt.Errorf("список автотуннеля: %w", err)
+	}
+	route, _ := cfg["route"].(map[string]interface{})
+	if route == nil {
+		route = map[string]interface{}{}
+		cfg["route"] = route
+	}
+	route["rule_set"] = []interface{}{map[string]interface{}{
+		"tag": AutoTunnelTag, "type": "local", "format": "source", "path": path,
+	}}
+	return nil
+}
+
+// escapeDirectRules are what leaves the direct path even though an app was sent
+// there: Secure DNS, and the sites proven silent on it. The second only once the
+// rule set is declared.
+func escapeDirectRules(route map[string]interface{}, head string) []interface{} {
+	rules := secureDNSRules(head)
+	sets, _ := route["rule_set"].([]interface{})
+	if len(sets) == 0 {
+		return rules
+	}
+	// A port list on purpose: isQUICReject takes a single 443 for the QUIC
+	// reject it preserves, and this rule is recompiled like the rest.
+	return append(rules,
+		map[string]interface{}{
+			"rule_set": []interface{}{AutoTunnelTag}, "network": "udp", "port": []interface{}{443}, "action": "reject",
+		},
+		map[string]interface{}{"rule_set": []interface{}{AutoTunnelTag}, "outbound": head},
+	)
 }
 
 // applyBypassDNS gives bypassed traffic real DNS answers instead of fake
@@ -271,6 +314,9 @@ func (s *Store) applyRoutingToConfig(state RoutingState) error {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
+		return err
+	}
+	if err := s.attachAutoTunnel(cfg); err != nil {
 		return err
 	}
 	ApplyRouting(cfg, state, currentHead(cfg))

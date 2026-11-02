@@ -50,6 +50,9 @@ type Runner struct {
 	cancel   context.CancelFunc
 	stunAddr []string // resolved before the TUN comes up (fake-ip afterwards)
 	ifaces   []physIface
+
+	reachAllowed func() bool // tester mode; see reach.go
+	reachAt      time.Time   // last reach round
 }
 
 type physIface struct {
@@ -112,6 +115,7 @@ func (r *Runner) loop(ctx context.Context) {
 	r.goInterfaces("post")
 	runCommands(r.log, "post", postCommands())
 	r.probeRound(ctx)
+	r.maybeReach(ctx)
 
 	// Dense for the first 10 minutes, then once a minute for the whole
 	// session: degradations show up after 20+ minutes too, and a log that
@@ -133,6 +137,7 @@ func (r *Runner) loop(ctx context.Context) {
 		if time.Since(started) <= 10*time.Minute && tick%3 == 0 || tick%5 == 0 {
 			r.probeRound(ctx)
 		}
+		r.maybeReach(ctx)
 	}
 }
 

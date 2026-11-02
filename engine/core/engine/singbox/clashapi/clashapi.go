@@ -156,8 +156,15 @@ func (c *Client) Proxy(tag string) (ProxyInfo, error) {
 // the outbounds it passes through, the leaf first.
 type Connection struct {
 	ID       string   `json:"id"`
+	Upload   uint64   `json:"upload"`
 	Download uint64   `json:"download"`
 	Chains   []string `json:"chains"`
+	Start    string   `json:"start"`
+	Metadata struct {
+		Network  string `json:"network"`
+		DestPort string `json:"destinationPort"`
+		Host     string `json:"host"`
+	} `json:"metadata"`
 }
 
 // Connections lists the open connections.
