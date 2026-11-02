@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"flag"
@@ -302,7 +303,25 @@ func (s *stand) listenTCP(proxy *faultProxy, port int) {
 
 // serveTarget answers with the node's name, the stand's version of an exit IP.
 // /stream sends a byte every 200ms, for as long as the client stays connected.
+// The same port over UDP is the voice server: it echoes every packet back after
+// the node's name and a newline.
 func (s *stand) serveTarget(port int, name string) {
+	echo, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() { <-s.ctx.Done(); _ = echo.Close() }()
+	go func() {
+		buffer := make([]byte, 2048)
+		for {
+			n, from, err := echo.ReadFromUDP(buffer)
+			if err != nil {
+				return
+			}
+			_, _ = echo.WriteToUDP(append([]byte(name+"\n"), buffer[:n]...), from)
+		}
+	}()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/generate_204", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/exit", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, name) })
@@ -584,6 +603,389 @@ func (s *stand) measureDegrade(ctx context.Context, tick time.Duration) result {
 	return result{title, false, fmt.Sprintf("still on %s after %s", *held, 3*tick)}
 }
 
+const (
+	voiceInterval = 20 * time.Millisecond // 50 packets a second, an Opus call
+	voiceSize     = 160
+)
+
+// voice is one UDP association through the client's SOCKS5 inbound, standing in
+// for a call socket. Every packet carries a sequence number; the exit echoes it.
+// Nothing else goes through the client while a voice scenario runs, so the core
+// sees what it sees when only a call is up.
+type voice struct {
+	ctrl  net.Conn
+	conn  *net.UDPConn
+	relay *net.UDPAddr
+
+	mu       sync.Mutex
+	seq      uint64
+	mark     time.Time // counting starts here; zero until markNow
+	markSeq  uint64
+	last     time.Time // last echo received
+	maxGap   time.Duration
+	sent     int64 // since mark
+	received int64 // echoes of packets sent since mark
+	exit     string
+}
+
+func dialVoice(timeout time.Duration) (*voice, error) {
+	ctrl, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", mixedPort), timeout)
+	if err != nil {
+		return nil, err
+	}
+	fail := func(err error) (*voice, error) {
+		_ = ctrl.Close()
+		return nil, err
+	}
+	_ = ctrl.SetDeadline(time.Now().Add(timeout))
+	if _, err := ctrl.Write([]byte{5, 1, 0}); err != nil {
+		return fail(err)
+	}
+	greeting := make([]byte, 2)
+	if _, err := io.ReadFull(ctrl, greeting); err != nil || greeting[1] != 0 {
+		return fail(fmt.Errorf("socks greeting %v: %v", greeting, err))
+	}
+	if _, err := ctrl.Write([]byte{5, 3, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
+		return fail(err)
+	}
+	head := make([]byte, 4)
+	if _, err := io.ReadFull(ctrl, head); err != nil || head[1] != 0 {
+		return fail(fmt.Errorf("socks udp associate %v: %v", head, err))
+	}
+	var ip net.IP
+	switch head[3] {
+	case 1:
+		ip = make(net.IP, 4)
+	case 4:
+		ip = make(net.IP, 16)
+	default:
+		return fail(fmt.Errorf("socks bind address type %d", head[3]))
+	}
+	port := make([]byte, 2)
+	if _, err := io.ReadFull(ctrl, ip); err != nil {
+		return fail(err)
+	}
+	if _, err := io.ReadFull(ctrl, port); err != nil {
+		return fail(err)
+	}
+	_ = ctrl.SetDeadline(time.Time{})
+	if ip.IsUnspecified() {
+		ip = net.IPv4(127, 0, 0, 1)
+	}
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		return fail(err)
+	}
+	return &voice{ctrl: ctrl, conn: conn, relay: &net.UDPAddr{IP: ip, Port: int(binary.BigEndian.Uint16(port))}}, nil
+}
+
+func (v *voice) close() {
+	_ = v.ctrl.Close()
+	_ = v.conn.Close()
+}
+
+func (v *voice) send() error {
+	v.mu.Lock()
+	v.seq++
+	seq := v.seq
+	if !v.mark.IsZero() {
+		v.sent++
+	}
+	v.mu.Unlock()
+	packet := make([]byte, 10+voiceSize)
+	copy(packet, []byte{0, 0, 0, 1, 127, 0, 0, 1})
+	binary.BigEndian.PutUint16(packet[8:], targetBase)
+	binary.BigEndian.PutUint64(packet[10:], seq)
+	_, err := v.conn.WriteToUDP(packet, v.relay)
+	return err
+}
+
+// parseEcho reads a relayed echo: the SOCKS5 UDP header, the exit's name, then
+// the packet that was sent.
+func parseEcho(datagram []byte) (seq uint64, exit string, ok bool) {
+	if len(datagram) < 4 {
+		return 0, "", false
+	}
+	header := map[byte]int{1: 10, 4: 22}[datagram[3]]
+	if header == 0 || len(datagram) < header {
+		return 0, "", false
+	}
+	body := datagram[header:]
+	newline := strings.IndexByte(string(body), '\n')
+	if newline < 0 || len(body) < newline+1+8 {
+		return 0, "", false
+	}
+	return binary.BigEndian.Uint64(body[newline+1:]), string(body[:newline]), true
+}
+
+// call sends at the voice rate and records echoes until ctx ends.
+func (v *voice) call(ctx context.Context) {
+	go func() {
+		buffer := make([]byte, 2048)
+		for {
+			n, err := v.conn.Read(buffer)
+			if err != nil {
+				return
+			}
+			seq, exit, ok := parseEcho(buffer[:n])
+			if !ok {
+				continue
+			}
+			now := time.Now()
+			v.mu.Lock()
+			if !v.mark.IsZero() {
+				// The gap that spans the mark counts: it is the one the fault opened.
+				if gap := now.Sub(v.last); gap > v.maxGap {
+					v.maxGap = gap
+				}
+				if seq > v.markSeq {
+					v.received++
+				}
+			}
+			v.last, v.exit = now, exit
+			v.mu.Unlock()
+		}
+	}()
+	ticker := time.NewTicker(voiceInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = v.send()
+		}
+	}
+}
+
+func (v *voice) markNow() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.mark, v.markSeq = time.Now(), v.seq
+	v.sent, v.received, v.maxGap = 0, 0, 0
+}
+
+type callStats struct {
+	maxGap time.Duration // includes the silence still open now
+	loss   float64
+	exit   string
+	silent time.Duration
+}
+
+func (v *voice) stats() callStats {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	st := callStats{maxGap: v.maxGap, exit: v.exit, silent: time.Since(v.last)}
+	if st.silent > st.maxGap {
+		st.maxGap = st.silent
+	}
+	if v.sent > 0 {
+		st.loss = 1 - float64(v.received)/float64(v.sent)
+	}
+	return st
+}
+
+func (st callStats) String() string {
+	return fmt.Sprintf("longest gap %s, lost %.0f%%, last echo from %s %s ago",
+		st.maxGap.Round(10*time.Millisecond), st.loss*100, st.exit, st.silent.Round(10*time.Millisecond))
+}
+
+// udpExitOf opens a new call socket, as Discord does every minute, and returns
+// the node its first echo came through.
+func udpExitOf(timeout time.Duration) (string, error) {
+	v, err := dialVoice(timeout)
+	if err != nil {
+		return "", err
+	}
+	defer v.close()
+	got := make(chan string, 1)
+	go func() {
+		buffer := make([]byte, 2048)
+		for {
+			n, err := v.conn.Read(buffer)
+			if err != nil {
+				return
+			}
+			if _, exit, ok := parseEcho(buffer[:n]); ok {
+				got <- exit
+				return
+			}
+		}
+	}()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(timeout)
+	for {
+		_ = v.send()
+		select {
+		case exit := <-got:
+			return exit, nil
+		case <-ticker.C:
+		case <-deadline:
+			return "", fmt.Errorf("no echo within %s", timeout)
+		}
+	}
+}
+
+// startCall opens the call that runs through the whole scenario and waits until
+// it echoes through the held node.
+func startCall(ctx context.Context, held string) (*voice, error) {
+	v, err := dialVoice(5 * time.Second)
+	if err != nil {
+		return nil, err
+	}
+	go v.call(ctx)
+	time.Sleep(2 * time.Second)
+	if st := v.stats(); st.exit != held || st.silent > time.Second {
+		v.close()
+		return nil, fmt.Errorf("call not flowing through %s: %s", held, st)
+	}
+	return v, nil
+}
+
+// measureVoiceFailover applies a fault to the held node while only a call is up.
+// A new call socket opens every 500ms, and the first one echoed through another
+// node is the time a client that recreates its socket gets its voice back. The
+// call opened before the fault is reported separately: its flow stays where it
+// started. limit is the target; the scenario waits up to wait for the move.
+func (s *stand) measureVoiceFailover(ctx context.Context, title string, mode faultMode, limit, wait time.Duration) result {
+	held := waitHeld(30 * time.Second)
+	if held == nil {
+		return result{title, false, "group never settled"}
+	}
+	victim := s.node(*held)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	old, err := startCall(ctx, *held)
+	if err != nil {
+		return result{title, false, err.Error()}
+	}
+	defer old.close()
+	start := time.Now()
+	old.markNow()
+	victim.proxy.set(mode)
+	defer victim.proxy.set(pass)
+
+	type outcome struct {
+		exit string
+		at   time.Duration
+	}
+	done := make(chan outcome, 1)
+	var failed atomic.Int32
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				go func() {
+					exit, err := udpExitOf(3 * time.Second)
+					if err != nil {
+						failed.Add(1)
+						return
+					}
+					if exit != victim.name {
+						select {
+						case done <- outcome{exit, time.Since(start)}:
+						default:
+						}
+					}
+				}()
+			}
+		}
+	}()
+	select {
+	case first := <-done:
+		// Give the old call time to show whether it ever comes back.
+		time.Sleep(10 * time.Second)
+		detail := fmt.Sprintf("%s failed: new socket through %s after %s, %d new sockets got no echo, group holds %q; call opened before: %s",
+			victim.name, first.exit, first.at.Round(10*time.Millisecond), failed.Load(), clashNow(), old.stats())
+		return result{title, first.at <= limit, detail}
+	case <-time.After(wait):
+		return result{title, false, fmt.Sprintf("%s failed: no new socket through another node within %s, %d got no echo; call opened before: %s",
+			victim.name, wait, failed.Load(), old.stats())}
+	}
+}
+
+// measureVoiceAllDown takes every node down at once for outage, as a dying
+// Wi-Fi would, then brings them back. Nothing is better to move to: the group
+// must stay put and the call must resume on the node it had.
+func (s *stand) measureVoiceAllDown(ctx context.Context, outage time.Duration) result {
+	const title = "voice, all nodes down"
+	held := waitHeld(30 * time.Second)
+	if held == nil {
+		return result{title, false, "group never settled"}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	call, err := startCall(ctx, *held)
+	if err != nil {
+		return result{title, false, err.Error()}
+	}
+	defer call.close()
+	call.markNow()
+	for _, n := range s.nodes {
+		n.proxy.set(blackhole)
+	}
+	moves := 0
+	end := time.Now().Add(outage + 30*time.Second)
+	restored := false
+	for start := time.Now(); time.Now().Before(end); time.Sleep(500 * time.Millisecond) {
+		if !restored && time.Since(start) >= outage {
+			for _, n := range s.nodes {
+				n.proxy.set(pass)
+			}
+			restored = true
+		}
+		if now := clashNow(); now != "" && now != *held {
+			moves++
+		}
+	}
+	st := call.stats()
+	resumed := st.silent < time.Second
+	detail := fmt.Sprintf("held %s, all down for %s, %d readings elsewhere, call resumed=%v: %s", *held, outage, moves, resumed, st)
+	return result{title, moves == 0 && resumed, detail}
+}
+
+// measureVoiceJitter is measureJitter with only a call up: the swing on the held
+// node must not move the group or break the call.
+func (s *stand) measureVoiceJitter(ctx context.Context, duration time.Duration) result {
+	const title = "voice, jitter +-75ms"
+	const oneWayMs = 75
+	for _, n := range s.nodes {
+		n.proxy.delayMs.Store(oneWayMs)
+		defer n.proxy.delayMs.Store(0)
+	}
+	time.Sleep(90 * time.Second)
+	held := waitHeld(30 * time.Second)
+	if held == nil {
+		return result{title, false, "group never settled"}
+	}
+	victim := s.node(*held)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	call, err := startCall(ctx, *held)
+	if err != nil {
+		return result{title, false, err.Error()}
+	}
+	defer call.close()
+	call.markNow()
+	end := time.Now().Add(duration)
+	moves := 0
+	for time.Now().Before(end) {
+		victim.proxy.delayMs.Store(oneWayMs + int32(time.Now().UnixNano()%38))
+		if now := clashNow(); now != "" && now != *held {
+			moves++
+		}
+		time.Sleep(2 * time.Second)
+	}
+	st := call.stats()
+	detail := fmt.Sprintf("held %s for %s, %d readings elsewhere, call: %s", *held, duration, moves, st)
+	return result{title, moves == 0 && st.silent < time.Second, detail}
+}
+
 func writeCert(dir string) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -606,7 +1008,8 @@ func writeCert(dir string) {
 func main() {
 	core := flag.String("core", "", "path to the sing-box binary under test")
 	xray := flag.String("xray", "", "path to xray, for the XHTTP server (optional)")
-	only := flag.String("only", "", "comma-separated scenarios: blackhole,rst,udp,jitter,degrade,xhttp-blackhole,xhttp-rst")
+	only := flag.String("only", "", "comma-separated scenarios: blackhole,rst,udp,jitter,degrade,xhttp-blackhole,xhttp-rst,"+
+		"voice-blackhole,voice-rst,voice-udp,voice-all-down,voice-jitter")
 	out := flag.String("out", "", "write the results as JSON")
 	flag.Parse()
 	if *core == "" {
@@ -675,6 +1078,20 @@ func main() {
 	each("xhttp-rst", xhttp, func(ctx context.Context, s *stand) result {
 		return s.measureFailover(ctx, "rst, vless+xhttp", reset, 3*time.Second)
 	})
+	// Only a call is up: the target is a new socket on a working node within 2s.
+	// The wait covers a planned probe tick, which is all the core has today.
+	voiceWait := tick + 60*time.Second
+	each("voice-blackhole", vless, func(ctx context.Context, s *stand) result {
+		return s.measureVoiceFailover(ctx, "voice, blackhole, vless+tls", blackhole, 2*time.Second, voiceWait)
+	})
+	each("voice-rst", vless, func(ctx context.Context, s *stand) result {
+		return s.measureVoiceFailover(ctx, "voice, rst, vless+tls", reset, 2*time.Second, voiceWait)
+	})
+	each("voice-udp", [][2]string{{"h", "hysteria2"}, {"h2", "hysteria2"}}, func(ctx context.Context, s *stand) result {
+		return s.measureVoiceFailover(ctx, "voice, udp drop, hysteria2", drop, 2*time.Second, voiceWait)
+	})
+	each("voice-all-down", vless, func(ctx context.Context, s *stand) result { return s.measureVoiceAllDown(ctx, 10*time.Second) })
+	each("voice-jitter", vless, func(ctx context.Context, s *stand) result { return s.measureVoiceJitter(ctx, 2*tick+15*time.Second) })
 
 	failed := 0
 	for _, r := range results {

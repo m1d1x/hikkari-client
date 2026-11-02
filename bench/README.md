@@ -108,6 +108,11 @@ cd engine && go run ./cmd/failover-stand -core /path/to/sing-box -xray /path/to/
 ```
 
 Сценарии (`-only`): `blackhole`, `rst`, `udp`, `jitter`, `degrade`, `xhttp-blackhole`, `xhttp-rst`.
+Голосовые (`voice-blackhole`, `voice-rst`, `voice-udp`, `voice-all-down`, `voice-jitter`): через клиент идёт
+только звонок, 50 UDP-пакетов/с по 160 байт через SOCKS5 UDP ASSOCIATE на эхо выхода. Отдельно меряются новый
+сокет (открывается раз в 500 мс, как Discord пересоздаёт свой раз в минуту) и звонок, открытый до сбоя:
+самый длинный разрыв и доля потерь. Цель — новый сокет через рабочий узел ≤ 2 с
+(`plans/2026-11-02-udp-traffic-fix.md`).
 Полный прогон идёт около 10 минут. Смена сети на машине во время прогона рвёт соединения и
 запускает повторный выбор узла, такой прогон надо повторить.
 
