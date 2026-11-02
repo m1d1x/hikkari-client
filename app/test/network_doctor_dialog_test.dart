@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -16,6 +17,9 @@ class _FakeCore extends NekkoboxCore {
   final args = <String>[];
   String dpiTools = '["winws","windivert"]';
   String foreignWfp = '["ProtonVPN"]';
+  String host = '{"iface":"pinned","dns":"fallback","probed":true}';
+  String direct = '{"checked":true,"internet":true,"secureDnsBlocked":[]}';
+  String? scanError;
   bool testerMode = false;
 
   String os = 'windows';
@@ -43,7 +47,7 @@ class _FakeCore extends NekkoboxCore {
     if (method == 'NetworkDiagnose') {
       return '{"ok":true,"data":{"supported":true,"os":"$os",'
           '"proxy":{"setting":{"enabled":true,"server":"127.0.0.1:7890"},"verdict":"orphan","endpoints":["127.0.0.1:7890"]},'
-          '"host":{"iface":"pinned","dns":"fallback","probed":true},'
+          '"host":$host,"direct":$direct,${scanError == null ? "" : '"scanError":"$scanError",'}'
           '"dpiTools":$dpiTools,"foreignWfp":$foreignWfp}}';
     }
     if (method == 'RepairNetwork') {
@@ -253,6 +257,76 @@ void main() {
     expect(find.text('диагностика'), findsOneWidget);
   });
 
+  testWidgets('diagnostics closes the settings sheet; outside tap leaves no '
+      'sheet underneath', (tester) async {
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: MaterialApp(
+          theme: buildAppTheme(),
+          home: Scaffold(body: BrandHeader(onOpenLogs: () {})),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.settings_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('диагностика'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(find.text('диагностика и авто-фикс'), findsOneWidget);
+    // The sheet is gone, not hidden behind the dialog.
+    expect(find.text('логи', skipOffstage: false), findsNothing);
+
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('диагностика и авто-фикс'), findsNothing);
+    expect(find.text('логи', skipOffstage: false), findsNothing);
+  });
+
+  testWidgets('a click outside is ignored for a second, then closes even '
+      'if the check hangs', (tester) async {
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: MaterialApp(
+          theme: buildAppTheme(),
+          home: Builder(
+            builder: (c) => Scaffold(
+              body: TextButton(
+                onPressed: () => NetworkDoctorDialog.show(
+                  c,
+                  diagnosticRunner: (_) =>
+                      Completer<void>().future, // never finishes
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('диагностика и авто-фикс'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tapAt(const Offset(2, 2));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('диагностика и авто-фикс'), findsNothing);
+  });
+
   // The engine-backed path: dry run off, so calls reach the fake core.
   Widget realDialog() {
     state.dispose();
@@ -333,6 +407,57 @@ void main() {
     );
     expect(log, contains('сторонние WFP-провайдеры: проверка не выполнена'));
     expect(log, isNot(contains('не обнаружены')));
+  });
+
+  group('Green means checked', () {
+    // The fixture's orphan proxy is always one red card.
+    const healthy = '{"iface":"auto","dns":"system","probed":true}';
+    Future<int> redCards(WidgetTester tester) async {
+      await tester.pumpWidget(realDialog());
+      await tester.pumpAndSettle();
+      return tester.widgetList(find.byIcon(Icons.cancel_rounded)).length;
+    }
+
+    testWidgets('A healthy machine has only the proxy card red', (
+      tester,
+    ) async {
+      core.host = healthy;
+      expect(await redCards(tester), 1);
+    });
+
+    testWidgets('A dead direct path turns a card red', (tester) async {
+      core
+        ..host = healthy
+        ..direct = '{"checked":true,"internet":false,"secureDnsBlocked":[]}';
+      expect(await redCards(tester), 2);
+      expect(await logText(tester), contains('сайты мимо VPN не открываются'));
+    });
+
+    testWidgets('A blocked Secure DNS is named and warns without the tunnel', (
+      tester,
+    ) async {
+      core
+        ..host = healthy
+        ..direct =
+            '{"checked":true,"internet":true,"secureDnsBlocked":["Cloudflare"]}';
+      expect(await redCards(tester), 2);
+      expect(await logText(tester), contains('безопасный DNS (Cloudflare)'));
+    });
+
+    testWidgets('A selection nobody made is not green', (tester) async {
+      core
+        ..host = '{}'
+        ..direct = '{"checked":false}';
+      expect(await redCards(tester), 3);
+    });
+
+    testWidgets('A failed scan is shown, not swallowed', (tester) async {
+      core
+        ..host = healthy
+        ..scanError = 'служба hikkari не запущена';
+      expect(await redCards(tester), 2);
+      expect(await logText(tester), contains('служба hikkari не запущена'));
+    });
   });
 
   testWidgets('A clean scan says so', (tester) async {

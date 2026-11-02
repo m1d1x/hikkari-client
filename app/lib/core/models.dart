@@ -191,6 +191,10 @@ class ProfileInfo {
 
   String get displayLabel => formatProfileLabel(label);
 
+  /// The address to show. A subscription's server is a named node of the
+  /// provider's fleet; only a profile the user added themselves shows its host.
+  String get shownEndpoint => subscription == null ? endpoint : '';
+
   const ProfileInfo({
     required this.name,
     required this.label,

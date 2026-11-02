@@ -81,11 +81,14 @@ func TestApplyRouting_BypassMode_EmitsDirectRules(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), SelectorTag)
 	}
 	rules := rulesOf(cfg)
-	// prelude + icmp + 3 of ours
-	if len(rules) != 5 {
-		t.Fatalf("rules: got %d, want 5", len(rules))
+	// prelude + icmp + 3 of ours + 2 for Secure DNS
+	if len(rules) != 7 {
+		t.Fatalf("rules: got %d, want 7", len(rules))
 	}
 	for _, r := range rules[2:] {
+		if _, secureDNS := r["port"]; secureDNS {
+			continue
+		}
 		if ob, _ := r["outbound"].(string); ob != "direct" {
 			t.Fatalf("rule outbound: got %q, want %q (rule=%v)", ob, "direct", r)
 		}
@@ -107,8 +110,8 @@ func TestApplyRouting_ProxyMode_PointsAtHeadAndFinalDirect(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), "direct")
 	}
 	rules := rulesOf(cfg)
-	if len(rules) != 3 { // prelude + icmp + 1 ours
-		t.Fatalf("rules: got %d, want 3", len(rules))
+	if len(rules) != 5 { // prelude + icmp + 1 ours + 2 for Secure DNS
+		t.Fatalf("rules: got %d, want 5", len(rules))
 	}
 	last := rules[2]
 	if ob, _ := last["outbound"].(string); ob != SelectorTag {
@@ -288,6 +291,92 @@ func TestApplyRouting_BypassBeatsQUICRejectAndFakeIP(t *testing.T) {
 	for _, r := range cfg["dns"].(map[string]interface{})["rules"].([]interface{}) {
 		if isBypassDNSRule(r.(map[string]interface{})) {
 			t.Fatalf("bypass dns rule left behind after routing was disabled: %v", r)
+		}
+	}
+}
+
+// ruleIndex is the position of the first rule pred accepts, -1 if none.
+func ruleIndex(rules []interface{}, pred func(map[string]interface{}) bool) int {
+	for i, r := range rules {
+		if m, ok := r.(map[string]interface{}); ok && pred(m) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isSecureDNSTunnelRule(head string) func(map[string]interface{}) bool {
+	return func(m map[string]interface{}) bool {
+		_, has := m["domain_suffix"]
+		ports, _ := m["port"].([]interface{})
+		return has && len(ports) == 2 && m["outbound"] == head
+	}
+}
+
+func isSecureDNSReject(m map[string]interface{}) bool {
+	_, has := m["domain_suffix"]
+	return has && m["action"] == "reject"
+}
+
+func TestSecureDNSStaysInTunnelWhenAppBypasses(t *testing.T) {
+	cfg := DefaultConfig()
+	route := cfg["route"].(map[string]interface{})
+	rules0, _ := route["rules"].([]interface{})
+	route["rules"] = append(rules0, map[string]interface{}{"action": "reject", "network": "udp", "port": 443})
+	state := RoutingState{
+		Enabled: true,
+		Mode:    ModeBypass,
+		Bypass:  RouteList{Domains: []string{"example.ru"}, Processes: []string{"chrome.exe"}},
+	}
+	for i := 0; i < 2; i++ { // second pass checks idempotency
+		ApplyRouting(cfg, state, SelectorTag)
+	}
+	rules := cfg["route"].(map[string]interface{})["rules"].([]interface{})
+
+	reject := ruleIndex(rules, isSecureDNSReject)
+	tunnel := ruleIndex(rules, isSecureDNSTunnelRule(SelectorTag))
+	app := ruleIndex(rules, func(m map[string]interface{}) bool { _, has := m["process_name"]; return has })
+	domain := ruleIndex(rules, func(m map[string]interface{}) bool { return m["outbound"] == "direct" && m["domain_suffix"] != nil })
+	quic := ruleIndex(rules, isQUICReject)
+	if reject < 0 || tunnel < 0 || app < 0 || domain < 0 || quic < 0 {
+		t.Fatalf("missing rule: reject=%d tunnel=%d app=%d domain=%d quic=%d in %v", reject, tunnel, app, domain, quic, rules)
+	}
+	if !(domain < reject && reject < tunnel && tunnel < app && app < quic) {
+		t.Fatalf("order: domain=%d reject=%d tunnel=%d app=%d quic=%d", domain, reject, tunnel, app, quic)
+	}
+	count := 0
+	for _, r := range rules {
+		if isSecureDNSReject(r.(map[string]interface{})) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("secure DNS reject compiled %d times, want 1", count)
+	}
+}
+
+func TestSecureDNSStaysInTunnelWhenEverythingIsDirect(t *testing.T) {
+	cfg := DefaultConfig()
+	state := RoutingState{Enabled: true, Mode: ModeProxy, Proxy: RouteList{Domains: []string{"youtube.com"}}}
+	ApplyRouting(cfg, state, SelectorTag)
+	route := cfg["route"].(map[string]interface{})
+	if route["final"] != "direct" {
+		t.Fatalf("final = %v", route["final"])
+	}
+	if ruleIndex(route["rules"].([]interface{}), isSecureDNSTunnelRule(SelectorTag)) < 0 {
+		t.Fatalf("no secure DNS rule with a direct default: %v", route["rules"])
+	}
+}
+
+func TestSecureDNSRulesOnlyWhenAnAppCanGoDirect(t *testing.T) {
+	for name, state := range map[string]RoutingState{
+		"disabled":     {Enabled: false, Mode: ModeBypass, Bypass: RouteList{Processes: []string{"chrome.exe"}}},
+		"domains only": {Enabled: true, Mode: ModeBypass, Bypass: RouteList{Domains: []string{"example.ru"}}},
+	} {
+		cfg := DefaultConfig()
+		ApplyRouting(cfg, state, SelectorTag)
+		if i := ruleIndex(cfg["route"].(map[string]interface{})["rules"].([]interface{}), isSecureDNSReject); i >= 0 {
+			t.Errorf("%s: unexpected secure DNS rule at %d", name, i)
 		}
 	}
 }

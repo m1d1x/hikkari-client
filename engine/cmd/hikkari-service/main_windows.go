@@ -11,6 +11,8 @@
 //	                                                      beside app\ for a service that predates self-update
 //	HikkariService.exe restart-service                    (internal) start the service just put in place,
 //	                                                      put the previous one back if it does not come up
+//	HikkariService.exe scan-network                       (internal) the read-only network scan, in a process
+//	                                                      of its own so a crash cannot take the tunnel down
 //
 // Started by the SCM it takes no arguments. install and uninstall re-launch
 // themselves elevated (one UAC prompt) when needed.
@@ -77,6 +79,11 @@ func main() {
 		}
 	case "restart-service":
 		if err := winsvc.RestartService(); err != nil {
+			os.Exit(1)
+		}
+	case winsvc.ScanNetworkCommand:
+		if err := winsvc.RunNetworkScan(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	case "debug":

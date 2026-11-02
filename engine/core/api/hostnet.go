@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"errors"
 	"runtime"
+	"time"
 
+	"NekkoVPN/core/engine"
 	"NekkoVPN/core/netdoctor"
 )
 
@@ -66,6 +69,11 @@ type NetworkReport struct {
 	// also when the scan could not run.
 	DPITools   []string `json:"dpiTools"`
 	ForeignWFP []string `json:"foreignWfp"`
+	// ScanError says why the scan could not run; a check that did not happen
+	// must not read as a clean machine.
+	ScanError string `json:"scanError,omitempty"`
+	// Direct is what the direct path reaches right now.
+	Direct netdoctor.DirectPath `json:"direct"`
 }
 
 // NetworkDiagnose inspects the machine without changing it. With the
@@ -78,19 +86,52 @@ func (c *Core) NetworkDiagnose() (NetworkReport, error) {
 	}
 	rep.OS = runtime.GOOS
 	report := NetworkReport{Report: rep, HostsOverrides: -1}
-	if scan, err := c.ScanNetworkStack(); err == nil {
+	scan, err := c.ScanNetworkStack()
+	switch {
+	case err == nil:
 		report.HostsOverrides, report.DPITools, report.ForeignWFP = scan.HostsOverrides, scan.DPITools, scan.ForeignWFP
+	case !errors.Is(err, errUnsupportedNetworkReset):
+		report.ScanError = err.Error()
+		if c.logger != nil {
+			c.logger.Logf("[netdoctor] scan failed: %v", err)
+		}
 	}
+	running := c.diagnoseHost(&report)
+	report.Direct = c.probeDirectPath(running)
+	if c.logger != nil {
+		c.logger.Logf("[netdoctor] %s direct_checked=%v internet=%v secure_dns_blocked=%v tunnel=%v",
+			report.Host.LogLine(), report.Direct.Checked, report.Direct.Internet, report.Direct.SecureDNSBlocked, running)
+	}
+	return report, nil
+}
+
+// diagnoseHost fills in the selection and reports whether the tunnel is up.
+func (c *Core) diagnoseHost(report *NetworkReport) bool {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
 	if c.backend.IsRunning() {
 		report.Host = c.host
 		report.Host.Probed = false
-		return report, nil
+		return true
 	}
 	c.host = netdoctor.SelectHost()
 	report.Host = c.host
-	return report, nil
+	return false
+}
+
+// probeDirectPath measures the direct path. It runs outside operationMu: the
+// requests take seconds, and a connect must not wait behind a check.
+func (c *Core) probeDirectPath(running bool) netdoctor.DirectPath {
+	if !running {
+		return netdoctor.ProbeDirectPath(netdoctor.FetchDirect)
+	}
+	prober, ok := c.backend.(engine.DirectProber)
+	if !ok || !prober.CanProbeDirect() {
+		return netdoctor.DirectPath{}
+	}
+	return netdoctor.ProbeDirectPath(func(url string) error {
+		return prober.ProbeDirect(url, int(netdoctor.DirectProbeTimeout/time.Millisecond))
+	})
 }
 
 // NetworkRepair is «починить сеть»: the soft repair, then a fresh direct-

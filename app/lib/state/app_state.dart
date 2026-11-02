@@ -233,6 +233,7 @@ class AppState extends ChangeNotifier {
     if (_dryRun) return;
     unawaited(_core.setServerListOpen(open));
   }
+
   String? get lastError => _lastError;
   bool get isRunning => _health?.running ?? false;
 
@@ -1227,6 +1228,11 @@ class AppState extends ChangeNotifier {
         'os': Platform.isMacOS ? 'darwin' : Platform.operatingSystem,
         'proxy': {'verdict': 'none'},
         'host': {'iface': 'auto', 'dns': 'system', 'probed': true},
+        'direct': {
+          'checked': true,
+          'internet': true,
+          'secureDnsBlocked': <String>[],
+        },
         'hostsOverrides': 0,
         'dpiTools': <String>[],
         'foreignWfp': <String>[],

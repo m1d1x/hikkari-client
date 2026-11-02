@@ -119,13 +119,14 @@ class _ProfileTileState extends State<ProfileTile> {
             'аптайм',
             pct < 0 ? '—' : '$pct%  ·  ${rtt < 0 ? "—" : "$rtt ms"}',
           ),
-          _kv(
-            context,
-            t,
-            'сервер',
-            widget.profile.endpoint.isEmpty ? '—' : widget.profile.endpoint,
-            mono: true,
-          ),
+          if (widget.profile.shownEndpoint.isNotEmpty)
+            _kv(
+              context,
+              t,
+              'сервер',
+              widget.profile.shownEndpoint,
+              mono: true,
+            ),
           _kv(
             context,
             t,

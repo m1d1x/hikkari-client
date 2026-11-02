@@ -23,6 +23,9 @@ func TestApplyRoutingEmitsOnlyParseableIPCIDR(t *testing.T) {
 	var seen []interface{}
 	for _, r := range rules {
 		m := r.(map[string]interface{})
+		if _, secureDNS := m["port"]; secureDNS {
+			continue
+		}
 		if v, ok := m["ip_cidr"]; ok {
 			seen = v.([]interface{})
 		}

@@ -3,6 +3,9 @@
 package winsvc
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -134,11 +137,67 @@ func hostsFile(systemDir string) string {
 	return filepath.Join(systemDir, "drivers", "etc", "hosts")
 }
 
+const (
+	// ScanNetworkCommand is the HikkariService.exe argument of the scan's own
+	// process.
+	ScanNetworkCommand = "scan-network"
+	// networkScanTimeout stays inside the 10 s the GUI waits for the answer.
+	networkScanTimeout = 8 * time.Second
+	// networkScanOutputLimit bounds what a dying scan puts into the log: a Go
+	// crash prints every goroutine.
+	networkScanOutputLimit = 16 << 10
+)
+
 // Scan reports, read-only, what a reset would deal with and the foreign WFP
-// providers nothing touches. Its parts fail on their own: a part that could
-// not be read stays unknown (see svcproto.NetworkScan), the rest still
-// reaches the user, and the reason goes to the service log.
+// providers nothing touches. It runs in a process of its own: it walks system
+// APIs through unsafe code on whatever a machine has installed, and this
+// service holds the user's tunnel, which a check must never take down. What
+// the scan prints, a crash trace included, goes to the service log.
 func (n *netStack) Scan() (svcproto.NetworkScan, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return svcproto.NetworkScan{}, fmt.Errorf("locating the service: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), networkScanTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, exe, ScanNetworkCommand)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	runErr := cmd.Run()
+	if text := strings.TrimSpace(stderr.String()); text != "" {
+		if len(text) > networkScanOutputLimit {
+			text = text[:networkScanOutputLimit]
+		}
+		n.log.Logf("service: network scan: %s", text)
+	}
+	if runErr != nil {
+		return svcproto.NetworkScan{}, fmt.Errorf("проверка системы завершилась с ошибкой: %w", runErr)
+	}
+	var scan svcproto.NetworkScan
+	if err := json.Unmarshal(stdout.Bytes(), &scan); err != nil {
+		return svcproto.NetworkScan{}, fmt.Errorf("проверка системы вернула непонятный ответ: %w", err)
+	}
+	return scan, nil
+}
+
+// RunNetworkScan is the scan's process: the result goes to stdout, the reasons
+// for what stayed unknown to stderr.
+func RunNetworkScan() error {
+	root, err := installedRoot()
+	if err != nil {
+		return err
+	}
+	scan, err := scanNetwork(filepath.Join(root, "core"))
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(scan)
+}
+
+// scanNetwork reads the parts one by one. A part that could not be read stays
+// unknown (see svcproto.NetworkScan) and the rest still reaches the user.
+func scanNetwork(coreDir string) (svcproto.NetworkScan, error) {
 	var scan svcproto.NetworkScan
 	sys, err := windows.GetSystemDirectory()
 	if err != nil {
@@ -150,15 +209,15 @@ func (n *netStack) Scan() (svcproto.NetworkScan, error) {
 		_, scan.HostsOverrides = netdoctor.FilterHosts(content)
 	case !errors.Is(err, os.ErrNotExist):
 		scan.HostsOverrides = -1
-		n.log.Logf("service: network scan: hosts: %v", netdoctor.BareFileError(err))
+		fmt.Fprintf(os.Stderr, "hosts: %v\n", netdoctor.BareFileError(err))
 	}
-	scan.DPITools, err = netdoctor.ScanDPITools(newDPISystem(n.coreDir))
+	scan.DPITools, err = netdoctor.ScanDPITools(newDPISystem(coreDir))
 	if err != nil {
-		n.log.Logf("service: network scan: dpi tools: %v", err)
+		fmt.Fprintf(os.Stderr, "dpi tools: %v\n", err)
 	}
 	providers, err := wfpProviders()
 	if err != nil {
-		n.log.Logf("service: network scan: wfp: %v", err)
+		fmt.Fprintf(os.Stderr, "wfp: %v\n", err)
 	} else {
 		scan.ForeignWFP = netdoctor.ForeignWFPProviders(providers)
 	}

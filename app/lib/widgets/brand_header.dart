@@ -32,11 +32,7 @@ class BrandHeader extends StatelessWidget {
   final VoidCallback onOpenLogs;
   final Future<bool> Function(Uri uri)? onLaunchUrl;
 
-  const BrandHeader({
-    super.key,
-    required this.onOpenLogs,
-    this.onLaunchUrl,
-  });
+  const BrandHeader({super.key, required this.onOpenLogs, this.onLaunchUrl});
 
   @override
   Widget build(BuildContext context) {
@@ -84,9 +80,13 @@ class BrandHeader extends StatelessWidget {
     _ => t.textMuted,
   };
 
-  Future<void> _showSettings(BuildContext context, AppState state) {
+  /// The sheet only reports what the user picked and closes itself; what that
+  /// opens runs here, once the sheet's route is gone. Opening a dialog from
+  /// inside the sheet would stack it on a sheet that never closed:
+  /// [Navigator.maybePop] skips the pop when another route was pushed first.
+  Future<void> _showSettings(BuildContext context, AppState state) async {
     final t = context.tokens;
-    return showModalBottomSheet<void>(
+    final action = await showModalBottomSheet<_SettingsAction>(
       context: context,
       isScrollControlled: true,
       backgroundColor: t.surface,
@@ -96,20 +96,27 @@ class BrandHeader extends StatelessWidget {
       ),
       builder: (_) => ChangeNotifierProvider<AppState>.value(
         value: state,
-        child: _SettingsSheet(
-          onOpenLogs: onOpenLogs,
-          onLaunchUrl: onLaunchUrl,
-        ),
+        child: _SettingsSheet(onLaunchUrl: onLaunchUrl),
       ),
     );
+    if (!context.mounted) return;
+    switch (action) {
+      case _SettingsAction.logs:
+        onOpenLogs();
+      case _SettingsAction.diagnostics:
+        await NetworkDoctorDialog.show(context);
+      case null:
+        break;
+    }
   }
 }
 
+enum _SettingsAction { logs, diagnostics }
+
 class _SettingsSheet extends StatefulWidget {
-  final VoidCallback onOpenLogs;
   final Future<bool> Function(Uri uri)? onLaunchUrl;
 
-  const _SettingsSheet({required this.onOpenLogs, this.onLaunchUrl});
+  const _SettingsSheet({this.onLaunchUrl});
 
   @override
   State<_SettingsSheet> createState() => _SettingsSheetState();
@@ -313,18 +320,15 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     _FooterButton(
                       icon: Icons.terminal_rounded,
                       label: 'логи',
-                      onTap: () {
-                        Navigator.of(context).maybePop();
-                        widget.onOpenLogs();
-                      },
+                      onTap: () =>
+                          Navigator.of(context).pop(_SettingsAction.logs),
                     ),
                     _FooterButton(
                       icon: Icons.auto_fix_high_rounded,
                       label: 'диагностика',
-                      onTap: () {
-                        Navigator.of(context).maybePop();
-                        NetworkDoctorDialog.show(context);
-                      },
+                      onTap: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsAction.diagnostics),
                     ),
                     _FooterButton(
                       icon: Icons.favorite_rounded,
@@ -615,10 +619,7 @@ class _FooterButtonState extends State<_FooterButton>
   @override
   void initState() {
     super.initState();
-    _anim = AnimationController(
-      vsync: this,
-      duration: AppDurations.hover,
-    );
+    _anim = AnimationController(vsync: this, duration: AppDurations.hover);
     _curve = CurvedAnimation(parent: _anim, curve: AppCurves.hover);
   }
 

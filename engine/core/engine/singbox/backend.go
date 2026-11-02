@@ -146,6 +146,16 @@ func (b *Backend) Delay(id, url string, timeoutMs int) (int, error) {
 	return b.control.Delay(profileTag(id), url, timeoutMs)
 }
 
+// CanProbeDirect implements engine.DirectProber.
+func (b *Backend) CanProbeDirect() bool { return b.control.IsAlive() }
+
+// ProbeDirect implements engine.DirectProber through the direct outbound, which
+// is what bypassed traffic uses: its interface and its resolver.
+func (b *Backend) ProbeDirect(url string, timeoutMs int) error {
+	_, err := b.control.Delay("direct", url, timeoutMs)
+	return err
+}
+
 // RoutedProfile asks the auto group which profile it holds.
 func (b *Backend) RoutedProfile() string {
 	group, err := b.control.Proxy(configfile.AutoTag)

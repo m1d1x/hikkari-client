@@ -76,6 +76,17 @@ type Backend interface {
 
 type Factory func(baseDir string, log Logger) (Backend, error)
 
+// DirectProber is optional: requests over the direct path of a running tunnel.
+// A strict route sends everything from this process into the TUN, so only the
+// engine can still reach the network the way a bypassed app does.
+type DirectProber interface {
+	// CanProbeDirect is false when the engine is not answering, so that a dead
+	// engine does not read as a dead network.
+	CanProbeDirect() bool
+	// ProbeDirect returns nil when url answered at all.
+	ProbeDirect(url string, timeoutMs int) error
+}
+
 // RouteObserver is optional: what the running engine can report about itself
 // without sending anything over the network. Adapters without such a view leave
 // the background checks to fall back on Delay.

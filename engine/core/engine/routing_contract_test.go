@@ -45,6 +45,11 @@ func TestAdaptersImplementTheSameRoutingIntent(t *testing.T) {
 				matches := map[string][]string{}
 				for _, item := range route["rules"].([]interface{}) {
 					rule := item.(map[string]interface{})
+					// The Secure DNS rules are the engine's, not the user's:
+					// only they carry ports.
+					if _, own := rule["port"]; own {
+						continue
+					}
 					if rule["outbound"] != string(policy.Target) {
 						t.Fatal(rule)
 					}

@@ -75,6 +75,15 @@ func (d *dpiSystem) Services() ([]netdoctor.DPIService, error) {
 	}
 }
 
+// selfPointingBuffer is memory for an API that stores, inside the buffer,
+// pointers to its own strings. On the heap, where nothing moves it: a local
+// make would stay on the goroutine stack, and when the stack grows the copy's
+// pointers still lead into the old, freed one, which the runtime does not fix
+// up in a byte slice.
+//
+//go:noinline
+func selfPointingBuffer(size uint32) []byte { return make([]byte, size) }
+
 func describeService(mgr windows.Handle, e *windows.ENUM_SERVICE_STATUS_PROCESS) (netdoctor.DPIService, error) {
 	h, err := windows.OpenService(mgr, e.ServiceName, windows.SERVICE_QUERY_CONFIG)
 	if err != nil {
@@ -82,11 +91,11 @@ func describeService(mgr windows.Handle, e *windows.ENUM_SERVICE_STATUS_PROCESS)
 	}
 	defer windows.CloseServiceHandle(h)
 
-	buf := make([]byte, 8<<10)
+	buf := selfPointingBuffer(8 << 10)
 	var needed uint32
 	err = windows.QueryServiceConfig(h, (*windows.QUERY_SERVICE_CONFIG)(unsafe.Pointer(&buf[0])), uint32(len(buf)), &needed)
 	if errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
-		buf = make([]byte, needed)
+		buf = selfPointingBuffer(needed)
 		err = windows.QueryServiceConfig(h, (*windows.QUERY_SERVICE_CONFIG)(unsafe.Pointer(&buf[0])), uint32(len(buf)), &needed)
 	}
 	if err != nil {

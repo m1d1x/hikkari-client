@@ -83,9 +83,30 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
   /// report says which apply; until it arrives, the host OS does.
   bool _isMac = Platform.isMacOS;
 
+  /// A click that closes the window must be deliberate: a stray or double
+  /// click on the dimmed area right after the window appears, or right after
+  /// a button press, would drop the next click onto the power button behind
+  /// it. A short lock covers that; a long one would trap the user in a
+  /// check that hangs.
+  static const _closeLockFor = Duration(seconds: 1);
+  bool _closeLocked = false;
+  Timer? _closeLock;
+
+  void _lockClose() {
+    _closeLock?.cancel();
+    if (!_closeLocked) setState(() => _closeLocked = true);
+    _closeLock = Timer(_closeLockFor, () {
+      if (mounted) setState(() => _closeLocked = false);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    _closeLocked = true;
+    _closeLock = Timer(_closeLockFor, () {
+      if (mounted) setState(() => _closeLocked = false);
+    });
     _appendLog(
       'INFO',
       'запуск модуля диагностики сети (System Network Doctor)',
@@ -95,6 +116,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
 
   @override
   void dispose() {
+    _closeLock?.cancel();
     _logScroll.dispose();
     super.dispose();
   }
@@ -127,6 +149,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
 
   Future<void> _runDiagnostics() async {
     if (_isDiagnosing) return;
+    _lockClose();
     setState(() {
       _isDiagnosing = true;
       _proxyHealth = ComponentHealth.checking;
@@ -160,7 +183,17 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
         ((rep['proxy'] as Map?)?['verdict'] as String?) ?? 'none',
         supported: rep['supported'] != false,
       );
-      _applyHost((rep['host'] as Map?)?.cast<String, dynamic>() ?? const {});
+      final supported = rep['supported'] != false;
+      _applyHost(
+        (rep['host'] as Map?)?.cast<String, dynamic>() ?? const {},
+        supported: supported,
+      );
+      if (supported) {
+        _applyDirect(
+          (rep['direct'] as Map?)?.cast<String, dynamic>() ?? const {},
+          tunnelUp: state.isRunning,
+        );
+      }
       final overrides = (rep['hostsOverrides'] as int?) ?? -1;
       if (overrides > 0) {
         _appendLog(
@@ -168,7 +201,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
           'файл hosts: $overrides запис${overrides == 1 ? "ь" : "ей"} подменяет популярные домены — «глубокий сброс» отключит их',
         );
       }
-      if (rep['supported'] != false) _applySystemScan(rep);
+      if (supported) _applySystemScan(rep);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -229,7 +262,12 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
     }
   }
 
-  void _applyHost(Map<String, dynamic> host) {
+  // A check that did not run is not a good result: only a platform without
+  // the check at all stays green.
+  ComponentHealth _unchecked(bool supported) =>
+      supported ? ComponentHealth.warning : ComponentHealth.ok;
+
+  void _applyHost(Map<String, dynamic> host, {required bool supported}) {
     final probed = host['probed'] == true;
     final when = probed ? '' : ' (по данным последнего подключения)';
     switch (host['iface'] as String? ?? 'unchecked') {
@@ -249,7 +287,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
           'сетевой адаптер: ни один адаптер не выходит в интернет$when',
         );
       default:
-        setState(() => _adapterHealth = ComponentHealth.ok);
+        setState(() => _adapterHealth = _unchecked(supported));
         _appendLog('INFO', 'сетевой адаптер: проверка не выполнялась');
     }
     switch (host['dns'] as String? ?? 'unchecked') {
@@ -269,8 +307,42 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
           'DNS: не отвечает ни системный, ни резервный резолвер$when',
         );
       default:
-        setState(() => _dnsHealth = ComponentHealth.ok);
+        setState(() => _dnsHealth = _unchecked(supported));
         _appendLog('INFO', 'DNS: проверка не выполнялась');
+    }
+  }
+
+  // What the direct path really reaches. It outranks the settings above: they
+  // can all look right on a machine where nothing opens.
+  void _applyDirect(Map<String, dynamic> direct, {required bool tunnelUp}) {
+    if (direct['checked'] != true) {
+      _appendLog('INFO', 'прямой интернет: проверка не выполнена');
+      return;
+    }
+    if (direct['internet'] != true) {
+      setState(() => _adapterHealth = ComponentHealth.error);
+      _appendLog(
+        'ERR',
+        'прямой интернет: сайты мимо VPN не открываются, приложения в обходе работать не будут',
+      );
+      return;
+    }
+    _appendLog('OK', 'прямой интернет: сайты мимо VPN открываются');
+    final blocked =
+        (direct['secureDnsBlocked'] as List?)?.cast<String>() ?? const [];
+    if (blocked.isEmpty) return;
+    final names = blocked.join(', ');
+    if (tunnelUp) {
+      _appendLog(
+        'FIX',
+        'безопасный DNS ($names) заблокирован провайдером: браузеры в обходе получают адреса через VPN',
+      );
+    } else {
+      setState(() => _dnsHealth = ComponentHealth.warning);
+      _appendLog(
+        'WARN',
+        'безопасный DNS ($names) заблокирован провайдером: без VPN браузер с этим DNS не откроет ни один сайт. Включите VPN или отключите «безопасный DNS» в настройках браузера',
+      );
     }
   }
 
@@ -278,6 +350,15 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
   // over the user's own software. Null means the check could not run, which
   // must not read as «nothing found».
   void _applySystemScan(Map<String, dynamic> rep) {
+    final scanError = rep['scanError'] as String?;
+    if (scanError != null && scanError.isNotEmpty) {
+      setState(() {
+        if (_adapterHealth == ComponentHealth.ok) {
+          _adapterHealth = ComponentHealth.warning;
+        }
+      });
+      _appendLog('ERR', 'проверка системы службой не выполнена: $scanError');
+    }
     final dpi = (rep['dpiTools'] as List?)?.cast<String>();
     if (_isMac) {
       // The tools the deep reset stops are Windows drivers: nothing to report.
@@ -319,6 +400,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
 
   Future<void> _runSoftRepair() async {
     if (_isFixing) return;
+    _lockClose();
     setState(() => _isFixing = true);
 
     if (widget.softRepairRunner != null) {
@@ -378,6 +460,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
       confirmLabel: 'сбросить стек',
     );
     if (!confirmed || !mounted) return;
+    _lockClose();
 
     final state = context.read<AppState>();
     _appendLog('FIX', '=== глубокий сброс сетевого стека ===');
@@ -561,224 +644,231 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
   Widget build(BuildContext context) {
     final t = context.tokens;
 
-    return Dialog(
-      backgroundColor: t.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(t.radiusLg),
-      ),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 680),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Header — clean, quiet, no pink square
-              Row(
-                children: [
-                  Icon(Icons.auto_fix_high_rounded, size: 19, color: t.primary),
-                  const SizedBox(width: 9),
-                  Text(
-                    'диагностика и авто-фикс',
-                    style: TextStyle(
-                      color: t.text,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
+    return PopScope(
+      canPop: !_closeLocked,
+      child: Dialog(
+        backgroundColor: t.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(t.radiusLg),
+        ),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520, maxHeight: 680),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header — clean, quiet, no pink square
+                Row(
+                  children: [
+                    Icon(
+                      Icons.auto_fix_high_rounded,
+                      size: 19,
+                      color: t.primary,
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-
-              // Status cards grid (neutral surface, clean icons, right-side checkmark/cross)
-              Row(
-                children: [
-                  Expanded(
-                    child: _StatusCard(
-                      icon: Icons.alt_route_rounded,
-                      label: 'системный прокси',
-                      health: _proxyHealth,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _StatusCard(
-                      icon: Icons.dns_outlined,
-                      label: 'кэш dns / резолвер',
-                      health: _dnsHealth,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: _StatusCard(
-                      icon: Icons.router_outlined,
-                      label: 'сетевые адаптеры',
-                      health: _adapterHealth,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _StatusCard(
-                      icon: Icons.shield_outlined,
-                      label: 'состояние ядра',
-                      health: _coreHealth,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-
-              // Unified Action buttons bar
-              Row(
-                children: [
-                  Expanded(
-                    child: _DoctorActionButton(
-                      primary: true,
-                      icon: Icons.healing_rounded,
-                      label: 'починить сеть',
-                      busy: _isFixing,
-                      onPressed: _runSoftRepair,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _DoctorActionButton(
-                      icon: Icons.refresh_rounded,
-                      label: 'проверить',
-                      busy: _isDiagnosing,
-                      onPressed: _runDiagnostics,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: _DoctorActionButton(
-                      destructive: true,
-                      icon: Icons.restart_alt_rounded,
-                      label: 'глубокий сброс',
-                      onPressed: _runDeepReset,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-
-              // Terminal Console Container (no divider line, clean top bar)
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: t.bg,
-                    borderRadius: BorderRadius.circular(t.radius),
-                    border: Border.all(color: t.border),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Column(
-                    children: [
-                      // Clean top bar inside console: subtle test button on left, copy icon with tooltip on right
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(10, 6, 8, 2),
-                        child: Row(
-                          children: [
-                            // A fake failure means nothing to anyone but a
-                            // tester (seven taps on the title).
-                            if (context.watch<AppState>().presets?.tester ??
-                                false)
-                              _HoverActionText(
-                                icon: Icons.bug_report_outlined,
-                                label: 'симулировать поломку',
-                                color: t.textFaint,
-                                onTap: _simulateTotalBreakdown,
-                              ),
-                            const Spacer(),
-                            _CopyIconButton(onTap: _copyLogs),
-                          ],
-                        ),
+                    const SizedBox(width: 9),
+                    Text(
+                      'диагностика и авто-фикс',
+                      style: TextStyle(
+                        color: t.text,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
                       ),
-                      // Log lines list directly below (NO divider line)
-                      Expanded(
-                        child: ListView.builder(
-                          controller: _logScroll,
-                          padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
-                          itemCount: _logs.length,
-                          itemBuilder: (context, index) {
-                            final item = _logs[index];
-                            final tagColor = switch (item.level) {
-                              'OK' => t.ok.withValues(alpha: 0.9),
-                              'FIX' => t.primary,
-                              'WARN' => t.warn,
-                              'ERR' => t.bad,
-                              _ => t.textFaint,
-                            };
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 1.5,
-                              ),
-                              child: Text.rich(
-                                TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: '[${item.formattedTime}] ',
-                                      style: TextStyle(
-                                        color: t.textFaint,
-                                        fontSize: 11,
-                                        fontFamily: t.monoFamily,
-                                      ),
-                                    ),
-                                    TextSpan(
-                                      text: '[${item.level}] ',
-                                      style: TextStyle(
-                                        color: tagColor,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                        fontFamily: t.monoFamily,
-                                      ),
-                                    ),
-                                    TextSpan(
-                                      text: item.message,
-                                      style: TextStyle(
-                                        color: t.textSecondary,
-                                        fontSize: 11,
-                                        fontFamily: t.monoFamily,
-                                      ),
-                                    ),
-                                  ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // Status cards grid (neutral surface, clean icons, right-side checkmark/cross)
+                Row(
+                  children: [
+                    Expanded(
+                      child: _StatusCard(
+                        icon: Icons.alt_route_rounded,
+                        label: 'системный прокси',
+                        health: _proxyHealth,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _StatusCard(
+                        icon: Icons.dns_outlined,
+                        label: 'кэш dns / резолвер',
+                        health: _dnsHealth,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _StatusCard(
+                        icon: Icons.router_outlined,
+                        label: 'сетевые адаптеры',
+                        health: _adapterHealth,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _StatusCard(
+                        icon: Icons.shield_outlined,
+                        label: 'состояние ядра',
+                        health: _coreHealth,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+
+                // Unified Action buttons bar
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DoctorActionButton(
+                        primary: true,
+                        icon: Icons.healing_rounded,
+                        label: 'починить сеть',
+                        busy: _isFixing,
+                        onPressed: _runSoftRepair,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _DoctorActionButton(
+                        icon: Icons.refresh_rounded,
+                        label: 'проверить',
+                        busy: _isDiagnosing,
+                        onPressed: _runDiagnostics,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _DoctorActionButton(
+                        destructive: true,
+                        icon: Icons.restart_alt_rounded,
+                        label: 'глубокий сброс',
+                        onPressed: _runDeepReset,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                // Terminal Console Container (no divider line, clean top bar)
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: t.bg,
+                      borderRadius: BorderRadius.circular(t.radius),
+                      border: Border.all(color: t.border),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      children: [
+                        // Clean top bar inside console: subtle test button on left, copy icon with tooltip on right
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 6, 8, 2),
+                          child: Row(
+                            children: [
+                              // A fake failure means nothing to anyone but a
+                              // tester (seven taps on the title).
+                              if (context.watch<AppState>().presets?.tester ??
+                                  false)
+                                _HoverActionText(
+                                  icon: Icons.bug_report_outlined,
+                                  label: 'симулировать поломку',
+                                  color: t.textFaint,
+                                  onTap: _simulateTotalBreakdown,
                                 ),
-                              ),
-                            );
-                          },
+                              const Spacer(),
+                              _CopyIconButton(onTap: _copyLogs),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                        // Log lines list directly below (NO divider line)
+                        Expanded(
+                          child: ListView.builder(
+                            controller: _logScroll,
+                            padding: const EdgeInsets.fromLTRB(10, 2, 10, 6),
+                            itemCount: _logs.length,
+                            itemBuilder: (context, index) {
+                              final item = _logs[index];
+                              final tagColor = switch (item.level) {
+                                'OK' => t.ok.withValues(alpha: 0.9),
+                                'FIX' => t.primary,
+                                'WARN' => t.warn,
+                                'ERR' => t.bad,
+                                _ => t.textFaint,
+                              };
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 1.5,
+                                ),
+                                child: Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: '[${item.formattedTime}] ',
+                                        style: TextStyle(
+                                          color: t.textFaint,
+                                          fontSize: 11,
+                                          fontFamily: t.monoFamily,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: '[${item.level}] ',
+                                        style: TextStyle(
+                                          color: tagColor,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          fontFamily: t.monoFamily,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: item.message,
+                                        style: TextStyle(
+                                          color: t.textSecondary,
+                                          fontSize: 11,
+                                          fontFamily: t.monoFamily,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
 
-              // Footer below console
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _HoverActionText(
-                    icon: Icons.send_rounded,
-                    label: _sendingSupport
-                        ? 'отправка...'
-                        : 'отправить в поддержку',
-                    busy: _sendingSupport,
-                    onTap: _sendSupportReport,
-                  ),
-                  _HoverActionText(
-                    icon: Icons.delete_outline_rounded,
-                    label: 'очистить лог',
-                    onTap: _clearLogs,
-                  ),
-                ],
-              ),
-            ],
+                // Footer below console
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _HoverActionText(
+                      icon: Icons.send_rounded,
+                      label: _sendingSupport
+                          ? 'отправка...'
+                          : 'отправить в поддержку',
+                      busy: _sendingSupport,
+                      onTap: _sendSupportReport,
+                    ),
+                    _HoverActionText(
+                      icon: Icons.delete_outline_rounded,
+                      label: 'очистить лог',
+                      onTap: _clearLogs,
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

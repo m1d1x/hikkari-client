@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -77,7 +78,8 @@ func (m *ServiceManager) followCore(resp svcproto.Response) {
 	}
 	m.followOnce.Do(func() {
 		m.following.Store(true)
-		followFile(resp.CoreLog, "service", m.log)
+		offsetPath := filepath.Join(filepath.Dir(m.configPath), "service-log.offset")
+		followFile(resp.CoreLog, offsetPath, "service", m.log)
 	})
 }
 

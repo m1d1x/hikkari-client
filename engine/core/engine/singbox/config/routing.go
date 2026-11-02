@@ -103,10 +103,19 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 				"outbound": ruleOutbound,
 			})
 		}
+		folders := routing.FolderRegexes(list.Folders)
 		appendRule("domain_suffix", list.Domains)
 		appendRule("ip_cidr", list.IPs)
+		// Between the two: a domain or address the user sent direct stays
+		// direct, an app sent direct does not take its Secure DNS with it.
+		if ruleOutbound == "direct" && len(list.Processes)+len(folders) > 0 {
+			userRules = append(userRules, secureDNSRules(head)...)
+		}
 		appendRule("process_name", list.Processes)
-		appendRule("process_path_regex", routing.FolderRegexes(list.Folders))
+		appendRule("process_path_regex", folders)
+		if finalTag == "direct" {
+			userRules = append(userRules, secureDNSRules(head)...)
+		}
 	}
 
 	// Bypass rules go ahead of the QUIC reject: an app the user sent direct
@@ -134,6 +143,44 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		bypass = list
 	}
 	applyBypassDNS(cfg, bypass)
+}
+
+// Public Secure DNS resolvers, as browsers reach them: by name, or by address
+// when the browser has it built in.
+var (
+	secureDNSDomains = []string{
+		"cloudflare-dns.com", "one.one.one.one", "dns.google", "quad9.net",
+		"doh.opendns.com", "dns.nextdns.io", "dns.adguard-dns.com", "doh.cleanbrowsing.org",
+	}
+	secureDNSAddresses = []string{
+		"1.1.1.1/32", "1.0.0.1/32", "8.8.8.8/32", "8.8.4.4/32", "9.9.9.9/32", "149.112.112.112/32",
+	}
+)
+
+// secureDNSRules keep a browser's encrypted DNS in the tunnel when the browser
+// itself goes direct. Censoring ISPs drop these resolvers, and a browser in
+// Secure DNS mode has no other way to resolve a name: every site then fails
+// with ERR_NAME_NOT_RESOLVED, though the sites themselves are reachable. The
+// answers come back through the tunnel and the browser still connects to the
+// sites directly.
+//
+// QUIC is refused, as for all tunnelled traffic, and the browser retries over
+// TCP. Ports are limited to DoH and DoT: plain DNS is hijacked earlier, and
+// the addresses serve nothing else that matters here.
+func secureDNSRules(head string) []interface{} {
+	match := func() map[string]interface{} {
+		return map[string]interface{}{
+			"domain_suffix": toAnySlice(secureDNSDomains),
+			"ip_cidr":       toAnySlice(secureDNSAddresses),
+			"port":          []interface{}{443, 853},
+		}
+	}
+	reject := match()
+	reject["network"] = "udp"
+	reject["action"] = "reject"
+	tunnel := match()
+	tunnel["outbound"] = head
+	return []interface{}{reject, tunnel}
 }
 
 // applyBypassDNS gives bypassed traffic real DNS answers instead of fake

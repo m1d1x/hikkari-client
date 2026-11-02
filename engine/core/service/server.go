@@ -171,6 +171,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	log := logging.New(filepath.Join(cfg.CoreDir, "service.log"))
 	log.Logf("=== HikkariService %s, core=%s ===", Version, cfg.CoreBin)
+	captureCrashes(cfg.CoreDir, log)
 	s := &Server{
 		cfg: cfg,
 		log: log,
