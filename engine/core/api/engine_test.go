@@ -282,3 +282,35 @@ func TestExplicitInitDoesNotSilentlyChangeEngine(t *testing.T) {
 		t.Fatal("existing adapter changed")
 	}
 }
+
+// The log says which profile each press was about, whatever the outcome.
+func TestConnectLinesNameTheProfile(t *testing.T) {
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}}
+	c := initAlternate(t, f)
+	first, err := c.AddProfileFromURI("p-first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := c.AddProfileFromURI("second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SwitchProfile(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StartVPN(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SwitchProfile(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.StopVPN(); err != nil {
+		t.Fatal(err)
+	}
+	log := c.logger.Tail()
+	for _, want := range []string{"[connect] start profile=", "[connect] switch profile=", "[connect] stop profile=", "ok=true"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("no %q in the log:\n%s", want, log)
+		}
+	}
+}

@@ -78,6 +78,43 @@ func (r *Runner) Baseline() {
 	r.log.Logf("[diag] ===== baseline done =====")
 }
 
+// snapshotReachTimeout bounds the per-profile round inside a snapshot.
+const snapshotReachTimeout = time.Minute
+
+// ProbeNow measures the selected profile right after a switch.
+func (r *Runner) ProbeNow() {
+	r.log.Logf("[diag] ----- probe after a profile switch -----")
+	r.proxyDelay()
+	r.connections()
+}
+
+// Snapshot is one round on request, tunnel up or down: the machine, its
+// interfaces and routes, UDP, and with the tunnel up the server's delay and the
+// live connections. It takes as long as Baseline, ~10–20s on Windows.
+func (r *Runner) Snapshot(tunnelUp bool) {
+	r.log.Logf("[diag] ===== snapshot on request (tunnel up: %v) =====", tunnelUp)
+	r.sysInfo()
+	r.resolveStun()
+	r.goInterfaces("snapshot")
+	if tunnelUp {
+		r.stunRound("tun/default-route")
+		for _, pi := range physicalIfaces() {
+			r.stunBound(pi)
+		}
+		r.proxyDelay()
+		r.connections()
+		runCommands(r.log, "snapshot", postCommands())
+		// Every profile from the physical card, not only the selected one.
+		ctx, cancel := context.WithTimeout(context.Background(), snapshotReachTimeout)
+		defer cancel()
+		r.reachRound(ctx, physicalIfaces())
+	} else {
+		r.stunRound("direct/no-vpn")
+		runCommands(r.log, "snapshot", preCommands())
+	}
+	r.log.Logf("[diag] ===== snapshot done =====")
+}
+
 // AfterStart logs the effective config and launches the background loop:
 // post-start snapshot, then periodic probes + connection dumps for 10
 // minutes. Cancelled by Stop or the next AfterStart.

@@ -296,6 +296,13 @@ func (b *Backend) Baseline() {
 		b.diagnostics.AfterStart(context.Background())
 	}
 }
+
+// ProbeNow measures the selected profile right now.
+func (b *Backend) ProbeNow() { b.diagnostics.ProbeNow() }
+
+// Snapshot writes the machine's state into the log right now, on request.
+func (b *Backend) Snapshot() { b.diagnostics.Snapshot(b.IsRunning()) }
+
 func (b *Backend) Diagnose(reason string) {
 	if d, ok := b.process.(interface{ Diagnose(string) }); ok {
 		d.Diagnose(reason)

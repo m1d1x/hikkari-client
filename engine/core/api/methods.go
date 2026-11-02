@@ -81,10 +81,12 @@ func (c *Core) StartVPN() error {
 	return err
 }
 
-func (c *Core) startVPN() error {
+func (c *Core) startVPN() (err error) {
 	if c.routingPreview {
 		return fmt.Errorf("режим предпросмотра не запускает VPN")
 	}
+	started := time.Now()
+	defer func() { c.logConnect("start", started, err) }()
 	if err := c.requireProfiles(); err != nil {
 		return err
 	}
@@ -131,6 +133,7 @@ func (c *Core) StopVPN() error {
 			return err
 		}
 		c.health.MarkStopped()
+		c.logConnect("stop", time.Now(), nil)
 		go c.measureTunnelDown()
 	}
 	return c.flushRoutingLocked()
@@ -264,6 +267,7 @@ func (c *Core) SubmitSupportReport(message string) (map[string]any, error) {
 		c.logger.Logf("[support] report not queued: %v", err)
 		return nil, err
 	}
+	c.logReportForTester(id, message)
 	return map[string]any{"queued": true, "id": id}, nil
 }
 
@@ -412,9 +416,45 @@ func (c *Core) SwitchProfile(name string) error {
 		return nil
 	}
 	if c.backend.Info().Capabilities.LiveProfileSwitch {
-		return c.backend.SelectProfile(name)
+		started := time.Now()
+		err := c.backend.SelectProfile(name)
+		c.logConnect("switch", started, err)
+		c.probeAfterSwitch(err)
+		return err
 	}
 	return c.restartVPN()
+}
+
+// logConnect puts what the user just did on one line: which profile, which
+// protocol, how it went. A log has to say which of three profiles a tester
+// pressed before the [diag:*] lines around it mean anything.
+func (c *Core) logConnect(action string, started time.Time, err error) {
+	if c.logger == nil {
+		return
+	}
+	label := "?"
+	if pf, readErr := c.profiles.Read(); readErr == nil {
+		for _, p := range pf.Profiles {
+			if p.Name == pf.Active {
+				label = p.Label
+				break
+			}
+		}
+	}
+	c.logger.Logf("[connect] %s profile=%q proto=%s secs=%.1f ok=%v err=%v",
+		action, label, c.activeProto(), time.Since(started).Seconds(), err == nil, err)
+}
+
+// probeAfterSwitch measures the profile a tester just switched to. The session
+// diagnostics probe about once a minute, and a tester trying three profiles
+// moves on sooner: without this the log would hold no verdict on the middle one.
+func (c *Core) probeAfterSwitch(err error) {
+	if err != nil || !c.presets.Snapshot().Tester {
+		return
+	}
+	if prober, ok := c.backend.(interface{ ProbeNow() }); ok {
+		go prober.ProbeNow()
+	}
 }
 
 // AddProfileFromURI parses a server URI or subscription URL and appends
@@ -699,5 +739,6 @@ func (c *Core) newTesterLog() *testerlog.Shipper {
 			app := c.telemetryApp()
 			return tel.InstallID(), app.OS, app.Version
 		},
+		Commands: c.testerCommands(),
 	})
 }

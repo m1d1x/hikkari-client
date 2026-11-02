@@ -26,6 +26,8 @@ func newServerForTests(t *testing.T) (*Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Windows cannot remove the TempDir while the service log is open.
+	t.Cleanup(func() { _ = s.log.Close() })
 	return s, dir
 }
 

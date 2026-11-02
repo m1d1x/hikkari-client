@@ -2,14 +2,18 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/netdoctor"
 	"NekkoVPN/core/svcproto"
+	"NekkoVPN/core/testerlog"
 )
 
 // Host network selection (core/netdoctor): which interface and resolver the
@@ -91,6 +95,20 @@ type NetworkReport struct {
 // tunnel up the direct path cannot be probed (strict_route sends the probes
 // into the TUN), so the selection made at connect is reported instead.
 func (c *Core) NetworkDiagnose() (NetworkReport, error) {
+	report, err := c.networkDiagnose()
+	if err != nil {
+		return report, err
+	}
+	// A tester's check lands in the stream on its own: nobody has to ask for it.
+	if c.logger != nil && c.presets.Snapshot().Tester {
+		for _, line := range doctorLines(report) {
+			c.logger.Logf("[doctor] %s", line)
+		}
+	}
+	return report, nil
+}
+
+func (c *Core) networkDiagnose() (NetworkReport, error) {
 	rep, err := netdoctor.Diagnose()
 	if err != nil {
 		return NetworkReport{}, err
@@ -116,6 +134,71 @@ func (c *Core) NetworkDiagnose() (NetworkReport, error) {
 			report.Host.LogLine(), report.Direct.Checked, report.Direct.Internet, report.Direct.SecureDNSBlocked, secureDNSLog(report.SecureDNS), running)
 	}
 	return report, nil
+}
+
+// doctorLines renders a report for the tester stream, one key=json per field:
+// a line stays under the stream's limit, and an LLM reads a field at a time.
+func doctorLines(report NetworkReport) []string {
+	data, err := json.Marshal(report)
+	if err != nil {
+		return []string{"error=" + strconv.Quote(err.Error())}
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return []string{"error=" + strconv.Quote(err.Error())}
+	}
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, k+"="+string(fields[k]))
+	}
+	return lines
+}
+
+// testerCommands is what the hub may ask of this install (engine/core/testerlog).
+// Both only read the machine: run_doctor never repairs, and a snapshot writes
+// its [diag:*] lines into the log as the session diagnostics do.
+func (c *Core) testerCommands() map[string]testerlog.Command {
+	return map[string]testerlog.Command{
+		"run_doctor": {Source: "doctor", Run: func(context.Context) []string {
+			report, err := c.networkDiagnose()
+			if err != nil {
+				return []string{"error=" + strconv.Quote(err.Error())}
+			}
+			return doctorLines(report)
+		}},
+		"snapshot": {Source: "snapshot", Run: func(context.Context) []string {
+			snapshotter, ok := c.backend.(interface{ Snapshot() })
+			if !ok {
+				return []string{"error=\"this engine has no snapshot\""}
+			}
+			snapshotter.Snapshot()
+			return nil
+		}},
+	}
+}
+
+// maxReportLines bounds what one report adds to the tester stream.
+const maxReportLines = 200
+
+// logReportForTester puts a tester's report into the stream too: tickets and the
+// stream are read in different places, and the stream is the one that keeps the
+// lines around it.
+func (c *Core) logReportForTester(id, message string) {
+	if c.logger == nil || !c.presets.Snapshot().Tester {
+		return
+	}
+	lines := strings.Split(message, "\n")
+	if len(lines) > maxReportLines {
+		lines = lines[:maxReportLines]
+	}
+	for _, line := range lines {
+		c.logger.Logf("[support] report %s: %s", id, line)
+	}
 }
 
 // secureDNSLog renders the browsers' settings for a log line.
