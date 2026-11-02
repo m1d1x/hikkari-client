@@ -274,7 +274,8 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {
 		if direct, ok := backend.(engine.DirectTraffic); ok {
-			c.autoTunnel = autotunnel.OpenList(direct.AutoTunnelList())
+			c.autoTunnel = autotunnel.OpenList(direct.AutoTunnelList(), c.logger.Logf)
+			c.autoTunnel.SetPublish(c.publishAutoTunnel)
 			list, logf := c.autoTunnel, c.logger.Logf
 			run(func() { autotunnel.Run(ctx, list, direct.DirectConnections, logf) })
 		}

@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
@@ -26,6 +27,13 @@ import (
 
 	"NekkoVPN/core/fsutil"
 )
+
+// Tag is the rule set tag of the autotunnel host list. It is the one local
+// rule set a GUI-compiled config may declare: svcproto.Sanitize rewrites its
+// path to the service-owned location, and the service owns the file the core
+// reads — the GUI pushes the hosts as data (svcproto OpAutoTunnel), never a
+// path.
+const Tag = "auto-tunnel"
 
 const (
 	// silentAfter is how long a connection may wait for its first byte. A TLS
@@ -46,7 +54,15 @@ const (
 	// pollInterval: the connection list is answered from the core's memory and
 	// sends nothing over the network.
 	pollInterval = 5 * time.Second
+	// maxHostLen bounds one host: the longest domain name the core can match.
+	maxHostLen = 253
 )
+
+// resyncInterval is how often Run re-publishes the whole list even without a
+// change. The service owns the rule set file and can lose it — its directory
+// replaced by an update — and a heartbeat heals that without waiting for new
+// evidence. A var so tests can shorten it.
+var resyncInterval = 5 * time.Minute
 
 // Conn is one open connection as the core reports it.
 type Conn struct {
@@ -129,23 +145,40 @@ func isDomain(host string) bool {
 }
 
 // List is the set of hosts, kept in two files: the rule set the core reads and
-// the expiry times it does not need to know about.
+// the expiry times it does not need to know about. On desktop the rule set the
+// running core follows is the service's copy (see SetPublish); the file here is
+// the GUI's own, for an engine run directly from this config.
 type List struct {
 	path string
 
 	mu    sync.Mutex
 	hosts map[string]time.Time
+
+	// publish, when set, receives the whole list after every change and from
+	// Publish. It pushes the hosts to whoever runs the core with this list —
+	// on desktop, the service that owns the rule set file.
+	publish func([]string) error
+	// logf hears publish failures. The local list is still saved: it is the
+	// source of truth, and the next change or heartbeat retries.
+	logf func(string, ...interface{})
 }
 
 // OpenList reads the list behind the rule set at path. Damaged state only
-// costs a new round of detection.
-func OpenList(path string) *List {
-	l := &List{path: path, hosts: map[string]time.Time{}}
+// costs a new round of detection. logf may be nil.
+func OpenList(path string, logf func(string, ...interface{})) *List {
+	l := &List{path: path, logf: logf, hosts: map[string]time.Time{}}
 	raw, err := os.ReadFile(l.statePath())
 	if err == nil {
 		_ = json.Unmarshal(raw, &l.hosts)
 	}
 	return l
+}
+
+// SetPublish wires the push to the core's rule set. Called once, before Run.
+func (l *List) SetPublish(f func([]string) error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.publish = f
 }
 
 func (l *List) statePath() string { return l.path + ".state" }
@@ -221,11 +254,74 @@ func (l *List) saveLocked() error {
 	if err := writeAtomic(l.statePath(), state); err != nil {
 		return err
 	}
-	content, err := RuleSet(l.sortedLocked())
+	hosts := l.sortedLocked()
+	if err := WriteRuleSet(l.path, hosts); err != nil {
+		return err
+	}
+	if l.publish != nil {
+		if err := l.publish(hosts); err != nil && l.logf != nil {
+			l.logf("[autotunnel] publish: %v", err)
+		}
+	}
+	return nil
+}
+
+// Publish pushes the whole current list to whoever follows it. Run calls it
+// once at start and on every heartbeat; the GUI calls it before starting the
+// core, so the service's rule set is never stale against a fresh start.
+func (l *List) Publish() error {
+	l.mu.Lock()
+	hook, hosts := l.publish, l.sortedLocked()
+	l.mu.Unlock()
+	if hook == nil {
+		return nil
+	}
+	return hook(hosts)
+}
+
+// ValidateHosts reports whether hosts are a list the core can route by:
+// domains only, no duplicates, bounded. The detector only ever produces
+// domains; the service re-checks at its boundary, where the list arrives
+// from an unprivileged process.
+func ValidateHosts(hosts []string) error {
+	if len(hosts) > maxHosts {
+		return fmt.Errorf("%d hosts, the list holds %d", len(hosts), maxHosts)
+	}
+	seen := make(map[string]bool, len(hosts))
+	for _, h := range hosts {
+		if !isDomain(h) {
+			return fmt.Errorf("%q is not a domain", h)
+		}
+		if len(h) > maxHostLen {
+			return fmt.Errorf("%q is longer than %d", h, maxHostLen)
+		}
+		if strings.ContainsAny(h, " \t/\\:") {
+			return fmt.Errorf("%q is not a domain", h)
+		}
+		if seen[h] {
+			return fmt.Errorf("duplicate host %q", h)
+		}
+		seen[h] = true
+	}
+	return nil
+}
+
+// WriteRuleSet renders hosts and writes them where they stand. The core
+// watches the rule set file (sing-box reloads a local source rule set on a
+// write event), and a watcher does not reliably report an atomic replace
+// (write temp, rename) on every platform — so the file is rewritten in place.
+// A reader mid-write at worst makes the core log a reload error and keep the
+// previous rules; the debounce in the watcher and the heartbeat in Run make
+// that self-correcting.
+func WriteRuleSet(path string, hosts []string) error {
+	content, err := RuleSet(hosts)
 	if err != nil {
 		return err
 	}
-	return writeAtomic(l.path, content)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, content, 0o644)
 }
 
 // RuleSet renders hosts as a sing-box source rule set. An empty set is valid:
@@ -244,14 +340,7 @@ func EnsureRuleSet(path string) error {
 	if _, err := os.Stat(path); err == nil || !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	content, err := RuleSet(nil)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return writeAtomic(path, content)
+	return WriteRuleSet(path, nil)
 }
 
 func writeAtomic(path string, content []byte) error {
@@ -263,33 +352,48 @@ func writeAtomic(path string, content []byte) error {
 }
 
 // Run watches the connections until ctx is done. A failed read means the core
-// is down, which is an ordinary state and costs nothing.
+// is down, which is an ordinary state and costs nothing. The list is published
+// at start and on a heartbeat even without a change, so the rule set the
+// service keeps cannot drift from this one for long.
 func Run(ctx context.Context, list *List, conns func() ([]Conn, error), logf func(string, ...interface{})) {
 	detector := NewDetector()
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
+	resync := time.NewTicker(resyncInterval)
+	defer resync.Stop()
+	// The service's copy of the rule set can be missing or stale — its
+	// directory replaced by an update, the core resumed without a push — so
+	// the list is published before anything is proven, and re-published on a
+	// heartbeat even without new evidence.
+	if err := list.Publish(); err != nil {
+		logf("[autotunnel] publish: %v", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			now := time.Now()
+			if err := list.Expire(now); err != nil {
+				logf("[autotunnel] expire: %v", err)
+			}
+			current, err := conns()
+			if err != nil {
+				continue
+			}
+			proven := detector.Observe(now, current)
+			if len(proven) == 0 {
+				continue
+			}
+			if err := list.Add(now, proven); err != nil {
+				logf("[autotunnel] saving %d host(s): %v", len(proven), err)
+				continue
+			}
+			logf("[autotunnel] silent on the direct path, now through the tunnel: %s (list=%d)", strings.Join(proven, " "), len(list.Hosts()))
+		case <-resync.C:
+			if err := list.Publish(); err != nil {
+				logf("[autotunnel] resync: %v", err)
+			}
 		}
-		now := time.Now()
-		if err := list.Expire(now); err != nil {
-			logf("[autotunnel] expire: %v", err)
-		}
-		current, err := conns()
-		if err != nil {
-			continue
-		}
-		proven := detector.Observe(now, current)
-		if len(proven) == 0 {
-			continue
-		}
-		if err := list.Add(now, proven); err != nil {
-			logf("[autotunnel] saving %d host(s): %v", len(proven), err)
-			continue
-		}
-		logf("[autotunnel] silent on the direct path, now through the tunnel: %s (list=%d)", strings.Join(proven, " "), len(list.Hosts()))
 	}
 }

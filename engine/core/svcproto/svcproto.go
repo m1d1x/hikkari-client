@@ -6,6 +6,7 @@
 // One request per connection, one JSON line each way:
 //
 //	GUI ──{"op":"start","engine":…,"config":{…}}──▶ service   sanitise, write, run core
+//	GUI ──{"op":"autotunnel","hosts":[…]}──────▶ service   rewrite the core's autotunnel rule set
 //	GUI ──{"op":"stop"}─────────────────▶ service      stop core
 //	GUI ──{"op":"status"}───────────────▶ service      running? core log? update state?
 //	GUI ──{"op":"check_update"}─────────▶ service      poll the channel now (throttled)
@@ -70,6 +71,11 @@ const (
 	// OpScanNetwork looks, read-only, for what the deep reset would deal
 	// with and what nothing should touch; see NetworkScan.
 	OpScanNetwork = "scan_network"
+
+	// OpAutoTunnel replaces the autotunnel host list (core/autotunnel). The
+	// list travels as data; the service owns the rule set file the core
+	// reads and rewrites the config's rule set path to it — see Sanitize.
+	OpAutoTunnel = "autotunnel"
 )
 
 type Request struct {
@@ -81,6 +87,9 @@ type Request struct {
 	// engine. The service never runs it as given — see Sanitize and
 	// SanitizeXray.
 	Config json.RawMessage `json:"config,omitempty"`
+	// Hosts, for OpAutoTunnel: the whole autotunnel host list. The service
+	// validates it and writes its own rule set file from it.
+	Hosts []string `json:"hosts,omitempty"`
 	// Reconnect, for OpApplyUpdate: the tunnel was up when the user asked
 	// to restart, so bring the core back on the new version right away.
 	Reconnect bool `json:"reconnect,omitempty"`

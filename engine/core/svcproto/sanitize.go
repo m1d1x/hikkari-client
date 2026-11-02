@@ -6,12 +6,17 @@ import (
 	"net"
 	"sort"
 	"strings"
+
+	"NekkoVPN/core/autotunnel"
 )
 
 // Paths are the service-owned locations a sanitised config may refer to.
 type Paths struct {
 	// CacheFile is where sing-box keeps cache.db (fake-ip store, selections).
 	CacheFile string
+	// AutoTunnelRuleSet is the autotunnel host list (core/autotunnel) as the
+	// service keeps it. The one local rule set a GUI config may declare.
+	AutoTunnelRuleSet string
 }
 
 // Sanitize turns a config written by an unprivileged process into one the
@@ -27,9 +32,12 @@ type Paths struct {
 //   - top-level sections are allow-listed; anything else is refused;
 //   - log output and the cache file are forced to service-owned locations;
 //   - the Clash API may only listen on loopback and may not serve files;
-//   - any key naming a file or directory, anywhere, is refused — a config
-//     the GUI generates never has one, so meeting one means the config did
-//     not come from the GUI.
+//   - the autotunnel rule set — the one local rule set the GUI compiles — is
+//     rewritten to the service's own location, and its content arrives as data
+//     over the control endpoint (OpAutoTunnel), never as a path;
+//   - any other key naming a file or directory, anywhere, is refused — a
+//     config the GUI generates never has one, so meeting one means the config
+//     did not come from the GUI.
 //
 // Refusing beats silently stripping: a stripped config would start and
 // behave differently from what the GUI shows.
@@ -82,16 +90,46 @@ func Sanitize(raw []byte, p Paths) ([]byte, error) {
 	}
 
 	if route, ok := cfg["route"].(map[string]interface{}); ok {
-		if sets, ok := route["rule_set"].([]interface{}); ok {
-			for i, s := range sets {
-				if m, ok := s.(map[string]interface{}); ok && m["type"] == "local" {
-					return nil, fmt.Errorf("route.rule_set[%d]: local rule sets are not allowed", i)
-				}
-			}
+		if err := normaliseAutoTunnel(route, p.AutoTunnelRuleSet); err != nil {
+			return nil, err
 		}
 	}
 
 	return json.MarshalIndent(cfg, "", "  ")
+}
+
+// normaliseAutoTunnel keeps the one local rule set the GUI compiles — the
+// autotunnel host list — and makes it service-owned: the path the GUI named
+// is never used, the service's own location is written in its place, and the
+// entry is rebuilt to exactly the shape the contract knows. Any other rule
+// set is refused: a remote one would be fetched by the core as SYSTEM, and a
+// foreign local path is exactly what this boundary exists to stop.
+func normaliseAutoTunnel(route map[string]interface{}, servicePath string) error {
+	sets, ok := route["rule_set"].([]interface{})
+	if !ok || len(sets) == 0 {
+		return nil
+	}
+	if len(sets) > 1 {
+		return fmt.Errorf("route.rule_set: %d entries, the GUI compiles one", len(sets))
+	}
+	m, ok := sets[0].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("route.rule_set[0]: not an object")
+	}
+	tag, _ := m["tag"].(string)
+	typ, _ := m["type"].(string)
+	switch {
+	case typ == "remote" || m["url"] != nil:
+		return fmt.Errorf("route.rule_set[0]: remote rule sets are not allowed")
+	case servicePath == "":
+		return fmt.Errorf("route.rule_set[0]: the service gave no rule set location")
+	case tag != autotunnel.Tag || typ != "local":
+		return fmt.Errorf("route.rule_set[0]: local rule sets are not allowed (only the %q one is)", autotunnel.Tag)
+	}
+	route["rule_set"] = []interface{}{map[string]interface{}{
+		"tag": autotunnel.Tag, "type": "local", "format": "source", "path": servicePath,
+	}}
+	return nil
 }
 
 var allowedTopLevel = map[string]bool{
@@ -112,8 +150,9 @@ var allowedExperimental = map[string]bool{
 
 // refuseFileKeys walks the whole tree for keys that name a file or a
 // directory. `path` alone is NOT one of them: transports use it for the HTTP
-// path ("/ws"); the two places where it is a file (cache_file, local rule
-// sets) are handled explicitly above.
+// path ("/ws"); the two places where it is a file are handled explicitly
+// above — cache_file is forced to a service-owned location, and the
+// autotunnel rule set is rewritten to one.
 func refuseFileKeys(v interface{}, at string) error {
 	switch t := v.(type) {
 	case map[string]interface{}:

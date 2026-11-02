@@ -7,7 +7,10 @@
 // The GUI reaches it through one local endpoint (a named pipe on Windows, a
 // unix socket on macOS) and sends config CONTENT, never a path: the service
 // runs the core with full rights, so every path in that config would be a
-// path opened as SYSTEM/root (see svcproto.Sanitize).
+// path opened as SYSTEM/root (see svcproto.Sanitize). The one file a compiled
+// config names — the autotunnel rule set — is rewritten here to the service's
+// own directory, and its content arrives as data (OpAutoTunnel), so the GUI
+// still never names a file the service opens.
 //
 // Everything platform-specific — where things are, the endpoint, how the
 // updater is spawned, what an applied update means for the service itself —
@@ -15,6 +18,7 @@
 package service
 
 import (
+	"NekkoVPN/core/autotunnel"
 	"NekkoVPN/core/fsutil"
 	"context"
 	"errors"
@@ -384,6 +388,18 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 		resp := s.status()
 		resp.NetworkScan = &scan
 		return resp
+	case svcproto.OpAutoTunnel:
+		// The host list arrives as data and is validated here, at the boundary:
+		// the rule set file it becomes is the one the sanitised config names,
+		// and the core reads it as SYSTEM/root.
+		if err := autotunnel.ValidateHosts(req.Hosts); err != nil {
+			return fail(fmt.Errorf("autotunnel: %w", err))
+		}
+		if err := autotunnel.WriteRuleSet(s.autoTunnelPath(), req.Hosts); err != nil {
+			return fail(fmt.Errorf("autotunnel: %w", err))
+		}
+		s.log.Logf("service: autotunnel list: %d host(s)", len(req.Hosts))
+		return s.status()
 	case svcproto.OpRepairNetwork:
 		if s.cfg.HostRepair == nil {
 			return fail(errors.New("исправление сети службой не поддерживается на этой системе"))
@@ -474,7 +490,8 @@ func (s *Server) writeConfig(engine string, raw []byte) error {
 		}
 	} else {
 		cfg, err = svcproto.Sanitize(raw, svcproto.Paths{
-			CacheFile: filepath.Join(s.cfg.CoreDir, "cache.db"),
+			CacheFile:         filepath.Join(s.cfg.CoreDir, "cache.db"),
+			AutoTunnelRuleSet: s.autoTunnelPath(),
 		})
 	}
 	if err != nil {
@@ -490,6 +507,11 @@ func (s *Server) runMarker() string { return filepath.Join(s.cfg.CoreDir, "run")
 
 // dnsMarker holds the resolver address the stored Xray config answers on.
 func (s *Server) dnsMarker() string { return filepath.Join(s.cfg.CoreDir, "xray.dns") }
+
+// autoTunnelPath is the autotunnel rule set the core reads. The service owns
+// it: the GUI pushes the hosts over the control endpoint, Sanitize points the
+// config's rule set here, and the core watches the file and reloads it.
+func (s *Server) autoTunnelPath() string { return filepath.Join(s.cfg.CoreDir, "auto-tunnel.json") }
 
 // startCore and stopCore are the GUI's start and stop: they also record the
 // wish, which outlives this process. Callers hold mu.
@@ -529,6 +551,15 @@ func (s *Server) runCore(engine string) error {
 	} else if s.cfg.SystemDNS != nil {
 		if err := s.cfg.SystemDNS.Restore(); err != nil {
 			return fmt.Errorf("не удалось вернуть системный DNS: %w", err)
+		}
+	}
+	if engine == svcproto.EngineSingBox {
+		// The core refuses to start over a missing autotunnel rule set, and
+		// nothing else creates it: the file is service-owned, the GUI only
+		// pushes its content. Covers the first start and a resume into a
+		// directory an update replaced.
+		if err := autotunnel.EnsureRuleSet(s.autoTunnelPath()); err != nil {
+			return fmt.Errorf("autotunnel rule set: %w", err)
 		}
 	}
 	if err := s.cores[engine].Start(); err != nil {

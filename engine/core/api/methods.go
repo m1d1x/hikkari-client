@@ -93,6 +93,13 @@ func (c *Core) startVPN() error {
 	if err := c.rebuildConfig(); err != nil {
 		return err
 	}
+	// The core reads the autotunnel rule set the service owns; push what this
+	// side knows before the start request rewrites the config around it.
+	if c.autoTunnel != nil {
+		if err := c.autoTunnel.Publish(); err != nil && c.logger != nil {
+			c.logger.Logf("[autotunnel] publish before start: %v", err)
+		}
+	}
 	if !c.backend.Info().Capabilities.TUN {
 		return fmt.Errorf("выбранный адаптер не поддерживает TUN на этой ОС; требуется реализация TUN для выбранного адаптера")
 	}

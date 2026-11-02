@@ -3,17 +3,25 @@ package svcproto
 import (
 	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"NekkoVPN/core/autotunnel"
 	configfile "NekkoVPN/core/engine/singbox/config"
 )
 
-var paths = Paths{CacheFile: `C:\Program Files\hikkari\core\cache.db`}
+var paths = Paths{
+	CacheFile:         `C:\Program Files\hikkari\core\cache.db`,
+	AutoTunnelRuleSet: `C:\Program Files\hikkari\core\auto-tunnel.json`,
+}
 
 // realConfig is what the GUI engine actually generates, plus the kinds of
 // profile blocks it adds: a VLESS/Reality outbound with an xhttp transport
-// (whose "path" is an HTTP path, not a file) and an AmneziaWG endpoint.
+// (whose "path" is an HTTP path, not a file) and an AmneziaWG endpoint. The
+// autotunnel rule set is attached the way configfile does it: a local source
+// rule set naming the GUI's own file — the one local rule set the contract
+// allows, and the one whose path the service rewrites.
 func realConfig(t *testing.T) map[string]interface{} {
 	t.Helper()
 	cfg := configfile.DefaultConfig()
@@ -30,6 +38,11 @@ func realConfig(t *testing.T) map[string]interface{} {
 	cfg["endpoints"] = []interface{}{map[string]interface{}{
 		"tag": "awg-1", "type": "wireguard", "private_key": "k",
 		"address": []interface{}{"10.0.0.2/32"},
+	}}
+	route, _ := cfg["route"].(map[string]interface{})
+	route["rule_set"] = []interface{}{map[string]interface{}{
+		"tag": autotunnel.Tag, "type": "local", "format": "source",
+		"path": `C:\Users\someone\AppData\Local\hikkari\auto-tunnel.json`,
 	}}
 	return cfg
 }
@@ -62,6 +75,19 @@ func mustRefuse(t *testing.T, cfg map[string]interface{}, want string) {
 	}
 }
 
+func ruleSetEntry(t *testing.T, cfg map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	sets, ok := cfg["route"].(map[string]interface{})["rule_set"].([]interface{})
+	if !ok || len(sets) != 1 {
+		t.Fatalf("rule_set: %v", cfg["route"])
+	}
+	m, ok := sets[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("rule_set[0]: %v", sets[0])
+	}
+	return m
+}
+
 func TestTheConfigTheGUIGeneratesIsAccepted(t *testing.T) {
 	out, err := sanitize(t, realConfig(t))
 	if err != nil {
@@ -75,6 +101,71 @@ func TestTheConfigTheGUIGeneratesIsAccepted(t *testing.T) {
 	if len(out["outbounds"].([]interface{})) != 2 || len(out["endpoints"].([]interface{})) != 1 {
 		t.Fatalf("outbounds/endpoints changed: %v", out)
 	}
+}
+
+func TestTheAutoTunnelRuleSetIsRewrittenToTheServiceDirectory(t *testing.T) {
+	out, err := sanitize(t, realConfig(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := ruleSetEntry(t, out)
+	if set["tag"] != autotunnel.Tag || set["type"] != "local" || set["format"] != "source" {
+		t.Fatalf("entry changed shape: %v", set)
+	}
+	if set["path"] != paths.AutoTunnelRuleSet {
+		t.Fatalf("the GUI's path survived: %v", set["path"])
+	}
+	// The path the GUI named is never trusted, whatever it pointed at.
+	in := realConfig(t)
+	ruleSetEntry(t, in)["path"] = `C:\Windows\System32\config\SAM`
+	out, err = sanitize(t, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ruleSetEntry(t, out)["path"]; got != paths.AutoTunnelRuleSet {
+		t.Fatalf("path = %v", got)
+	}
+	// So is the format: the core reads the list we write, in the shape we write.
+	in = realConfig(t)
+	ruleSetEntry(t, in)["format"] = "binary"
+	out, err = sanitize(t, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ruleSetEntry(t, out)["format"]; got != "source" {
+		t.Fatalf("format = %v", got)
+	}
+}
+
+func TestOnlyTheAutoTunnelRuleSetIsLocal(t *testing.T) {
+	foreign := func(entry map[string]interface{}) map[string]interface{} {
+		cfg := realConfig(t)
+		cfg["route"].(map[string]interface{})["rule_set"] = []interface{}{entry}
+		return cfg
+	}
+
+	// Another tag, local: refused.
+	mustRefuse(t, foreign(map[string]interface{}{
+		"tag": "geosite", "type": "local", "format": "source", "path": `C:\x\geosite.srs`,
+	}), "local rule sets are not allowed")
+
+	// The right tag but remote: a URL the core would fetch as SYSTEM.
+	mustRefuse(t, foreign(map[string]interface{}{
+		"tag": autotunnel.Tag, "type": "remote", "format": "source", "url": "https://example.ru/x.srs",
+	}), "remote rule sets are not allowed")
+
+	// A second entry of any kind: the GUI compiles exactly one.
+	two := realConfig(t)
+	two["route"].(map[string]interface{})["rule_set"] = []interface{}{
+		map[string]interface{}{"tag": autotunnel.Tag, "type": "local", "format": "source", "path": `C:\a`},
+		map[string]interface{}{"tag": autotunnel.Tag, "type": "local", "format": "source", "path": `C:\b`},
+	}
+	mustRefuse(t, two, "the GUI compiles one")
+
+	// A non-object entry.
+	cfg := realConfig(t)
+	cfg["route"].(map[string]interface{})["rule_set"] = []interface{}{"nope"}
+	mustRefuse(t, cfg, "not an object")
 }
 
 func TestLogOutputIsTakenAwayFromTheConfig(t *testing.T) {
@@ -147,14 +238,6 @@ func TestUnknownSectionsAreRefused(t *testing.T) {
 	mustRefuse(t, cfg, "v2ray_api")
 }
 
-func TestLocalRuleSetsAreRefused(t *testing.T) {
-	cfg := realConfig(t)
-	cfg["route"].(map[string]interface{})["rule_set"] = []interface{}{
-		map[string]interface{}{"tag": "x", "type": "local", "format": "binary", "path": `C:\Windows\x`},
-	}
-	mustRefuse(t, cfg, "local rule sets")
-}
-
 func TestGarbageIsRefused(t *testing.T) {
 	for _, raw := range []string{"", "null", "[]", "not json", `{"log":`} {
 		if _, err := Sanitize([]byte(raw), paths); err == nil {
@@ -173,8 +256,66 @@ func TestMessagesRoundTripAndOversizeIsRefused(t *testing.T) {
 		t.Fatalf("round trip: %v %+v", err, req)
 	}
 
+	// The autotunnel list rides the same envelope.
+	var buf2 bytes.Buffer
+	if err := WriteMessage(&buf2, Request{Op: OpAutoTunnel, Hosts: []string{"a.example"}}); err != nil {
+		t.Fatal(err)
+	}
+	var req2 Request
+	if err := ReadMessage(&buf2, &req2); err != nil || req2.Op != OpAutoTunnel {
+		t.Fatalf("autotunnel round trip: %v %+v", err, req2)
+	}
+	if len(req2.Hosts) != 1 || req2.Hosts[0] != "a.example" {
+		t.Fatalf("hosts: %v", req2.Hosts)
+	}
+
 	huge := bytes.Repeat([]byte("a"), MaxMessage+10)
 	if err := ReadMessage(bytes.NewReader(huge), &req); err == nil {
 		t.Fatal("oversized message accepted")
 	}
+}
+
+// The contract end to end: what the GUI's config compiler actually writes
+// (configfile.RebuildActive, autotunnel rule set included) passes Sanitize,
+// and the rule set path the compiler named is replaced by the service's.
+func TestTheCompiledConfigPassesSanitize(t *testing.T) {
+	dir := t.TempDir()
+	store := configfile.New(filepath.Join(dir, "config.json"))
+	specs := []configfile.ProfileSpec{{
+		Tag: "p-1", Kind: "outbound",
+		Config: map[string]interface{}{"tag": "p-1", "type": "vless", "server": "1.2.3.4", "server_port": 443},
+	}}
+	if err := store.RebuildActive(specs, "p-1", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	svcDir := filepath.Join(dir, "svc")
+	out, err := Sanitize(mustJSON(t, cfg), Paths{CacheFile: filepath.Join(svcDir, "cache.db"), AutoTunnelRuleSet: filepath.Join(svcDir, "auto-tunnel.json")})
+	if err != nil {
+		t.Fatalf("the compiled config was refused: %v", err)
+	}
+	var back map[string]interface{}
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	sets := back["route"].(map[string]interface{})["rule_set"].([]interface{})
+	if len(sets) != 1 {
+		t.Fatalf("rule_set: %v", sets)
+	}
+	set := sets[0].(map[string]interface{})
+	if set["path"] != filepath.Join(svcDir, "auto-tunnel.json") {
+		t.Fatalf("rule set path = %v", set["path"])
+	}
+}
+
+func mustJSON(t *testing.T, v interface{}) []byte {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }

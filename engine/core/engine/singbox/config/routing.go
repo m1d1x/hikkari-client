@@ -185,12 +185,16 @@ func secureDNSRules(head string) []interface{} {
 	return []interface{}{reject, tunnel}
 }
 
-// AutoTunnelTag is the rule set of hosts that stay silent on the direct path
-// (core/autotunnel).
-const AutoTunnelTag = "auto-tunnel"
+// AutoTunnelTag is the rule set tag of the hosts that stay silent on the
+// direct path (core/autotunnel). The constant lives there: svcproto.Sanitize
+// checks the same value on the service side of the boundary.
+const AutoTunnelTag = autotunnel.Tag
 
-// attachAutoTunnel declares the rule set. The core refuses to start over a file
-// that is missing, so it is created here, before any config can name it.
+// attachAutoTunnel declares the rule set. The core refuses to start over a
+// file that is missing, so it is created here, before any config can name it.
+// The path is this store's own: what the service runs is a different copy,
+// rewritten to a service-owned location by svcproto.Sanitize, with the hosts
+// pushed over the control endpoint — see core/autotunnel.
 func (s *Store) attachAutoTunnel(cfg map[string]interface{}) error {
 	path := s.AutoTunnelPath()
 	if err := autotunnel.EnsureRuleSet(path); err != nil {
