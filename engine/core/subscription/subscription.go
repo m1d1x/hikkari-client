@@ -204,6 +204,9 @@ func Fetch[T any](ctx context.Context, subURL, deviceID string, decode func(stri
 		return Imported[T]{}, fmt.Errorf("ошибка создания запроса подписки: %w", err)
 	}
 	req.Header.Set("User-Agent", "v2rayN/6.42 hikkari/1.0")
+	// What this client can dial beyond what every client can: the hub holds
+	// back what a released client's core would refuse.
+	req.Header.Set("Hikkari-Features", "amneziawg")
 	if deviceID != "" {
 		req.Header.Set("X-Hwid", deviceID)
 		osName := runtime.GOOS
