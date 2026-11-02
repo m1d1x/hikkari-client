@@ -451,6 +451,15 @@ void main() {
       expect(await redCards(tester), 3);
     });
 
+    testWidgets('Attached to a running tunnel, the direct probe answers', (
+      tester,
+    ) async {
+      core
+        ..host = '{"probed":false}'
+        ..direct = '{"checked":true,"internet":true,"secureDnsBlocked":[]}';
+      expect(await redCards(tester), 1);
+    });
+
     testWidgets('A failed scan is shown, not swallowed', (tester) async {
       core
         ..host = healthy

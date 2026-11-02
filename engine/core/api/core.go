@@ -259,6 +259,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	run(func() { checker.Run(ctx) })
 	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {
+		run(c.measureTunnelDown)
 		run(backend.Baseline)
 		run(func() { c.watchNetwork(ctx) })
 		run(func() { c.watchRoute(ctx) })

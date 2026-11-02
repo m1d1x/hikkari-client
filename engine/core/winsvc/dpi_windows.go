@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sys/windows"
 
 	"NekkoVPN/core/netdoctor"
+	"NekkoVPN/core/svcproto"
 )
 
 const (
@@ -233,6 +234,47 @@ func (d *dpiSystem) KillProcess(pid uint32, class string) error {
 		return fmt.Errorf("TerminateProcess: %w", termErr)
 	}
 	return errors.New("process did not exit in time")
+}
+
+// winDivertState reports the WinDivert driver and who has it loaded. It says
+// nil, nil on a machine without the driver.
+func winDivertState(d *dpiSystem) (*svcproto.WinDivertState, error) {
+	services, err := d.Services()
+	if err != nil {
+		return nil, err
+	}
+	state := netdoctor.WinDivertDriver(services)
+	if state == nil {
+		return nil, nil
+	}
+	processes, err := d.Processes()
+	if err != nil {
+		return state, err
+	}
+	state.Holders = []string{}
+	for _, p := range processes {
+		if processLoadsWinDivert(p.PID) {
+			state.Holders = append(state.Holders, netdoctor.ProcessLabel(p.Path))
+		}
+	}
+	return state, nil
+}
+
+// processLoadsWinDivert looks through the process's modules. A process that
+// may not be read (protected, gone since the listing) counts as not holding.
+func processLoadsWinDivert(pid uint32) bool {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPMODULE|windows.TH32CS_SNAPMODULE32, pid)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(snap)
+	e := windows.ModuleEntry32{Size: uint32(unsafe.Sizeof(windows.ModuleEntry32{}))}
+	for err = windows.Module32First(snap, &e); err == nil; err = windows.Module32Next(snap, &e) {
+		if netdoctor.IsWinDivertModule(windows.UTF16ToString(e.Module[:])) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dpiSystem) ReadBackup() ([]byte, error) {

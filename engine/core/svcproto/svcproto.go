@@ -153,6 +153,29 @@ type NetworkScan struct {
 	// the report only: nothing removes them. WFP providers on Windows, pf
 	// anchors of an enabled pf on macOS. Null and empty as for DPITools.
 	ForeignWFP []string `json:"foreignWfp"`
+	// WinDivert is nil when the machine has no such driver.
+	WinDivert *WinDivertState `json:"winDivert,omitempty"`
+}
+
+// WinDivertState says whether a WinDivert driver can be touching packets: it
+// does so only while running and held open by a program.
+type WinDivertState struct {
+	Running bool `json:"running"`
+	// Holders are the executables with WinDivert loaded. Null when they could
+	// not be listed.
+	Holders []string `json:"holders"`
+}
+
+// LogValue renders the state for a log line.
+func (w *WinDivertState) LogValue() string {
+	if w == nil {
+		return "none"
+	}
+	state := "stopped"
+	if w.Running {
+		state = "running"
+	}
+	return state + " held by " + ScanList(w.Holders)
 }
 
 // ScanList renders a NetworkScan list for a log line, keeping "could not

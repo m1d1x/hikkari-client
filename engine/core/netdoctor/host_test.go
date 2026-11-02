@@ -157,3 +157,9 @@ func TestDetailsExplainAPinnedFallbackWithoutNamesOrAddresses(t *testing.T) {
 		t.Fatalf("log line: %s", line)
 	}
 }
+
+func TestLogLineDoesNotReportAnUncheckedSelectionAsFailed(t *testing.T) {
+	if got := (Selection{}).LogLine(); got != "direct unchecked" {
+		t.Fatalf("got %q", got)
+	}
+}

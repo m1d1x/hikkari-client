@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"NekkoVPN/core/svcproto"
 )
 
 // The DPI bypass tools the deep reset stops, as they appear in logs and in
@@ -334,3 +336,28 @@ func classList(classes []string) []string {
 	slices.Sort(classes)
 	return slices.Compact(classes)
 }
+
+// WinDivertDriver reports the installed WinDivert driver, nil if there is none.
+// Holders are left for the caller, who can read other processes.
+func WinDivertDriver(services []DPIService) *svcproto.WinDivertState {
+	var state *svcproto.WinDivertState
+	for _, s := range services {
+		if ClassifyDPIService(s.ImagePath, s.Driver) != DPIClassWinDivert {
+			continue
+		}
+		if state == nil {
+			state = &svcproto.WinDivertState{}
+		}
+		state.Running = state.Running || s.Running
+	}
+	return state
+}
+
+// IsWinDivertModule recognizes the library programs use the driver through.
+func IsWinDivertModule(name string) bool {
+	return strings.Contains(strings.ToLower(name), DPIClassWinDivert)
+}
+
+// ProcessLabel is an executable's name, safe for one log line: the holder of a
+// driver is any program at all, and its folder may name the user.
+func ProcessLabel(path string) string { return cleanProviderName(pathBase(path)) }

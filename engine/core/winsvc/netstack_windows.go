@@ -211,9 +211,14 @@ func scanNetwork(coreDir string) (svcproto.NetworkScan, error) {
 		scan.HostsOverrides = -1
 		fmt.Fprintf(os.Stderr, "hosts: %v\n", netdoctor.BareFileError(err))
 	}
-	scan.DPITools, err = netdoctor.ScanDPITools(newDPISystem(coreDir))
+	dpi := newDPISystem(coreDir)
+	scan.DPITools, err = netdoctor.ScanDPITools(dpi)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dpi tools: %v\n", err)
+	}
+	scan.WinDivert, err = winDivertState(dpi)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "windivert: %v\n", err)
 	}
 	providers, err := wfpProviders()
 	if err != nil {

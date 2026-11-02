@@ -262,12 +262,17 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
     }
   }
 
+  bool _adapterChecked = false;
+  bool _dnsChecked = false;
+
   // A check that did not run is not a good result: only a platform without
   // the check at all stays green.
   ComponentHealth _unchecked(bool supported) =>
       supported ? ComponentHealth.warning : ComponentHealth.ok;
 
   void _applyHost(Map<String, dynamic> host, {required bool supported}) {
+    _adapterChecked = (host['iface'] as String? ?? 'unchecked') != 'unchecked';
+    _dnsChecked = (host['dns'] as String? ?? 'unchecked') != 'unchecked';
     final probed = host['probed'] == true;
     final when = probed ? '' : ' (по данным последнего подключения)';
     switch (host['iface'] as String? ?? 'unchecked') {
@@ -328,6 +333,12 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
       return;
     }
     _appendLog('OK', 'прямой интернет: сайты мимо VPN открываются');
+    // Attached to a tunnel already running there is no selection to report,
+    // and sites reached by name through the direct path answer for both cards.
+    setState(() {
+      if (!_adapterChecked) _adapterHealth = ComponentHealth.ok;
+      if (!_dnsChecked) _dnsHealth = ComponentHealth.ok;
+    });
     final blocked =
         (direct['secureDnsBlocked'] as List?)?.cast<String>() ?? const [];
     if (blocked.isEmpty) return;

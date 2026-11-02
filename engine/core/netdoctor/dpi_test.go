@@ -323,3 +323,22 @@ func TestScanTellsNothingFoundFromUnknown(t *testing.T) {
 		t.Fatalf("got %#v err %v", got, err)
 	}
 }
+
+func TestWinDivertDriver(t *testing.T) {
+	if got := WinDivertDriver([]DPIService{{ImagePath: `C:\Windows\System32\svchost.exe`}}); got != nil {
+		t.Errorf("no driver: got %+v", got)
+	}
+	got := WinDivertDriver([]DPIService{
+		{ImagePath: `C:\zapret\WinDivert64.sys`, Driver: true},
+		{ImagePath: `C:\tool\WinDivert.sys`, Driver: true, Running: true},
+	})
+	if got == nil || !got.Running {
+		t.Errorf("one of two running: got %+v", got)
+	}
+}
+
+func TestProcessLabelKeepsOnlyTheFileName(t *testing.T) {
+	if got := ProcessLabel(`C:\Users\someone\tools\Tool.exe`); got != "tool.exe" {
+		t.Errorf("got %q", got)
+	}
+}

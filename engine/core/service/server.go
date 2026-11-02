@@ -379,8 +379,8 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 		if err != nil {
 			return fail(err)
 		}
-		s.log.Logf("service: network scan: hosts overrides: %d, dpi tools: %s, foreign wfp: %s",
-			scan.HostsOverrides, svcproto.ScanList(scan.DPITools), svcproto.ScanList(scan.ForeignWFP))
+		s.log.Logf("service: network scan: hosts overrides: %d, dpi tools: %s, foreign wfp: %s, windivert: %s",
+			scan.HostsOverrides, svcproto.ScanList(scan.DPITools), svcproto.ScanList(scan.ForeignWFP), scan.WinDivert.LogValue())
 		resp := s.status()
 		resp.NetworkScan = &scan
 		return resp

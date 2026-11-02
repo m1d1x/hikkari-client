@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"time"
 
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/netdoctor"
+	"NekkoVPN/core/svcproto"
 )
 
 // Host network selection (core/netdoctor): which interface and resolver the
@@ -69,6 +71,10 @@ type NetworkReport struct {
 	// also when the scan could not run.
 	DPITools   []string `json:"dpiTools"`
 	ForeignWFP []string `json:"foreignWfp"`
+	// WinDivert: see svcproto.NetworkScan.
+	WinDivert *svcproto.WinDivertState `json:"winDivert,omitempty"`
+	// SecureDNS is the Secure DNS setting of each browser on this machine.
+	SecureDNS []netdoctor.BrowserSecureDNS `json:"secureDns"`
 	// ScanError says why the scan could not run; a check that did not happen
 	// must not read as a clean machine.
 	ScanError string `json:"scanError,omitempty"`
@@ -90,6 +96,7 @@ func (c *Core) NetworkDiagnose() (NetworkReport, error) {
 	switch {
 	case err == nil:
 		report.HostsOverrides, report.DPITools, report.ForeignWFP = scan.HostsOverrides, scan.DPITools, scan.ForeignWFP
+		report.WinDivert = scan.WinDivert
 	case !errors.Is(err, errUnsupportedNetworkReset):
 		report.ScanError = err.Error()
 		if c.logger != nil {
@@ -98,11 +105,50 @@ func (c *Core) NetworkDiagnose() (NetworkReport, error) {
 	}
 	running := c.diagnoseHost(&report)
 	report.Direct = c.probeDirectPath(running)
+	report.SecureDNS = netdoctor.SecureDNSSettings()
 	if c.logger != nil {
-		c.logger.Logf("[netdoctor] %s direct_checked=%v internet=%v secure_dns_blocked=%v tunnel=%v",
-			report.Host.LogLine(), report.Direct.Checked, report.Direct.Internet, report.Direct.SecureDNSBlocked, running)
+		c.logger.Logf("[netdoctor] %s direct_checked=%v internet=%v secure_dns_blocked=%v browsers=%s tunnel=%v",
+			report.Host.LogLine(), report.Direct.Checked, report.Direct.Internet, report.Direct.SecureDNSBlocked, secureDNSLog(report.SecureDNS), running)
 	}
 	return report, nil
+}
+
+// secureDNSLog renders the browsers' settings for a log line.
+func secureDNSLog(browsers []netdoctor.BrowserSecureDNS) string {
+	parts := make([]string, 0, len(browsers))
+	for _, b := range browsers {
+		parts = append(parts, b.Browser+":"+b.Mode+":"+b.Resolver)
+	}
+	return "[" + strings.Join(parts, " ") + "]"
+}
+
+// tunnelDownSettle lets the routes of a stopped tunnel go away before measuring.
+const tunnelDownSettle = 3 * time.Second
+
+// measureTunnelDown is what the network does with the tunnel down, for the
+// tester stream: it answers «without the VPN nothing works» on its own, without
+// asking the tester to run anything. Only testers, once per stop and per start
+// with the tunnel down, never periodically. A machine with no network keeps the
+// line in the stream's buffer until it has one.
+func (c *Core) measureTunnelDown() {
+	if !c.presets.Snapshot().Tester || c.logger == nil {
+		return
+	}
+	select {
+	case <-c.ctx.Done():
+		return
+	case <-time.After(tunnelDownSettle):
+	}
+	if c.backend.IsRunning() {
+		return // a reconnect: the requests would go through the tunnel
+	}
+	host := netdoctor.SelectHost()
+	direct := netdoctor.ProbeDirectPath(netdoctor.FetchDirect)
+	if c.backend.IsRunning() {
+		return
+	}
+	c.logger.Logf("[netdoctor] tunnel down: %s internet=%v secure_dns_blocked=%v browsers=%s",
+		host.LogLine(), direct.Internet, direct.SecureDNSBlocked, secureDNSLog(netdoctor.SecureDNSSettings()))
 }
 
 // diagnoseHost fills in the selection and reports whether the tunnel is up.

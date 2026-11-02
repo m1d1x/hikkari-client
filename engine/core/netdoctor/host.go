@@ -105,6 +105,11 @@ func (s Selection) Default() bool { return s.DirectInterface == "" && s.DirectDN
 
 // LogLine is the anonymized one-line summary for the engine log.
 func (s Selection) LogLine() string {
+	// Attached to a tunnel already running: no selection was made, and its
+	// empty fields must not read as failed checks.
+	if s.Iface == "" && s.DNS == "" {
+		return "direct unchecked"
+	}
 	d := s.Details
 	kinds := "none"
 	if len(d.ResolverKinds) > 0 {
