@@ -104,7 +104,7 @@ func initAlternate(t *testing.T, f *alternateEngine) *Core {
 }
 
 func TestApplicationUsesOnlyEngineContract(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 	if c.EngineInfo().ID != "alternate" {
 		t.Fatal("adapter identity was not exposed")

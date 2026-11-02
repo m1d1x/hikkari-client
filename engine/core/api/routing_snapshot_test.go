@@ -11,7 +11,7 @@ import (
 )
 
 func TestCore_RoutingSnapshot_Roundtrip(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 
 	// Set custom routing mode and manual rules
@@ -123,7 +123,7 @@ func TestCore_RoutingSnapshot_Roundtrip(t *testing.T) {
 }
 
 func TestCore_RoutingSnapshot_RejectsInvalidWithoutModifyingState(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 
 	if err := c.AddRule("proxy", "domains", "original.com"); err != nil {
@@ -171,7 +171,7 @@ func TestCore_RoutingSnapshot_RejectsInvalidWithoutModifyingState(t *testing.T) 
 }
 
 func TestCore_ResetToDefaults(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 
 	// Add manual rules
@@ -237,7 +237,7 @@ func TestCore_ResetToDefaults(t *testing.T) {
 }
 
 func TestCore_Dispatch_RoutingSnapshot(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 
 	// Call ExportRoutingSnapshot via JSON dispatch

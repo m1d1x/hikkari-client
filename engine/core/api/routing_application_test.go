@@ -58,7 +58,7 @@ func (f *routingEngine) Configure(configuration engine.Configuration) error {
 }
 func routingCore(t *testing.T, running bool) (*Core, *routingEngine) {
 	t.Helper()
-	f := &routingEngine{alternateEngine: alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}}
+	f := &routingEngine{alternateEngine: alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}}
 	c := New()
 	if err := c.InitWithEngine(manualRoutingDir(t), func(string, engine.Logger) (engine.Backend, error) { return f, nil }); err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ func TestShutdownCommitsPendingWithoutRestartOrLateTimer(t *testing.T) {
 }
 
 func TestPreviewUsesGoCommandsWithoutDiskOrBackendWrites(t *testing.T) {
-	f := &routingEngine{alternateEngine: alternateEngine{caps: engine.Capabilities{DomainRouting: true, IPRouting: true, ProcessRouting: true}}}
+	f := &routingEngine{alternateEngine: alternateEngine{caps: engine.Capabilities{DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}}
 	c := New()
 	c.routingPreview = true
 	dir := t.TempDir()

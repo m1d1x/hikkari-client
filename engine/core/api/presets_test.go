@@ -25,7 +25,7 @@ func TestServicePresetUpdatesReachRunningBackendAndPreserveManualRules(t *testin
 	defer server.Close()
 	t.Setenv("HIKKARI_PRESET_CATALOG_URL", server.URL)
 	t.Setenv("HIKKARI_PRESET_EVENTS_URL", "")
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 	if err := c.RefreshRoutingPresets(); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestServicePresetUpdatesReachRunningBackendAndPreserveManualRules(t *testin
 func TestPresetPreviewDoesNotConfigureOrPersist(t *testing.T) {
 	t.Setenv("HIKKARI_PRESET_CATALOG_URL", "")
 	t.Setenv("HIKKARI_PRESET_EVENTS_URL", "")
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := New()
 	c.routingPreview = true
 	if err := c.InitWithEngine(t.TempDir(), func(string, engine.Logger) (engine.Backend, error) { return f, nil }); err != nil {
@@ -105,7 +105,7 @@ func TestPresetPreviewDoesNotConfigureOrPersist(t *testing.T) {
 func TestPresetCommandsAndFailureDoNotPublishSelection(t *testing.T) {
 	t.Setenv("HIKKARI_PRESET_CATALOG_URL", "")
 	t.Setenv("HIKKARI_PRESET_EVENTS_URL", "")
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 	var env Envelope
 	if err := json.Unmarshal([]byte(c.Call("RoutingPresets", "")), &env); err != nil || !env.Ok {
@@ -135,7 +135,7 @@ func TestPresetCommandsAndFailureDoNotPublishSelection(t *testing.T) {
 func TestUserCommandBetweenPresetApplicationAndPublicationKeepsNewRules(t *testing.T) {
 	t.Setenv("HIKKARI_PRESET_CATALOG_URL", "")
 	t.Setenv("HIKKARI_PRESET_EVENTS_URL", "")
-	f := &alternateEngine{caps: engine.Capabilities{DomainRouting: true, IPRouting: true, ProcessRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 	injected := false
 	m, err := presets.New("", presets.Options{Apply: func(state presets.State) error {
@@ -184,7 +184,7 @@ func (f *failPresetStartEngine) Start(ctx context.Context) error {
 func TestFailedPresetRestartRestoresPreviousRunningPolicy(t *testing.T) {
 	t.Setenv("HIKKARI_PRESET_CATALOG_URL", "")
 	t.Setenv("HIKKARI_PRESET_EVENTS_URL", "")
-	f := &failPresetStartEngine{alternateEngine: &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, ProcessRouting: true}}}
+	f := &failPresetStartEngine{alternateEngine: &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, ProcessRouting: true, FolderRouting: true}}}
 	c := New()
 	if err := c.InitWithEngine(manualRoutingDir(t), func(string, engine.Logger) (engine.Backend, error) { return f, nil }); err != nil {
 		t.Fatal(err)

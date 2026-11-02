@@ -13,6 +13,7 @@ import (
 
 	"NekkoVPN/core/engine"
 	configfile "NekkoVPN/core/engine/singbox/config"
+	"NekkoVPN/core/presets"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/routing"
 )
@@ -407,5 +408,21 @@ func TestPortableProfilesCompileWithoutChangingLegacyConfig(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("compiled %d servers, want legacy and portable", count)
+	}
+}
+
+// The bundled catalog is on by default with an empty choice set, so a rule this
+// adapter refused would stop every fresh install on that OS from connecting.
+func TestBundledPresetDefaultsAreAcceptedOnThisOS(t *testing.T) {
+	catalog, err := presets.BundledCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := presets.Effective(routing.DefaultRoutingState(), catalog, presets.Choices{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.ValidateConfiguration(engine.Configuration{Routing: state}, (&Backend{}).Info().Capabilities); err != nil {
+		t.Fatal(err)
 	}
 }
