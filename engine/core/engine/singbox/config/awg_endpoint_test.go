@@ -86,3 +86,30 @@ func TestAwgEndpointPassesTheRealCoresCheck(t *testing.T) {
 		t.Fatalf("sing-box check: %v\n%s", err, out)
 	}
 }
+
+// AmneziaWG 2.0's fields, as a newer Amnezia server hands them out: the real core
+// must take every one of them from the block the parser builds.
+func TestAwg2FieldsPassTheRealCoresCheck(t *testing.T) {
+	core, err := filepath.Abs("../../../../../archive/sing-box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(core); err != nil {
+		t.Skip("no sing-box binary at archive/sing-box")
+	}
+	block := awgProfile()
+	block["s3"], block["s4"] = 40, 50
+	block["h1"], block["h2"], block["h3"], block["h4"] = "100-200", "300-400", "500-600", "700-800"
+	block["i1"] = "<b 0xc0><r 16>"
+	raw, err := json.Marshal(map[string]interface{}{"endpoints": []interface{}{singBoxEndpoint(block)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(core, "check", "-c", path).CombinedOutput(); err != nil {
+		t.Fatalf("sing-box check: %v\n%s", err, out)
+	}
+}

@@ -16,6 +16,8 @@ import (
 	"io"
 	"net"
 	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -913,7 +915,7 @@ func parseAmneziaJSON(decomp []byte, fragment string) (Draft, error) {
 
 	containerItem, cType := selectAmneziaContainer(containersRaw, defaultContainer, root)
 	if containerItem == nil {
-		return Draft{}, fmt.Errorf("amnezia: не найден поддерживаемый контейнер (поддерживаются awg, wireguard, xray, shadowsocks)")
+		return Draft{}, amneziaNoContainerError(root)
 	}
 
 	var draft Draft
@@ -938,6 +940,44 @@ func parseAmneziaJSON(decomp []byte, fragment string) (Draft, error) {
 	}
 	return draft, nil
 }
+
+// amneziaNoContainerError says why a link holds nothing to dial. The field names
+// go into the message, and so into the app's log, because the link itself is
+// never logged: they tell one kind of link from another and carry no secret.
+func amneziaNoContainerError(root map[string]interface{}) error {
+	shape := amneziaLinkShape(root)
+	has := func(key string) bool { _, ok := root[key]; return ok }
+	switch {
+	case has("api_key") || has("auth_data") || has("api_config") || has("api_endpoint"):
+		// Such a key holds no server: Amnezia's client trades it for a config
+		// at Amnezia's own gateway.
+		return fmt.Errorf("amnezia: это ключ сервиса Amnezia (Free или Premium): в нём нет настроек сервера, он работает только в приложении Amnezia. Нужна ссылка своего сервера (поля: %s)", shape)
+	case has("userName") && has("password"):
+		return fmt.Errorf("amnezia: это ключ администратора сервера: в нём доступ по SSH, а не настройки VPN. Нужна ссылка для подключения (поля: %s)", shape)
+	}
+	return fmt.Errorf("amnezia: не найден поддерживаемый контейнер, поддерживаются awg, wireguard, xray, shadowsocks (поля: %s)", shape)
+}
+
+// amneziaLinkShape lists a link's field names, never their values, bounded and
+// with anything unusual dropped since the names come from the link too.
+func amneziaLinkShape(root map[string]interface{}) string {
+	names := make([]string, 0, len(root))
+	for k := range root {
+		if amneziaFieldName.MatchString(k) {
+			names = append(names, k)
+		}
+	}
+	sort.Strings(names)
+	if len(names) > 12 {
+		names = names[:12]
+	}
+	if len(names) == 0 {
+		return "нет"
+	}
+	return strings.Join(names, ", ")
+}
+
+var amneziaFieldName = regexp.MustCompile(`^[A-Za-z0-9_]{1,32}$`)
 
 func selectAmneziaContainer(containers []interface{}, defaultContainer string, root map[string]interface{}) (map[string]interface{}, string) {
 	normalizedDefault := normalizeContainerName(defaultContainer)
@@ -1016,6 +1056,11 @@ func normalizeContainerName(name string) string {
 	name = strings.TrimPrefix(name, "amnezia-")
 	if name == "vless" {
 		return "xray"
+	}
+	// amnezia-awg2 is AmneziaWG 2.0 servers: the same "awg" block, with the
+	// extra S3, S4, I1..I5 and H ranges, which the parser already carries.
+	if name == "awg2" {
+		return "awg"
 	}
 	if name == "ss" {
 		return "shadowsocks"
