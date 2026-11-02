@@ -304,7 +304,9 @@ func (s *stand) listenTCP(proxy *faultProxy, port int) {
 // serveTarget answers with the node's name, the stand's version of an exit IP.
 // /stream sends a byte every 200ms, for as long as the client stays connected.
 // The same port over UDP is the voice server: it echoes every packet back after
-// the node's name and a newline.
+// "exit:", the node's name and a newline. A STUN Binding Request gets a Binding Success
+// instead, so the core's voice watchdog, which pings a public STUN server, finds
+// one at every exit.
 func (s *stand) serveTarget(port int, name string) {
 	echo, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port})
 	if err != nil {
@@ -318,7 +320,14 @@ func (s *stand) serveTarget(port int, name string) {
 			if err != nil {
 				return
 			}
-			_, _ = echo.WriteToUDP(append([]byte(name+"\n"), buffer[:n]...), from)
+			if n >= 20 && binary.BigEndian.Uint16(buffer) == 0x0001 && binary.BigEndian.Uint32(buffer[4:]) == 0x2112A442 {
+				response := make([]byte, 20)
+				binary.BigEndian.PutUint16(response, 0x0101)
+				copy(response[4:], buffer[4:20])
+				_, _ = echo.WriteToUDP(response, from)
+				continue
+			}
+			_, _ = echo.WriteToUDP(append([]byte(echoPrefix+name+"\n"), buffer[:n]...), from)
 		}
 	}()
 
@@ -700,6 +709,12 @@ func (v *voice) send() error {
 	return err
 }
 
+const echoPrefix = "exit:"
+
+// strayDatagrams counts relayed datagrams that are not echoes of ours: a reply
+// delivered to the wrong flow.
+var strayDatagrams atomic.Int64
+
 // parseEcho reads a relayed echo: the SOCKS5 UDP header, the exit's name, then
 // the packet that was sent.
 func parseEcho(datagram []byte) (seq uint64, exit string, ok bool) {
@@ -710,12 +725,15 @@ func parseEcho(datagram []byte) (seq uint64, exit string, ok bool) {
 	if header == 0 || len(datagram) < header {
 		return 0, "", false
 	}
-	body := datagram[header:]
-	newline := strings.IndexByte(string(body), '\n')
-	if newline < 0 || len(body) < newline+1+8 {
+	body, found := strings.CutPrefix(string(datagram[header:]), echoPrefix)
+	newline := strings.IndexByte(body, '\n')
+	if !found || newline < 0 || len(body) < newline+1+8 {
+		if strayDatagrams.Add(1) == 1 {
+			log.Printf("stray datagram on a call socket: %x", datagram[:min(len(datagram), 48)])
+		}
 		return 0, "", false
 	}
-	return binary.BigEndian.Uint64(body[newline+1:]), string(body[:newline]), true
+	return binary.BigEndian.Uint64([]byte(body[newline+1:])), body[:newline], true
 }
 
 // call sends at the voice rate and records echoes until ctx ends.
@@ -844,7 +862,7 @@ func startCall(ctx context.Context, held string) (*voice, error) {
 }
 
 // measureVoiceFailover applies a fault to the held node while only a call is up.
-// A new call socket opens every 500ms, and the first one echoed through another
+// A new call socket opens every 100ms, and the first one echoed through another
 // node is the time a client that recreates its socket gets its voice back. The
 // call opened before the fault is reported separately: its flow stays where it
 // started. limit is the target; the scenario waits up to wait for the move.
@@ -873,7 +891,8 @@ func (s *stand) measureVoiceFailover(ctx context.Context, title string, mode fau
 	done := make(chan outcome, 1)
 	var failed atomic.Int32
 	go func() {
-		ticker := time.NewTicker(500 * time.Millisecond)
+		// Every 100ms: a move measured in seconds needs a finer step than browsing's 500ms.
+		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
