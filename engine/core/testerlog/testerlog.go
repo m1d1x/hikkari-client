@@ -53,10 +53,12 @@ const (
 )
 
 // Command is one thing the hub may ask of this install. Run only reads the
-// machine and returns its report; Source names the lines in the stream.
+// machine and returns its report; Source names the lines in the stream. Params
+// is what the operator attached, empty for a kind that takes nothing; Run
+// validates it, because the hub's word is not enough for what a machine does.
 type Command struct {
 	Source string
-	Run    func(ctx context.Context) []string
+	Run    func(ctx context.Context, params json.RawMessage) []string
 }
 
 // Options wires the shipper to the rest of the core.
@@ -210,8 +212,9 @@ type chunk struct {
 
 // command is one entry of the hub's answer.
 type command struct {
-	Kind  string `json:"kind"`
-	Nonce string `json:"nonce"`
+	Kind   string          `json:"kind"`
+	Nonce  string          `json:"nonce"`
+	Params json.RawMessage `json:"params,omitempty"`
 }
 
 // Flush ships everything buffered, batch by batch, and reports whether it tried
@@ -287,17 +290,17 @@ func (s *Shipper) dispatch(ctx context.Context, commands []command) {
 		s.running[cmd.Nonce] = true
 		s.mu.Unlock()
 		if !dup {
-			go s.runCommand(ctx, c, cmd.Nonce)
+			go s.runCommand(ctx, c, cmd.Nonce, cmd.Params)
 		}
 	}
 }
 
 // runCommand buffers one command's report and flushes it without waiting for
 // the minute: someone is waiting for it.
-func (s *Shipper) runCommand(ctx context.Context, c Command, nonce string) {
+func (s *Shipper) runCommand(ctx context.Context, c Command, nonce string, params json.RawMessage) {
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	report := c.Run(runCtx)
+	report := c.Run(runCtx, params)
 	stamp := time.Now().Format("2006/01/02 15:04:05.000000")
 	s.mu.Lock()
 	delete(s.running, nonce)

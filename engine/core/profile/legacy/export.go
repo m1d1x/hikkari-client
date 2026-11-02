@@ -35,6 +35,10 @@ func ExportURI(p profile.Profile) (string, error) {
 		return exportTrojan(p)
 	case "shadowsocks":
 		return exportShadowsocks(p)
+	case "vmess":
+		return exportVMess(p)
+	case "tuic":
+		return exportTUIC(p)
 	case "wireguard", "awg":
 		return exportWireGuard(p)
 	}

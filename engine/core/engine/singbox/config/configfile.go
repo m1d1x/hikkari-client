@@ -103,7 +103,7 @@ func tunInbound() map[string]interface{} {
 	in := map[string]interface{}{
 		"tag":                      "tun-in",
 		"type":                     "tun",
-		"address":                  []interface{}{"172.19.0.1/30"},
+		"address":                  []interface{}{"172.19.0.1/30", "fdfe:dcba:9876::1/126"},
 		"auto_route":               true,
 		"stack":                    stack,
 		"mtu":                      1360,
@@ -131,6 +131,12 @@ func canonicalDNS() map[string]interface{} {
 				"tag":         "fakeip-dns",
 				"type":        "fakeip",
 				"inet4_range": "198.18.0.0/15",
+				// A v6 fake address only for a name with no A record (patch
+				// 0004): a name with an A record keeps the IPv4-only answer
+				// that Discord voice needs, while an IPv6-only site such as
+				// ntc.party still resolves. dns-direct runs the A probe.
+				"inet6_range":              "fc00::/18",
+				"inet6_only_without_a_via": "dns-direct",
 			},
 			map[string]interface{}{
 				"tag":  "dns-direct",
@@ -159,7 +165,7 @@ func canonicalDNS() map[string]interface{} {
 			},
 		},
 		"final":           "dns-direct",
-		"strategy":        "ipv4_only",
+		"strategy":        "prefer_ipv4",
 		"reverse_mapping": true,
 	}
 }
@@ -471,8 +477,9 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 			route["rules"] = rules
 		}
 	}
-	// Always enforce canonical FakeIP DNS (IPv4 only, local direct resolver).
-	// Eliminates UDP 53 foreign drops by TSPU and dual-stack ICE timeouts in Discord.
+	// Always enforce canonical FakeIP DNS (IPv4 fake addresses, IPv6 only for
+	// names without an A record, local direct resolver). Eliminates UDP 53
+	// foreign drops by TSPU and dual-stack ICE timeouts in Discord.
 	cfg["dns"] = canonicalDNS()
 	exp, ok := cfg["experimental"].(map[string]interface{})
 	if !ok {

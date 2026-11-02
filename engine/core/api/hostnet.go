@@ -1,9 +1,12 @@
 package api
 
 import (
+	diag "NekkoVPN/core/engine/singbox/diagnostics"
+	vpn "NekkoVPN/core/engine/singbox/process"
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -162,24 +165,29 @@ func doctorLines(report NetworkReport) []string {
 }
 
 // testerCommands is what the hub may ask of this install (engine/core/testerlog).
-// Both only read the machine: run_doctor never repairs, and a snapshot writes
-// its [diag:*] lines into the log as the session diagnostics do.
+// All only read the machine: run_doctor never repairs, a snapshot writes its
+// [diag:*] lines into the log as the session diagnostics do, and probe_targets
+// opens and closes bare TCP connections to the addresses the operator named.
 func (c *Core) testerCommands() map[string]testerlog.Command {
 	return map[string]testerlog.Command{
-		"run_doctor": {Source: "doctor", Run: func(context.Context) []string {
+		"run_doctor": {Source: "doctor", Run: func(context.Context, json.RawMessage) []string {
 			report, err := c.networkDiagnose()
 			if err != nil {
 				return []string{"error=" + strconv.Quote(err.Error())}
 			}
 			return doctorLines(report)
 		}},
-		"snapshot": {Source: "snapshot", Run: func(context.Context) []string {
+		"snapshot": {Source: "snapshot", Run: func(context.Context, json.RawMessage) []string {
 			snapshotter, ok := c.backend.(interface{ Snapshot() })
 			if !ok {
 				return []string{"error=\"this engine has no snapshot\""}
 			}
 			snapshotter.Snapshot()
 			return nil
+		}},
+		"probe_targets": {Source: "probe", Run: diag.ProbeTargets},
+		"proto_targets": {Source: "protoprobe", Run: func(ctx context.Context, params json.RawMessage) []string {
+			return diag.ProtoTargets(ctx, filepath.Join(c.baseDir, vpn.BinaryName), params)
 		}},
 	}
 }

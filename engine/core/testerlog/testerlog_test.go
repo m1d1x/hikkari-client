@@ -182,7 +182,7 @@ func TestHeartbeatPicksUpCommandAndResultIsAcked(t *testing.T) {
 		URL:      srv.URL,
 		Enabled:  func() bool { return true },
 		Identity: func() (string, string, string) { return "t-1", "macos", "1.0.24" },
-		Commands: map[string]Command{"run_doctor": {Source: "doctor", Run: func(context.Context) []string {
+		Commands: map[string]Command{"run_doctor": {Source: "doctor", Run: func(context.Context, json.RawMessage) []string {
 			ran <- struct{}{}
 			return []string{"proxy={}", "direct={}"}
 		}}},

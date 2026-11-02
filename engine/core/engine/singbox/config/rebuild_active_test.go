@@ -299,16 +299,21 @@ func TestRebuildActive_HealsVoipAndDns(t *testing.T) {
 
 	// Verify DNS
 	dns, _ := cfg["dns"].(map[string]interface{})
-	if strat, _ := dns["strategy"].(string); strat != "ipv4_only" {
-		t.Errorf("dns.strategy = %q, want ipv4_only", strat)
+	if strat, _ := dns["strategy"].(string); strat != "prefer_ipv4" {
+		t.Errorf("dns.strategy = %q, want prefer_ipv4", strat)
 	}
 	servers, _ := dns["servers"].([]interface{})
 	for _, srv := range servers {
 		m, _ := srv.(map[string]interface{})
 		tag, _ := m["tag"].(string)
 		if tag == "fakeip-dns" {
-			if _, hasV6 := m["inet6_range"]; hasV6 {
-				t.Error("fakeip-dns should not have inet6_range (causes dual-stack ICE timeouts)")
+			// v6 fake addresses for every name caused dual-stack ICE timeouts in
+			// Discord; they are allowed only behind the no-A probe (core patch 0004).
+			if _, hasV6 := m["inet6_range"]; !hasV6 {
+				t.Error("fakeip-dns needs inet6_range for AAAA-only names")
+			}
+			if via, _ := m["inet6_only_without_a_via"].(string); via != "dns-direct" {
+				t.Errorf("fakeip-dns inet6_only_without_a_via = %q, want dns-direct", via)
 			}
 		}
 		if tag == "dns-direct" {

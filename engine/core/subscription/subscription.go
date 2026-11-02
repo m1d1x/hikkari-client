@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -69,8 +70,17 @@ func providerRejectsClient(label string) bool {
 	label = strings.ToLower(strings.TrimSpace(label))
 	return strings.Contains(label, "unsupported client") ||
 		strings.Contains(label, "client not supported") ||
-		(strings.Contains(label, "клиент") &&
+		((strings.Contains(label, "клиент") || strings.Contains(label, "приложени")) &&
 			(strings.Contains(label, "не поддерж") || strings.Contains(label, "неподдерж")))
+}
+
+// isPlaceholderServer spots the fake entry a provider serves a client it does
+// not want: nothing can ever be dialed at a null address or with a null UUID.
+func isPlaceholderServer(u *url.URL) bool {
+	if ip := net.ParseIP(u.Hostname()); ip != nil && ip.IsUnspecified() {
+		return true
+	}
+	return u.User != nil && strings.Trim(u.User.Username(), "0-") == "" && u.User.Username() != ""
 }
 
 // NormalizeLink accepts links copied from chat messages as well as raw
@@ -127,13 +137,15 @@ func parseImportDetailedContext[T any](ctx context.Context, input string, allowS
 		}
 		return []Imported[T]{{Items: []T{d}}}, nil
 	}
-	// Providers can wrap base64 over several lines, including CRLF.
-	if decoded, err := decodeBase64Subscription(input); err == nil {
+	if links, ok := expandConfigDocument(input); ok {
+		input = links
+	} else if decoded, err := decodeBase64Subscription(input); err == nil {
+		// Providers can wrap base64 over several lines, including CRLF.
 		input = decoded
 	}
 
 	var imports []Imported[T]
-	var draftCount int
+	var draftCount, placeholders int
 	var firstErr error
 	for _, line := range strings.Split(input, "\n") {
 		line = NormalizeLink(line)
@@ -154,8 +166,14 @@ func parseImportDetailedContext[T any](ctx context.Context, input string, allowS
 			draftCount += len(servers.Items)
 			continue
 		}
-		if u, err := url.Parse(line); err == nil && providerRejectsClient(u.Fragment) {
-			return nil, ErrUnsupportedClient
+		if u, err := url.Parse(line); err == nil {
+			if providerRejectsClient(u.Fragment) {
+				return nil, ErrUnsupportedClient
+			}
+			if isPlaceholderServer(u) {
+				placeholders++
+				continue
+			}
 		}
 		d, err := decode(line)
 		if err != nil {
@@ -175,6 +193,9 @@ func parseImportDetailedContext[T any](ctx context.Context, input string, allowS
 	}
 	if draftCount == 0 && firstErr != nil {
 		return nil, firstErr
+	}
+	if draftCount == 0 && placeholders > 0 {
+		return nil, ErrUnsupportedClient
 	}
 	if draftCount == 0 {
 		return nil, fmt.Errorf("в ссылке не найдено поддерживаемых серверов")
@@ -196,14 +217,84 @@ func fetchSubscriptionForDeviceDetailed[T any](subURL, deviceID string, decode f
 
 // Fetch accepts a complete provider snapshot; partial decoding must never prune servers.
 func Fetch[T any](ctx context.Context, subURL, deviceID string, decode func(string) (T, error)) (Imported[T], error) {
+	var firstErr error
+	for _, agent := range fetchAgents {
+		imported, err := fetchAs(ctx, subURL, deviceID, agent, decode)
+		if err == nil {
+			return imported, nil
+		}
+		if firstErr == nil || errors.Is(err, ErrUnsupportedClient) {
+			firstErr = err
+		}
+		if !refusedThisClient(err) {
+			break
+		}
+	}
+	return Imported[T]{}, firstErr
+}
+
+// Providers choose what to answer from the User-Agent: some refuse clients they
+// do not know with a 404 or a fake server. The first agent is who we ask by
+// default; the rest cover the formats providers commonly keep open.
+var fetchAgents = []string{
+	"v2rayN/6.42 hikkari/1.0",
+	"Shadowrocket/2.2",
+	"ClashMeta/1.18",
+	"sing-box/1.12",
+	"Happ/3.8.1",
+}
+
+func refusedThisClient(err error) bool {
+	var status *HTTPError
+	if errors.As(err, &status) {
+		return status.Status == http.StatusBadRequest || status.Status == http.StatusForbidden ||
+			status.Status == http.StatusNotFound || status.Status == http.StatusNotAcceptable
+	}
+	var unreadable *unreadableError
+	return errors.As(err, &unreadable)
+}
+
+func fetchAs[T any](ctx context.Context, subURL, deviceID, agent string, decode func(string) (T, error)) (Imported[T], error) {
+	for attempt := 1; ; attempt++ {
+		imported, err := fetchOnce(ctx, subURL, deviceID, agent, decode)
+		var unreadable *unreadableError
+		if err == nil || !errors.As(err, &unreadable) || !unreadable.bounced || attempt == fetchAttempts {
+			return imported, err
+		}
+		select {
+		case <-ctx.Done():
+			return Imported[T]{}, err
+		case <-time.After(fetchRetryDelay):
+		}
+	}
+}
+
+// Anti-abuse fronts now and then send a valid request to an unrelated site;
+// the same request gets the servers a moment later.
+const fetchAttempts = 3
+
+var fetchRetryDelay = 2 * time.Second
+
+// unreadableError is a response that held no servers; bounced means it came
+// from a host other than the provider's.
+type unreadableError struct {
+	err     error
+	bounced bool
+}
+
+func (e *unreadableError) Error() string { return e.err.Error() }
+func (e *unreadableError) Unwrap() error { return e.err }
+
+func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decode func(string) (T, error)) (Imported[T], error) {
 	client := &http.Client{
-		Timeout: 15 * time.Second,
+		// Providers assemble configs on request; some take over 20 s to answer.
+		Timeout: 45 * time.Second,
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, subURL, nil)
 	if err != nil {
 		return Imported[T]{}, fmt.Errorf("ошибка создания запроса подписки: %w", err)
 	}
-	req.Header.Set("User-Agent", "v2rayN/6.42 hikkari/1.0")
+	req.Header.Set("User-Agent", agent)
 	// What this client can dial beyond what every client can: the hub holds
 	// back what a released client's core would refuse.
 	req.Header.Set("Hikkari-Features", "amneziawg")
@@ -245,7 +336,10 @@ func Fetch[T any](ctx context.Context, subURL, deviceID string, decode func(stri
 	// contain server URIs, otherwise providers could form an infinite cycle.
 	imports, err := parseImportDetailedContext(ctx, string(body), false, deviceID, decode)
 	if err != nil {
-		return Imported[T]{}, fmt.Errorf("не удалось разобрать подписку: %w", err)
+		return Imported[T]{}, &unreadableError{
+			err:     fmt.Errorf("не удалось разобрать подписку: %w", err),
+			bounced: resp.Request.URL.Host != req.URL.Host,
+		}
 	}
 	var items []T
 	for _, imported := range imports {

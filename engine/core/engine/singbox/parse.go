@@ -50,6 +50,9 @@ func ParseURI(uri string) (Draft, error) {
 	if strings.HasPrefix(strings.ToLower(uri), "vpn://") {
 		return parseAmneziaVPN(uri)
 	}
+	if strings.HasPrefix(strings.ToLower(uri), "vmess://") {
+		return parseVMess(uri)
+	}
 	u, err := url.Parse(uri)
 	if err != nil {
 		return Draft{}, fmt.Errorf("не удалось разобрать ссылку: %w", err)
@@ -61,6 +64,8 @@ func ParseURI(uri string) (Draft, error) {
 		return parseVLESS(u)
 	case "trojan":
 		return parseTrojan(u)
+	case "tuic":
+		return parseTUIC(u)
 	case "ss":
 		return parseShadowsocks(uri, u)
 	case "vpn":
