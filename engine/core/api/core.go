@@ -448,9 +448,8 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 	return out
 }
 
-// downdetectorServers lists every profile as a reportable server. Only
-// subscription servers are shared by default; the user's own servers
-// (single links, pasted configs) need the share_private opt-in.
+// downdetectorServers lists every profile as a reportable server: subscription
+// servers and the user's own links alike.
 func (c *Core) downdetectorServers() []downdetector.Server {
 	pf, err := c.profiles.Read()
 	if err != nil {
@@ -467,7 +466,6 @@ func (c *Core) downdetectorServers() []downdetector.Server {
 			Profile: p.Name,
 			ID:      downdetector.ServerID(host, port, proto),
 			Proto:   proto,
-			Private: !p.Shared(),
 		})
 	}
 	return out

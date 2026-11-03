@@ -18,10 +18,10 @@ func TestTelemetrySwitchGovernsTheDowndetector(t *testing.T) {
 	}
 	// The downdetector's own setting cannot turn it back on behind the switch.
 	_ = c.SetDowndetectorSettings(c.DowndetectorSettings())
-	if e := decode(t, c.Call("SetDowndetectorSettings", `{"enabled":true,"share_private":true}`)); !e.Ok {
+	if e := decode(t, c.Call("SetDowndetectorSettings", `{"enabled":true}`)); !e.Ok {
 		t.Fatalf("SetDowndetectorSettings: %+v", e)
 	}
-	if s := c.DowndetectorSettings(); s.Enabled || !s.SharePrivate {
+	if s := c.DowndetectorSettings(); s.Enabled {
 		t.Fatalf("downdetector = %+v", s)
 	}
 	_ = c.SetTelemetryEnabled(true)

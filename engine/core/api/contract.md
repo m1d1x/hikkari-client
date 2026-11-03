@@ -319,14 +319,13 @@ nothing is sent yet.
 | method                    | args                                        | data             |
 |---------------------------|---------------------------------------------|------------------|
 | `DowndetectorSettings`    | —                                           | `Settings`       |
-| `SetDowndetectorSettings` | `{"enabled":bool,"share_private":bool}`     | —                |
+| `SetDowndetectorSettings` | `{"enabled":bool}`                          | —                |
 | `DowndetectorLastReport`  | —                                           | `Report \| null` |
 
 `Settings`: `enabled` follows the telemetry switch and cannot be set here
-(the value passed is ignored), `share_private` (default `false`).
-Servers from an http(s) subscription are reported always; the user's own
-(single links, pasted configs, profiles saved before `origin` existed) only
-with `share_private`. Turning `enabled` off also drops the queued reports.
+(the value passed is ignored). Every profile is reported: subscription
+servers, single links and pasted configs alike. Turning `enabled` off also
+drops the queued reports.
 
 `Report` — the complete list of what a report carries:
 

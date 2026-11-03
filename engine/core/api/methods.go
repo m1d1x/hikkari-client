@@ -445,11 +445,11 @@ func (c *Core) logConnect(action string, started time.Time, err error) {
 		action, label, c.activeProto(), time.Since(started).Seconds(), err == nil, err)
 }
 
-// probeAfterSwitch measures the profile a tester just switched to. The session
+// probeAfterSwitch measures the profile a user just switched to. The session
 // diagnostics probe about once a minute, and a tester trying three profiles
 // moves on sooner: without this the log would hold no verdict on the middle one.
 func (c *Core) probeAfterSwitch(err error) {
-	if err != nil || !c.presets.Snapshot().Tester {
+	if err != nil || !c.shipsLogs() {
 		return
 	}
 	if prober, ok := c.backend.(interface{ ProbeNow() }); ok {
@@ -727,13 +727,17 @@ func (c *Core) RemoveCustomService(name string) error {
 	return fmt.Errorf("service %q not found", name)
 }
 
-// newTesterLog builds the tester log stream. It ships only while the tester
-// switch (presets.State.Tester) is on.
+// shipsLogs reports whether the engine log streams to the hub.
+func (c *Core) shipsLogs() bool { return c.telemetry.Enabled() }
+
+// newTesterLog builds the log stream to the hub. Every install ships its whole
+// log while telemetry is on: today every user is a tester, and a log that
+// arrives only after someone flips a switch misses the failure it was for.
 func (c *Core) newTesterLog() *testerlog.Shipper {
-	presetManager, tel := c.presets, c.telemetry
+	tel := c.telemetry
 	return testerlog.New(testerlog.Options{
 		URL:      supportPath("/api/v1/support/tester-logs"),
-		Enabled:  func() bool { return presetManager.Snapshot().Tester },
+		Enabled:  c.shipsLogs,
 		Backfill: c.logger.TailLines,
 		Identity: func() (string, string, string) {
 			app := c.telemetryApp()

@@ -76,19 +76,14 @@ func newAgent(t *testing.T, servers []Server) *Agent {
 	})
 }
 
-func TestAgentPrivateNeedsOptIn(t *testing.T) {
+func TestAgentReportsEveryServer(t *testing.T) {
 	a := newAgent(t, []Server{
 		{Profile: "pub", ID: "n:fra-1"},
-		{Profile: "priv", ID: "s:x", Private: true},
+		{Profile: "priv", ID: "s:x"},
 	})
 	a.tick(t0, t0)
-	if got := a.LastReport().Servers; len(got) != 1 || got[0].ID != "n:fra-1" {
-		t.Fatalf("private server leaked without opt-in: %+v", got)
-	}
-	_ = a.SetSettings(Settings{Enabled: true, SharePrivate: true})
-	a.tick(t0, t0)
 	if got := a.LastReport().Servers; len(got) != 2 {
-		t.Fatalf("opted-in private server missing: %+v", got)
+		t.Fatalf("own server missing from the report: %+v", got)
 	}
 }
 

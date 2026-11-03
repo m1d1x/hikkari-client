@@ -25,7 +25,6 @@ func (c *Core) newTelemetry() *telemetry.Agent {
 }
 
 // followTelemetry makes the downdetector's enabled state the switch's.
-// Its own setting is kept only for share_private.
 func (c *Core) followTelemetry(on bool) {
 	s := c.downdetector.Settings()
 	if s.Enabled == on {
@@ -156,7 +155,7 @@ func contractProto(slug string) string {
 func (c *Core) syncDowndetectorSwitch() { c.followTelemetry(c.telemetry.Enabled()) }
 
 // downdetectorSettingsFollowingSwitch keeps enabled under the telemetry
-// switch: the UI may change share_private only.
+// switch: the UI cannot turn the downdetector on or off by itself.
 func (c *Core) downdetectorSettingsFollowingSwitch(s downdetector.Settings) downdetector.Settings {
 	s.Enabled = c.telemetry.Enabled()
 	return s

@@ -1,11 +1,11 @@
-// Package testerlog streams the engine log to the hub while the install is in
-// tester mode, so a problem a tester hits in the field can be read on the
+// Package testerlog streams the engine log to the hub while Options.Enabled
+// says so, so a problem a tester hits in the field can be read on the
 // admin side as it happens, without asking for a support report.
 //
 // Lines come from the logger's tap into a bounded buffer and leave once a
 // minute, sanitized (logging.SanitizeLog: no IPs, keys, tokens or config
-// links). When tester mode switches on, the recent tail of the log file goes
-// first, so what led up to the switch is there too. Tester mode off means
+// links). When shipping switches on, the recent tail of the log file goes
+// first, so what led up to the switch is there too. Shipping off means
 // nothing is buffered and nothing is sent.
 //
 // The same call carries commands back: the hub answers a chunk with what an
@@ -175,7 +175,7 @@ func (s *Shipper) follow() bool {
 	for _, l := range trimOverlap(tail, live) {
 		s.pushLocked(l)
 	}
-	s.pushLocked(fmt.Sprintf("%s [testerlog] ===== режим тестера включён, выше — хвост лога до включения =====",
+	s.pushLocked(fmt.Sprintf("%s [testerlog] ===== отправка лога включена, выше — хвост лога до включения =====",
 		time.Now().Format("2006/01/02 15:04:05.000000")))
 	for _, l := range live {
 		s.pushLocked(l)

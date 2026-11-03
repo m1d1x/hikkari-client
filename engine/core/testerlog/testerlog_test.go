@@ -80,7 +80,7 @@ func TestSwitchOnShipsBackfillThenLiveSanitized(t *testing.T) {
 	s.Flush(context.Background())
 
 	got := h.lines()
-	if len(got) != 4 || got[0] != "before 1" || got[1] != "before 2" || !strings.Contains(got[2], "режим тестера включён") {
+	if len(got) != 4 || got[0] != "before 1" || got[1] != "before 2" || !strings.Contains(got[2], "отправка лога включена") {
 		t.Fatalf("unexpected order: %q", got)
 	}
 	if strings.Contains(got[3], "203.0.113.7") || !strings.Contains(got[3], "[REDACTED_IP]") {
