@@ -59,6 +59,8 @@ subscription-device-id
 .env.*
 !.env.example
 *.pem
+# Публичный ключ шлюза Amnezia: go:embed, секрета в нём нет
+!engine/core/amnezia/gateway-public.pem
 *.key
 ipqs-key.txt
 # Ключ подписи обновлений (nekko-manifest keygen) — только в секретах CI

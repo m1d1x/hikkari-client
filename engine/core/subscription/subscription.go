@@ -16,7 +16,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"NekkoVPN/core/amnezia"
 )
+
+// fetchAmneziaConfig is replaced in tests: production goes to Amnezia's gateway.
+var fetchAmneziaConfig = amnezia.Default.FetchConfig
 
 // Metadata is the provider-level information attached to all server links in
 // one HTTP subscription response.
@@ -150,6 +155,22 @@ func parseImportDetailedContext[T any](ctx context.Context, input string, allowS
 	for _, line := range strings.Split(input, "\n") {
 		line = NormalizeLink(line)
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if key, ok := amnezia.ParseServiceKey(line); ok {
+			if !allowSubscriptions {
+				return nil, fmt.Errorf("подписка содержит ключ сервиса Amnezia вместо серверов")
+			}
+			link, err := fetchAmneziaConfig(ctx, key, deviceID)
+			if err != nil {
+				return nil, err
+			}
+			d, err := decode(link)
+			if err != nil {
+				return nil, err
+			}
+			imports = append(imports, Imported[T]{Items: []T{d}})
+			draftCount++
 			continue
 		}
 		if isSubscriptionURL(line) {

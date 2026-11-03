@@ -1,7 +1,10 @@
 package subscription
 
 import (
+	"bytes"
+	"compress/zlib"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -9,6 +12,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"NekkoVPN/core/amnezia"
 )
 
 // The hub holds back what a released client's core would refuse, so a client
@@ -62,4 +67,39 @@ func TestFetchRepeatsAroundTheTunnelWhenDefaultPathFails(t *testing.T) {
 	if len(logged) != 1 || !strings.Contains(logged[0], "failed too") {
 		t.Fatalf("logged=%v", logged)
 	}
+}
+
+func TestPremiumKeyIsExchangedAtGateway(t *testing.T) {
+	saved := fetchAmneziaConfig
+	defer func() { fetchAmneziaConfig = saved }()
+	var gotDevice string
+	fetchAmneziaConfig = func(_ context.Context, key amnezia.ServiceKey, deviceID string) (string, error) {
+		gotDevice = deviceID
+		return "vpn://server-for-" + key.ServiceType, nil
+	}
+	key := amneziaServiceKeyLink(t)
+	items, err := Parse(key, "device-1", func(link string) (string, error) { return link, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0] != "vpn://server-for-amnezia-premium" || gotDevice != "device-1" {
+		t.Fatalf("items=%v device=%q", items, gotDevice)
+	}
+
+	fetchAmneziaConfig = func(context.Context, amnezia.ServiceKey, string) (string, error) {
+		return "", errors.New("gateway refused")
+	}
+	if _, err := Parse(key, "device-1", func(link string) (string, error) { return link, nil }); err == nil || err.Error() != "gateway refused" {
+		t.Fatalf("the gateway's verdict must reach the user, got %v", err)
+	}
+}
+
+func amneziaServiceKeyLink(t *testing.T) string {
+	t.Helper()
+	var compressed bytes.Buffer
+	compressed.Write([]byte{0, 0, 0, 0})
+	writer := zlib.NewWriter(&compressed)
+	writer.Write([]byte(`{"api_config":{"service_type":"amnezia-premium"},"auth_data":{"api_key":"k"}}`))
+	writer.Close()
+	return "vpn://" + base64.RawURLEncoding.EncodeToString(compressed.Bytes())
 }
