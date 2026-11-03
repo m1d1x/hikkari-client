@@ -123,31 +123,83 @@ func (r *Runner) maybeLoad(ctx context.Context) {
 }
 
 func (r *Runner) loadRound(ctx context.Context, binary string, ifaces []physIface) {
-	// As in reach.go: only here does a socket bound to the card leave past the TUN.
-	if runtime.GOOS != "windows" {
-		r.log.Logf("[diag:load] skipped: needs Windows, this is %s", runtime.GOOS)
+	targets, skipped := r.prepareLoad(ifaces)
+	if skipped != "" {
+		r.log.Logf("[diag:load] %s", skipped)
 		return
 	}
+	r.runLoad(ctx, binary, targets, ifaces[0].Name)
+}
+
+// loadOS is runtime.GOOS; a test stands in for Windows.
+var loadOS = runtime.GOOS
+
+// prepareLoad reads the profiles of a round, or says why there is none.
+func (r *Runner) prepareLoad(ifaces []physIface) ([]loadTarget, string) {
+	// As in reach.go: only here does a socket bound to the card leave past the TUN.
+	if loadOS != "windows" {
+		return nil, "skipped: needs Windows, this is " + loadOS
+	}
 	if len(ifaces) == 0 {
-		r.log.Logf("[diag:load] skipped: no physical interface")
-		return
+		return nil, "skipped: no physical interface"
 	}
 	config, err := os.ReadFile(r.configPath)
 	if err != nil {
-		r.log.Logf("[diag:load] config: %v", err)
-		return
+		return nil, fmt.Sprintf("config: %v", err)
 	}
 	targets, err := loadTargets(config)
 	if err != nil {
-		r.log.Logf("[diag:load] config: %v", err)
-		return
+		return nil, fmt.Sprintf("config: %v", err)
 	}
+	return targets, ""
+}
+
+func (r *Runner) runLoad(ctx context.Context, binary string, targets []loadTarget, iface string) {
 	for _, t := range targets {
 		if ctx.Err() != nil {
 			return
 		}
-		r.log.Logf("[diag:load] %s", loadLine(ctx, binary, t, ifaces[0].Name, defaultLoadPlan))
+		r.log.Logf("[diag:load] %s", loadLine(ctx, binary, t, iface, defaultLoadPlan))
 	}
+}
+
+// loadNowWait bounds a round on request: about a minute a profile.
+const loadNowWait = 15 * time.Minute
+
+// LoadNow answers the hub's load_profiles: a round now, tunnel up or down, so
+// the operator does not wait up to half an hour for the next one. It returns at
+// once, since a round outlasts a command's two minutes. The profiles' lines
+// follow as [diag:load], closed by «on request: done», and the next periodic
+// round counts from now.
+func (r *Runner) LoadNow() []string {
+	return r.loadNow(vpn.CoreBinary(), physicalIfaces())
+}
+
+func (r *Runner) loadNow(binary string, ifaces []physIface) []string {
+	targets, skipped := r.prepareLoad(ifaces)
+	if skipped != "" {
+		return []string{fmt.Sprintf("error=%q", skipped)}
+	}
+	r.mu.Lock()
+	if r.loadBusy {
+		r.mu.Unlock()
+		return []string{`error="a round is running, its lines follow"`}
+	}
+	r.loadAt = time.Now()
+	r.loadBusy = true
+	r.mu.Unlock()
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.loadBusy = false
+			r.mu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), loadNowWait)
+		defer cancel()
+		r.runLoad(ctx, binary, targets, ifaces[0].Name)
+		r.log.Logf("[diag:load] on request: done")
+	}()
+	return []string{fmt.Sprintf("started profiles=%d", len(targets))}
 }
 
 // loadLine carries the tag and counts only.

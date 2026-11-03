@@ -22,6 +22,7 @@ scripts/ops testers
 | `logs` | `scripts/ops logs 001 --last 1h` | лог в NDJSON; также `--from`, `--to`, `--src`, `--tail` |
 | `request_diag` | `scripts/ops diag 001` | диагностика у тестера на связи, ждёт до 150 с; `--kind snapshot` |
 | `probe_targets` | `scripts/ops probe 001 --targets ams7-443=1.2.3.4:443` | по 12 TCP-соединений к адресам с карты тестера, мимо туннеля; Windows, клиент с 1.0.25 |
+| `probe_load` | `scripts/ops load 001` | раунд `diag:load` сейчас, по всем профилям тестера, ждёт до 15 мин; Windows, клиент с 1.0.33 |
 | `errors` | `scripts/ops errors --window 24h` | группы ошибок клиентов; также `7d`, `30d` |
 | `tickets`, `ticket` | `scripts/ops tickets`, `scripts/ops ticket 4` | обращения в поддержку |
 | `ci_status` | `scripts/ops ci --repo client` | прогоны GitHub Actions; `control` для hub |
@@ -37,7 +38,8 @@ SSH-туннель и токен инструмент поднимает сам:
    говорит, сколько срезано. `summary` считает записи за всё окно, срез на него не влияет.
 3. Узнай, что нажимали: `--src connect` (с 1.0.24). От этих строк считай время всего остального.
 4. Отбери источник: `--src diag:load`, `--src diag:reach`, `--src diag:delay`, `--src diag:stun`, `--src service`, `--src doctor`.
-5. Фактов мало и тестер `online`: `request_diag`, потом `--kind snapshot`.
+5. Фактов мало и тестер `online`: `request_diag`, потом `--kind snapshot`. Профиль «жив», а не работает: `probe_load`, не ждать
+   раунда раз в 30 минут.
 6. Назови первопричину с доказательством из лога. Отдели установленное от предположений.
 7. Чини и выкатывай, если об этом просили: тесты, коммит, пуш, тег `v*`, потом `ci_status` и `release_status`.
    Затем `testers` (версия обновилась) и новые `logs` (ошибки нет).

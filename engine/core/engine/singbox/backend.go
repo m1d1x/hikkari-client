@@ -303,6 +303,9 @@ func (b *Backend) ProbeNow() { b.diagnostics.ProbeNow() }
 // Snapshot writes the machine's state into the log right now, on request.
 func (b *Backend) Snapshot() { b.diagnostics.Snapshot(b.IsRunning()) }
 
+// LoadNow starts a load round over every profile right now, on request.
+func (b *Backend) LoadNow() []string { return b.diagnostics.LoadNow() }
+
 func (b *Backend) Diagnose(reason string) {
 	if d, ok := b.process.(interface{ Diagnose(string) }); ok {
 		d.Diagnose(reason)

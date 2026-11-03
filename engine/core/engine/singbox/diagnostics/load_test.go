@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -214,5 +215,88 @@ func TestLoadLineThroughARealCore(t *testing.T) {
 	t.Log(dead)
 	if !strings.Contains(dead, " dl=0/") || !strings.Contains(dead, " burst=0/") || !strings.Contains(dead, " after=0/") {
 		t.Fatalf("a dead server read as alive: %s", dead)
+	}
+}
+
+type lines struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (l *lines) Logf(format string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.got = append(l.got, fmt.Sprintf(format, args...))
+}
+
+func (l *lines) snapshot() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.got...)
+}
+
+func TestLoadNowAnswersAtOnceAndClosesTheRound(t *testing.T) {
+	defer func(os string) { loadOS = os }(loadOS)
+	loadOS = "windows"
+	config := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(config, []byte(`{"outbounds":[
+		{"tag":"p-a","type":"vless","server":"8.8.8.8","uuid":"SECRET"},
+		{"tag":"p-b","type":"trojan","server":"8.8.4.4","password":"SECRET"}
+	]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	log := &lines{}
+	r := New(log, config)
+	ifaces := []physIface{{Name: "lo"}}
+
+	if got := r.loadNow("/nonexistent/sing-box", ifaces); len(got) != 1 || got[0] != "started profiles=2" {
+		t.Fatalf("%v", got)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got := log.snapshot()
+		if len(got) > 0 && got[len(got)-1] == "[diag:load] on request: done" {
+			if len(got) != 3 || !strings.HasPrefix(got[0], "[diag:load] p-a proto=") || !strings.HasPrefix(got[1], "[diag:load] p-b proto=") {
+				t.Fatalf("%q", got)
+			}
+			if strings.Contains(strings.Join(got, "\n"), "SECRET") {
+				t.Fatal("a secret reached the log")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no closing line: %q", got)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if time.Since(r.loadAt) > time.Minute {
+		t.Fatal("the next periodic round does not count from the request")
+	}
+}
+
+func TestLoadNowRefusesASecondRound(t *testing.T) {
+	defer func(os string) { loadOS = os }(loadOS)
+	loadOS = "windows"
+	config := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(config, []byte(`{"outbounds":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := New(discard{}, config)
+	r.loadBusy = true
+	if got := r.loadNow("/nonexistent/sing-box", []physIface{{Name: "lo"}}); len(got) != 1 || !strings.HasPrefix(got[0], "error=") {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestLoadNowSaysWhyItCannotRun(t *testing.T) {
+	defer func(os string) { loadOS = os }(loadOS)
+	loadOS = "darwin"
+	r := New(discard{}, "/nonexistent")
+	if got := r.loadNow("/nonexistent/sing-box", nil); len(got) != 1 || !strings.Contains(got[0], "needs Windows") {
+		t.Fatalf("%v", got)
+	}
+	loadOS = "windows"
+	if got := r.loadNow("/nonexistent/sing-box", nil); len(got) != 1 || !strings.Contains(got[0], "no physical interface") {
+		t.Fatalf("%v", got)
 	}
 }

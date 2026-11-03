@@ -165,8 +165,10 @@ func doctorLines(report NetworkReport) []string {
 
 // testerCommands is what the hub may ask of this install (engine/core/testerlog).
 // All only read the machine: run_doctor never repairs, a snapshot writes its
-// [diag:*] lines into the log as the session diagnostics do, and probe_targets
-// opens and closes bare TCP connections to the addresses the operator named.
+// [diag:*] lines into the log as the session diagnostics do, load_profiles runs
+// each profile in a core of its own beside the tunnel as the periodic round
+// does, and probe_targets opens and closes bare TCP connections to the
+// addresses the operator named.
 func (c *Core) testerCommands() map[string]testerlog.Command {
 	return map[string]testerlog.Command{
 		"run_doctor": {Source: "doctor", Run: func(context.Context, json.RawMessage) []string {
@@ -183,6 +185,13 @@ func (c *Core) testerCommands() map[string]testerlog.Command {
 			}
 			snapshotter.Snapshot()
 			return nil
+		}},
+		"load_profiles": {Source: "diag:load", Run: func(context.Context, json.RawMessage) []string {
+			loader, ok := c.backend.(interface{ LoadNow() []string })
+			if !ok {
+				return []string{"error=\"this engine has no load round\""}
+			}
+			return loader.LoadNow()
 		}},
 		"probe_targets": {Source: "probe", Run: diag.ProbeTargets},
 		"proto_targets": {Source: "protoprobe", Run: func(ctx context.Context, params json.RawMessage) []string {
