@@ -448,13 +448,17 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 	return out
 }
 
-// downdetectorServers lists every profile as a reportable server: subscription
-// servers and the user's own links alike.
+// downdetectorServers lists every profile as a reportable server. Only
+// subscription servers are shared by default; the user's own servers
+// (single links, pasted configs) need the share_private opt-in. A tester's
+// install reports every server it has, other services' included: that is what
+// a tester is for.
 func (c *Core) downdetectorServers() []downdetector.Server {
 	pf, err := c.profiles.Read()
 	if err != nil {
 		return nil
 	}
+	tester := c.presets.Snapshot().Tester
 	out := make([]downdetector.Server, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
 		host, port := profile.PeerHostPort(p)
@@ -466,6 +470,7 @@ func (c *Core) downdetectorServers() []downdetector.Server {
 			Profile: p.Name,
 			ID:      downdetector.ServerID(host, port, proto),
 			Proto:   proto,
+			Private: !p.Shared() && !tester,
 		})
 	}
 	return out

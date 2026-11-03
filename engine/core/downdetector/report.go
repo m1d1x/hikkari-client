@@ -46,6 +46,9 @@ type Server struct {
 	Profile string
 	ID      string
 	Proto   string
+	// Private servers are reported only when the user opted in
+	// (Settings.SharePrivate).
+	Private bool
 }
 
 // Net is the user's network as resolved locally (see core/netinfo).

@@ -23,11 +23,10 @@ const (
 	settleDelay = 5 * time.Second
 )
 
-// Settings are the user-facing switches. Every server is reported, the
-// user's own and other services' alike: a failing server is a fact about the
-// network whoever runs it.
+// Settings are the user-facing switches.
 type Settings struct {
-	Enabled bool `json:"enabled"`
+	Enabled      bool `json:"enabled"`
+	SharePrivate bool `json:"share_private"`
 }
 
 type state struct {
@@ -55,7 +54,8 @@ type Agent struct {
 	last   *Report
 }
 
-// New returns an agent with default settings: enabled. Call Load to pick up what is on disk.
+// New returns an agent with default settings: enabled, private servers not
+// shared. Call Load to pick up what is on disk.
 func New(statePath, outboxPath string, d Deps) *Agent {
 	return &Agent{
 		statePath:  statePath,
@@ -190,13 +190,19 @@ func (a *Agent) Run(ctx context.Context) {
 // tick builds and queues the report for the window starting at start.
 func (a *Agent) tick(start, now time.Time) {
 	a.mu.Lock()
-	enabled := a.st.Enabled
+	enabled, share := a.st.Enabled, a.st.SharePrivate
 	a.mu.Unlock()
 	if !enabled {
 		return
 	}
 
-	servers := a.deps.Servers()
+	var servers []Server
+	for _, s := range a.deps.Servers() {
+		if s.Private && !share {
+			continue
+		}
+		servers = append(servers, s)
+	}
 	if len(servers) == 0 {
 		return
 	}

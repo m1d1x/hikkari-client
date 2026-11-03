@@ -104,8 +104,8 @@ func (c *Core) NetworkDiagnose() (NetworkReport, error) {
 	if err != nil {
 		return report, err
 	}
-	// The check lands in the stream on its own: nobody has to ask for it.
-	if c.logger != nil && c.shipsLogs() {
+	// A tester's check lands in the stream on its own: nobody has to ask for it.
+	if c.logger != nil && c.presets.Snapshot().Tester {
 		for _, line := range doctorLines(report) {
 			c.logger.Logf("[doctor] %s", line)
 		}
@@ -199,7 +199,7 @@ const maxReportLines = 200
 // stream are read in different places, and the stream is the one that keeps the
 // lines around it.
 func (c *Core) logReportForTester(id, message string) {
-	if c.logger == nil || !c.shipsLogs() {
+	if c.logger == nil || !c.presets.Snapshot().Tester {
 		return
 	}
 	lines := strings.Split(message, "\n")

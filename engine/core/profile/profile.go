@@ -27,6 +27,12 @@ const (
 	KindOutbound = "outbound"
 )
 
+// Shared reports whether the profile's server is one many people use: a
+// server delivered by a provider subscription. Single links and pasted
+// configs are the user's own and stay private for the downdetector unless
+// they opt in.
+func (p Profile) Shared() bool { return p.Subscription != nil }
+
 // Profile is one server entry stored in profiles.json. Config is the
 // sing-box-shaped block (endpoint object for KindEndpoint, outbound object
 // for KindOutbound).

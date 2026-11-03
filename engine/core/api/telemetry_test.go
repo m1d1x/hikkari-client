@@ -18,10 +18,10 @@ func TestTelemetrySwitchGovernsTheDowndetector(t *testing.T) {
 	}
 	// The downdetector's own setting cannot turn it back on behind the switch.
 	_ = c.SetDowndetectorSettings(c.DowndetectorSettings())
-	if e := decode(t, c.Call("SetDowndetectorSettings", `{"enabled":true}`)); !e.Ok {
+	if e := decode(t, c.Call("SetDowndetectorSettings", `{"enabled":true,"share_private":true}`)); !e.Ok {
 		t.Fatalf("SetDowndetectorSettings: %+v", e)
 	}
-	if s := c.DowndetectorSettings(); s.Enabled {
+	if s := c.DowndetectorSettings(); s.Enabled || !s.SharePrivate {
 		t.Fatalf("downdetector = %+v", s)
 	}
 	_ = c.SetTelemetryEnabled(true)
@@ -76,5 +76,22 @@ func TestContractProtoFoldsEveryStack(t *testing.T) {
 		if got := contractProto(slug); got != want {
 			t.Errorf("contractProto(%q) = %q, want %q", slug, got, want)
 		}
+	}
+}
+
+func TestTesterReportsItsOwnServers(t *testing.T) {
+	c := initCore(t)
+	if _, err := c.AddProfileFromURI("vless://id@own.example:443#Own"); err != nil {
+		t.Fatal(err)
+	}
+	if s := c.downdetectorServers(); len(s) != 1 || !s[0].Private {
+		t.Fatalf("own server without the tester switch: %+v", s)
+	}
+	_ = c.SetPresetTester(true)
+	if !c.presets.Snapshot().Tester {
+		t.Fatal("tester switch did not stick")
+	}
+	if s := c.downdetectorServers(); len(s) != 1 || s[0].Private {
+		t.Fatalf("tester's own server kept private: %+v", s)
 	}
 }
