@@ -106,6 +106,10 @@ type Config struct {
 	// the settings belong to the machine, not to the signed-in user. Nil:
 	// the GUI repairs them itself and the op is refused.
 	HostRepair HostRepair
+
+	// CoreReady says the sing-box core answers; a start waits for it, or for
+	// the core's exit and its reason. Nil: its Clash API answers.
+	CoreReady func() bool
 }
 
 // HostRepair is the platform's privileged soft repair.
@@ -180,11 +184,15 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	log := logging.New(filepath.Join(cfg.CoreDir, "service.log"))
 	log.Logf("=== HikkariService %s, core=%s ===", Version, cfg.CoreBin)
+	coreReady := cfg.CoreReady
+	if coreReady == nil {
+		coreReady = vpn.ClashAPIRunning
+	}
 	s := &Server{
 		cfg: cfg,
 		log: log,
 		cores: map[string]*vpn.ProcessManager{
-			svcproto.EngineSingBox: vpn.NewProcessManager(cfg.CoreBin, filepath.Join(cfg.CoreDir, "config.json"), cfg.CoreWorkDir, log),
+			svcproto.EngineSingBox: vpn.NewProcessManager(cfg.CoreBin, filepath.Join(cfg.CoreDir, "config.json"), cfg.CoreWorkDir, log).ReadyWhen(coreReady),
 		},
 		engine:  svcproto.EngineSingBox,
 		restart: make(chan struct{}, 1),

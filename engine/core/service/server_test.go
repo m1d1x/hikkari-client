@@ -53,7 +53,7 @@ func TestServiceRunsOneEngineAtATime(t *testing.T) {
 		t.Fatal(err)
 	}
 	dns := &fakeDNS{}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, XrayBin: core, SystemDNS: dns})
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, XrayBin: core, SystemDNS: dns, CoreReady: fakeCoreUp})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestBinaryRestartWaitsForTheCoreToStop(t *testing.T) {
 	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir})
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, CoreReady: fakeCoreUp})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestSingBoxRunsWithoutSystemDNS(t *testing.T) {
 	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir})
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, CoreReady: fakeCoreUp})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestDeadCoreGivesTheResolverBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	dns := &fakeDNS{}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, SystemDNS: dns})
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, SystemDNS: dns, CoreReady: fakeCoreUp})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,5 +269,31 @@ func TestDeadCoreGivesTheResolverBack(t *testing.T) {
 	s.releaseDeadCoreDNS()
 	if dns.count() != 0 {
 		t.Fatalf("override outlived the core: %v", dns.overridden)
+	}
+}
+
+// The fake cores below stand for a running core: they never open an API.
+func fakeCoreUp() bool { return true }
+
+// A core that gives up on its config exits at once. The start must say so, in
+// the core's words, not report a running core (tester-002, 04.11).
+func TestCoreThatExitsAtStartFailsTheStartWithItsReason(t *testing.T) {
+	dir := t.TempDir()
+	core := filepath.Join(dir, "core")
+	script := "#!/bin/sh\nprintf '\\033[31mFATAL\\033[0m[0000] decode config at %s: endpoints[0].peers[0].preshared_key: json: unknown field \\\"preshared_key\\\"\\n' \"$3\" >&2\nexit 1\n"
+	if err := os.WriteFile(core, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, CoreReady: func() bool { return false }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.stopCores()
+	resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`)})
+	if resp.OK || resp.Error != `ядро остановилось при запуске: endpoints[0].peers[0].preshared_key: json: unknown field "preshared_key"` {
+		t.Fatalf("start: ok=%v err=%q", resp.OK, resp.Error)
+	}
+	if _, err := os.Stat(s.runMarker()); err == nil {
+		t.Fatal("a core that never ran is remembered as wanted up")
 	}
 }

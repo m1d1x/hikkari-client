@@ -608,8 +608,8 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 		"public_key":  publicKey,
 		"allowed_ips": allowedList,
 	}
-	if psk := peer["PresharedKey"]; psk != "" {
-		peerCfg["preshared_key"] = psk
+	if psk := getIniField(peer, "PresharedKey"); psk != "" {
+		peerCfg["pre_shared_key"] = psk
 	}
 	if ka := peer["PersistentKeepalive"]; ka != "" {
 		if n, err := strconv.Atoi(ka); err == nil {

@@ -23,9 +23,11 @@ type ProcessManager struct {
 	workDir    string
 	log        LineLogger
 
+	ready func() bool // see ReadyWhen
+
 	mu   sync.Mutex
 	cmd  *exec.Cmd
-	done chan struct{}
+	done <-chan struct{}
 }
 
 func NewProcessManager(binPath, configPath, workDir string, log LineLogger) *ProcessManager {
@@ -55,20 +57,10 @@ func (m *ProcessManager) Start() error {
 		return fmt.Errorf("не удалось запустить sing-box: %w", err)
 	}
 	m.cmd = cmd
-	m.done = make(chan struct{})
 	m.log.Logf("vpn.Start: sing-box started, pid=%d", cmd.Process.Pid)
-	if stdout != nil {
-		go m.log.PipeLines("singbox.out", stdout)
-	}
-	if stderr != nil {
-		go m.log.PipeLines("singbox.err", stderr)
-	}
-	go func(c *exec.Cmd, done chan struct{}) {
-		err := c.Wait()
-		m.log.Logf("sing-box exited: err=%v, state=%v", err, c.ProcessState)
-		close(done)
-	}(cmd, m.done)
-	return nil
+	done, tail := m.supervise(cmd, stdout, stderr, "singbox.out", "singbox.err")
+	m.done = done
+	return m.awaitStart(done, tail)
 }
 
 // Stop asks the core to exit (it tears its routes down on SIGTERM) and kills

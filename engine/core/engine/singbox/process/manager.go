@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -55,4 +57,38 @@ func ClashAPIRunning() bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode == 200
+}
+
+var reCoreColour = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+// CoreReason is what the core said when it gave up: its FATAL line, or its last
+// line, without colour, level, timer and the config path, which tells a user
+// nothing.
+func CoreReason(output, configPath string) string {
+	last, fatal := "", ""
+	for _, l := range strings.Split(reCoreColour.ReplaceAllString(output, ""), "\n") {
+		if l = strings.TrimSpace(l); l == "" {
+			continue
+		}
+		last = l
+		if strings.Contains(l, "FATAL") {
+			fatal = l
+		}
+	}
+	line := last
+	if fatal != "" {
+		line = fatal[strings.Index(fatal, "FATAL")+len("FATAL"):]
+		if strings.HasPrefix(line, "[") {
+			if i := strings.Index(line, "]"); i >= 0 {
+				line = line[i+1:]
+			}
+		}
+		line = strings.TrimSpace(line)
+	}
+	line = strings.Replace(line, "decode config at "+configPath+": ", "", 1)
+	line = strings.Replace(line, " at "+configPath, "", 1)
+	if line == "" {
+		return "ядро завершилось без объяснения"
+	}
+	return line
 }

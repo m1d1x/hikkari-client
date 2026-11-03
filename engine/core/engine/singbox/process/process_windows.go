@@ -52,8 +52,11 @@ type ProcessManager struct {
 	workDir    string
 	log        LineLogger
 
-	mu  sync.Mutex
-	cmd *exec.Cmd
+	ready func() bool // see ReadyWhen
+
+	mu   sync.Mutex
+	cmd  *exec.Cmd
+	done <-chan struct{}
 	// job is held for the lifetime of this manager (and therefore of the
 	// host process). When the last handle closes — i.e. our process exits —
 	// every process assigned to the job is terminated by the kernel.
@@ -175,18 +178,9 @@ func (m *ProcessManager) Start() error {
 		}
 	}
 
-	if stdout != nil {
-		go m.log.PipeLines("engine.stdout", stdout)
-	}
-	if stderr != nil {
-		go m.log.PipeLines("engine.stderr", stderr)
-	}
-
-	go func(c *exec.Cmd) {
-		err := c.Wait()
-		m.log.Logf("sing-box exited: err=%v, state=%v", err, c.ProcessState)
-	}(cmd)
-	return nil
+	done, tail := m.supervise(cmd, stdout, stderr, "engine.stdout", "engine.stderr")
+	m.done = done
+	return m.awaitStart(done, tail)
 }
 
 func (m *ProcessManager) assignToJob(pid int) error {
@@ -260,7 +254,15 @@ func (m *ProcessManager) Pid() int {
 }
 
 func (m *ProcessManager) isAlive() bool {
-	return m.cmd != nil && m.cmd.Process != nil && m.cmd.ProcessState == nil
+	if m.cmd == nil || m.done == nil {
+		return false
+	}
+	select {
+	case <-m.done:
+		return false
+	default:
+		return true
+	}
 }
 
 // FlushDNS clears the Windows resolver cache. Exported for the api layer,

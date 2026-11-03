@@ -808,9 +808,17 @@ func stripLineComments(raw []byte) []byte {
 // singBoxEndpoint is an endpoint as sing-box reads it. A profile keeps "awg" as
 // its type, which is what says AmneziaWG to the rest of the client, while the
 // sing-box-lx core reads it as a "wireguard" endpoint with the obfuscation
-// fields, and refuses the whole config over a type it does not know.
+// fields, and refuses the whole config over a type it does not know. The same
+// refusal hits a peer's "preshared_key": 1.0.34 and earlier wrote the key under
+// that name and the core knows only "pre_shared_key". The stored profile is
+// never changed: the endpoint is a copy whenever anything differs.
 func singBoxEndpoint(block map[string]interface{}) map[string]interface{} {
-	if block["type"] != "awg" {
+	typ := block["type"]
+	if typ != "awg" && typ != "wireguard" {
+		return block
+	}
+	peers, renamed := corePeers(block["peers"])
+	if typ != "awg" && !renamed {
 		return block
 	}
 	out := make(map[string]interface{}, len(block))
@@ -818,5 +826,39 @@ func singBoxEndpoint(block map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	out["type"] = "wireguard"
+	if renamed {
+		out["peers"] = peers
+	}
 	return out
+}
+
+// corePeers returns copies of the peers with "preshared_key" renamed, and
+// whether any peer had it.
+func corePeers(raw interface{}) ([]interface{}, bool) {
+	peers, _ := raw.([]interface{})
+	out := make([]interface{}, len(peers))
+	renamed := false
+	for i, p := range peers {
+		out[i] = p
+		peer, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		psk, ok := peer["preshared_key"]
+		if !ok {
+			continue
+		}
+		renamed = true
+		copied := make(map[string]interface{}, len(peer))
+		for k, v := range peer {
+			if k != "preshared_key" {
+				copied[k] = v
+			}
+		}
+		if _, has := copied["pre_shared_key"]; !has {
+			copied["pre_shared_key"] = psk
+		}
+		out[i] = copied
+	}
+	return out, renamed
 }

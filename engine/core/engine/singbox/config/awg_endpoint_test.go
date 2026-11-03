@@ -137,3 +137,58 @@ func TestAwgMasqueradePassesTheRealCoresCheck(t *testing.T) {
 		t.Fatalf("sing-box check: %v\n%s", err, out)
 	}
 }
+
+// 1.0.34 stored a peer's key as "preshared_key", and the core refused the whole
+// config over it (tester-002, 04.11): every other profile went down with the
+// one that had it. The core must get "pre_shared_key", the stored profile must
+// stay as it was.
+func TestLegacyPresharedKeyReachesTheCoreUnderItsName(t *testing.T) {
+	const psk = "FbVDy8GTzCHo0ptp3ADUqwMMTk5PcJDhWo6LSgmT8hA="
+	for _, typ := range []string{"awg", "wireguard"} {
+		t.Run(typ, func(t *testing.T) {
+			block := awgProfile()
+			block["type"] = typ
+			if typ == "wireguard" {
+				for _, k := range []string{"jc", "jmin", "jmax", "s1", "s2", "h1", "h2", "h3", "h4"} {
+					delete(block, k)
+				}
+			}
+			block["peers"].([]interface{})[0].(map[string]interface{})["preshared_key"] = psk
+			before, _ := json.Marshal(block)
+
+			ep := singBoxEndpoint(block)
+			peer := ep["peers"].([]interface{})[0].(map[string]interface{})
+			if peer["pre_shared_key"] != psk || peer["preshared_key"] != nil {
+				t.Fatalf("peer as written: %v", peer)
+			}
+			if after, _ := json.Marshal(block); string(after) != string(before) {
+				t.Fatal("the stored profile was changed")
+			}
+			coreCheck(t, map[string]interface{}{"endpoints": []interface{}{ep}})
+		})
+	}
+}
+
+// coreCheck runs the real core's own config check on cfg; skipped where the
+// binary is not built.
+func coreCheck(t *testing.T, cfg map[string]interface{}) {
+	t.Helper()
+	core, err := filepath.Abs("../../../../../archive/sing-box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(core); err != nil {
+		t.Skip("no sing-box binary at archive/sing-box")
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(core, "check", "-c", path).CombinedOutput(); err != nil {
+		t.Fatalf("sing-box check: %v\n%s", err, out)
+	}
+}

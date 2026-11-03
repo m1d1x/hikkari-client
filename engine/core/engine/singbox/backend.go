@@ -37,6 +37,9 @@ type Backend struct {
 	stoppedAt   time.Time
 	tester      func() bool // see SetTesterGate
 	active      string      // selector member the last Configure chose
+	check       configChecker
+	compiled    *compiled
+	rejected    map[string]error // profile name -> why the running core was started without it
 }
 
 // selectActiveTimeout bounds the wait for a freshly started core's Clash API.
@@ -46,7 +49,7 @@ func New(baseDir string, log engine.Logger) (engine.Backend, error) {
 	return NewWithProcess(baseDir, log, vpn.NewProcessManager(filepath.Join(baseDir, vpn.BinaryName), filepath.Join(baseDir, "config.json"), baseDir, log)), nil
 }
 func NewWithProcess(baseDir string, log engine.Logger, process vpn.Manager) *Backend {
-	return &Backend{config: configfile.New(filepath.Join(baseDir, "config.json")), process: process, control: clashapi.New(""), diagnostics: diag.New(log, filepath.Join(baseDir, "config.json")), log: log}
+	return &Backend{config: configfile.New(filepath.Join(baseDir, "config.json")), process: process, control: clashapi.New(""), diagnostics: diag.New(log, filepath.Join(baseDir, "config.json")), log: log, check: checkWithCore(vpn.CoreBinary())}
 }
 func (b *Backend) Info() engine.Info {
 	return engine.Info{ID: "sing-box", Name: "sing-box", Capabilities: engine.Capabilities{TUN: runtime.GOOS == "darwin" || runtime.GOOS == "windows", DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: processRouting, FolderRouting: processRouting}}
@@ -72,6 +75,8 @@ func (b *Backend) Configure(c engine.Configuration) error {
 		return err
 	}
 	specs := make([]configfile.ProfileSpec, 0, len(c.Profiles))
+	labels := make(map[string]string, len(c.Profiles))
+	names := make(map[string]string, len(c.Profiles))
 	active := ""
 	for _, p := range c.Profiles {
 		n, err := native(p)
@@ -89,6 +94,7 @@ func (b *Backend) Configure(c engine.Configuration) error {
 			cfg["flow_retry_delay"] = flowRetryDelay
 		}
 		specs = append(specs, configfile.ProfileSpec{Tag: tag, Kind: n.Kind, Config: cfg})
+		labels[tag], names[tag] = p.Label, p.Name
 		if p.Name == c.ActiveProfile {
 			active = tag
 		}
@@ -96,13 +102,17 @@ func (b *Backend) Configure(c engine.Configuration) error {
 	if active == "" && len(specs) > 0 {
 		active = specs[0].Tag
 	}
-	if err := b.config.RebuildActiveWithRouting(specs, active, c.AutoSelect, legacyTags, c.Routing, configfile.HostNetwork{
-		DirectInterface: c.Host.DirectInterface,
-		DirectDNS:       c.Host.DirectDNS,
-	}); err != nil {
+	rebuild := func(specs []configfile.ProfileSpec, active string) error {
+		return b.config.RebuildActiveWithRouting(specs, active, c.AutoSelect, legacyTags, c.Routing, configfile.HostNetwork{
+			DirectInterface: c.Host.DirectInterface,
+			DirectDNS:       c.Host.DirectDNS,
+		})
+	}
+	if err := rebuild(specs, active); err != nil {
 		return err
 	}
 	b.active = active
+	b.compiled = &compiled{specs: specs, labels: labels, names: names, auto: c.AutoSelect, rebuild: rebuild}
 	return nil
 }
 func (b *Backend) Start(ctx context.Context) error {
@@ -117,6 +127,10 @@ func (b *Backend) Start(ctx context.Context) error {
 			case <-timer.C:
 			}
 		}
+	}
+	// Before pinning: leaving a profile out writes the config again.
+	if err := b.admit(ctx); err != nil {
+		return err
 	}
 	vpn.FlushDNS()
 	results, err := b.config.PinServerIPs(func(host string) ([]net.IP, error) {
@@ -177,6 +191,9 @@ func (b *Backend) Stop() error {
 }
 func (b *Backend) IsRunning() bool { return b.control.IsAlive() }
 func (b *Backend) SelectProfile(id string) error {
+	if err := b.rejected[id]; err != nil {
+		return err
+	}
 	return b.control.SelectProxy(selectorTag, profileTag(id))
 }
 func (b *Backend) Delay(id, url string, timeoutMs int) (int, error) {

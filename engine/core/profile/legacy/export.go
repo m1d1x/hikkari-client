@@ -198,10 +198,24 @@ func exportWireGuard(p profile.Profile) (string, error) {
 			b.WriteString(strings.ToUpper(k) + " = " + v + "\n")
 		}
 	}
+	// The first-packet generator's request (Ip, Id, Ib) stands in for I1: the
+	// parser dropped I1 for it, so losing these here would send the handshake
+	// with no masquerade at all.
+	for _, k := range []string{"ip", "id", "ib"} {
+		if v := cfgString(c, k); v != "" {
+			b.WriteString(strings.ToUpper(k[:1]) + k[1:] + " = " + v + "\n")
+		}
+	}
 
 	b.WriteString("\n[Peer]\n")
 	b.WriteString("PublicKey = " + pub + "\n")
-	if psk := cfgString(peer, "preshared_key"); psk != "" {
+	// "preshared_key" is how 1.0.34 and earlier stored it; the core reads only
+	// "pre_shared_key".
+	psk := cfgString(peer, "pre_shared_key")
+	if psk == "" {
+		psk = cfgString(peer, "preshared_key")
+	}
+	if psk != "" {
 		b.WriteString("PresharedKey = " + psk + "\n")
 	}
 	if allowed := joinIfaceList(peer["allowed_ips"]); allowed != "" {
