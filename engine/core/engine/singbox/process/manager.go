@@ -6,8 +6,21 @@ package vpn
 import (
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 )
+
+// CoreBinary is the core shipped beside the running program, for a probe that
+// starts its own copy next to the tunnel. The base directory holds user data
+// only: on Windows the GUI and sing-box.exe both live in app\.
+func CoreBinary() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return BinaryName
+	}
+	return filepath.Join(filepath.Dir(exe), BinaryName)
+}
 
 // LineLogger is the slice of the logger we need — kept tiny so this package
 // doesn't import core/logging directly.

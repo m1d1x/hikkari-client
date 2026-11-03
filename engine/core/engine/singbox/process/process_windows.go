@@ -81,6 +81,31 @@ func NewProcessManager(binPath, configPath, workDir string, log LineLogger) *Pro
 	return m
 }
 
+var (
+	probeJobOnce sync.Once
+	probeJob     windows.Handle
+)
+
+// DieWithUs ties a helper process to this one, so a crash in the middle of a
+// probe leaves no core behind. Best effort: the caller stops the helper itself
+// on every other path.
+func DieWithUs(pid int) {
+	probeJobOnce.Do(func() {
+		if h, err := createKillOnCloseJob(); err == nil {
+			probeJob = h
+		}
+	})
+	if probeJob == 0 {
+		return
+	}
+	proc, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return
+	}
+	defer windows.CloseHandle(proc)
+	_ = windows.AssignProcessToJobObject(probeJob, proc)
+}
+
 // createKillOnCloseJob creates a Windows Job Object set to kill all
 // assigned processes when its last handle is closed. We never call
 // CloseHandle on the returned handle — letting the OS clean it up on

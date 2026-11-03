@@ -53,6 +53,8 @@ type Runner struct {
 
 	reachAllowed func() bool // tester mode; see reach.go
 	reachAt      time.Time   // last reach round
+	loadAt       time.Time   // last load round; see load.go
+	loadBusy     bool        // a load round is running
 }
 
 type physIface struct {
@@ -153,6 +155,7 @@ func (r *Runner) loop(ctx context.Context) {
 	runCommands(r.log, "post", postCommands())
 	r.probeRound(ctx)
 	r.maybeReach(ctx)
+	r.maybeLoad(ctx)
 
 	// Dense for the first 10 minutes, then once a minute for the whole
 	// session: degradations show up after 20+ minutes too, and a log that
@@ -175,6 +178,7 @@ func (r *Runner) loop(ctx context.Context) {
 			r.probeRound(ctx)
 		}
 		r.maybeReach(ctx)
+		r.maybeLoad(ctx)
 	}
 }
 

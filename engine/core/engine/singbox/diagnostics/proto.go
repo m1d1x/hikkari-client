@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	vpn "NekkoVPN/core/engine/singbox/process"
 )
 
 // The operator's second question: the address opens, but does the protocol? Each
@@ -132,44 +134,70 @@ func protoLine(ctx context.Context, binary string, t protoTarget, iface string) 
 }
 
 func tryProfile(ctx context.Context, binary string, outbound map[string]interface{}, exitURL, iface string) (int, string, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	proxy, stop, err := startProfile(ctx, binary, outbound, iface)
 	if err != nil {
-		return 0, "", errors.New("no free port")
+		return 0, "", err
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
-	config, err := protoConfig(outbound, iface, port)
-	if err != nil {
-		return 0, "", errors.New("config")
-	}
-	dir, err := os.MkdirTemp("", "hikkari-proto-")
-	if err != nil {
-		return 0, "", errors.New("temp dir")
-	}
-	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(path, config, 0o600); err != nil {
-		return 0, "", errors.New("write config")
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	cmd := exec.CommandContext(runCtx, binary, "run", "-c", path)
-	if err := cmd.Start(); err != nil {
-		return 0, "", errors.New("core did not start")
-	}
-	defer func() { cancel(); _ = cmd.Wait() }()
-	if !waitPort(runCtx, port) {
-		return 0, "", errors.New("core rejected the profile")
-	}
-	proxy, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
-	client := &http.Client{Timeout: protoTryTimeout, Transport: &http.Transport{Proxy: http.ProxyURL(proxy), DisableKeepAlives: true}}
-	opened, med := countRequests(runCtx, client, protoCheckURL)
+	defer stop()
+	client := profileClient(proxy, protoTryTimeout)
+	opened, med := countRequests(ctx, client, protoCheckURL)
 	if opened > 0 && exitURL != "" {
 		if resp, err := client.Get(exitURL); err == nil {
 			resp.Body.Close()
 		}
 	}
 	return opened, med, nil
+}
+
+// startProfile runs one profile in its own core and returns the core's local
+// proxy. stop ends the core and removes the config, which holds the secrets.
+func startProfile(ctx context.Context, binary string, outbound map[string]interface{}, iface string) (*url.URL, func(), error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, nil, errors.New("no free port")
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	config, err := protoConfig(outbound, iface, port)
+	if err != nil {
+		return nil, nil, errors.New("config")
+	}
+	dir, err := os.MkdirTemp("", "hikkari-proto-")
+	if err != nil {
+		return nil, nil, errors.New("temp dir")
+	}
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, config, 0o600); err != nil {
+		_ = os.RemoveAll(dir)
+		return nil, nil, errors.New("write config")
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	cmd := exec.CommandContext(runCtx, binary, "run", "-c", path)
+	cmd.Dir = filepath.Dir(binary) // libcronet.dll sits beside the core
+	hideWindow(cmd)                // the GUI has no console, and a console program would open one
+	if err := cmd.Start(); err != nil {
+		cancel()
+		_ = os.RemoveAll(dir)
+		return nil, nil, errors.New("core did not start")
+	}
+	vpn.DieWithUs(cmd.Process.Pid)
+	stop := func() {
+		cancel()
+		_ = cmd.Wait()
+		_ = os.RemoveAll(dir)
+	}
+	if !waitPort(runCtx, port) {
+		stop()
+		return nil, nil, errors.New("core rejected the profile")
+	}
+	proxy, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	return proxy, stop, nil
+}
+
+// profileClient opens a new connection through the proxy for every request:
+// one profile, as many source ports as requests, as apps do.
+func profileClient(proxy *url.URL, timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(proxy), DisableKeepAlives: true}}
 }
 
 func waitPort(ctx context.Context, port int) bool {

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -187,7 +186,7 @@ func (c *Core) testerCommands() map[string]testerlog.Command {
 		}},
 		"probe_targets": {Source: "probe", Run: diag.ProbeTargets},
 		"proto_targets": {Source: "protoprobe", Run: func(ctx context.Context, params json.RawMessage) []string {
-			return diag.ProtoTargets(ctx, filepath.Join(c.baseDir, vpn.BinaryName), params)
+			return diag.ProtoTargets(ctx, vpn.CoreBinary(), params)
 		}},
 	}
 }
