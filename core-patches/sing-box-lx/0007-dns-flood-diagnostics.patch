@@ -1,0 +1,689 @@
+diff --git a/common/dnsdiag/dnsdiag.go b/common/dnsdiag/dnsdiag.go
+new file mode 100644
+index 0000000..5720ef7
+--- /dev/null
++++ b/common/dnsdiag/dnsdiag.go
+@@ -0,0 +1,388 @@
++// Package dnsdiag is Hikkari's temporary instrument for the DNS flood on a
++// tester's Mac (tester-004, 04.11): thousands of "no buffer space available"
++// per minute on direct names, then "panic: close of closed channel" in the
++// local transport. It answers four questions from the log alone: who asks,
++// where the local transport really sends the query, from which socket, and
++// which path calls an exchange's callback twice.
++//
++// It only counts and logs. Remove it with the fix.
++package dnsdiag
++
++import (
++	"fmt"
++	"net"
++	"net/netip"
++	"path"
++	"runtime"
++	"sort"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/sagernet/sing/common/logger"
++)
++
++const (
++	// flushEvery is one window. A quiet window waits for quietEvery.
++	flushEvery = 10 * time.Second
++	quietEvery = time.Minute
++	// busyHijacks makes a window worth a line even with no errors.
++	busyHijacks = 20
++	topAskers   = 10
++	// stackedDoubles is how many double callbacks carry both stacks. Later
++	// ones only count: the path is what matters, and it is in the first ones.
++	stackedDoubles = 5
++	stackBufSize   = 16 << 10
++)
++
++type socketStat struct {
++	dials, writes, replies int
++	writeErrs              map[string]int
++	local                  string
++}
++
++type stats struct {
++	mu       sync.Mutex
++	log      logger.Logger
++	started  bool
++	lastLine time.Time
++
++	hijacks, drops, oks int
++	errs                map[string]int
++	maxLatency          time.Duration
++	askers              map[string]int
++	sockets             map[string]*socketStat
++	doubles             int
++}
++
++var global = &stats{}
++
++// Start begins flushing windows to log. The first call wins: one core process
++// has one router.
++func Start(log logger.Logger) {
++	global.mu.Lock()
++	defer global.mu.Unlock()
++	if global.started || log == nil {
++		return
++	}
++	global.started = true
++	global.log = log
++	global.reset()
++	global.lastLine = time.Now()
++	go func() {
++		for range time.Tick(flushEvery) {
++			global.flush(time.Now())
++		}
++	}()
++}
++
++// reset must be called with mu held.
++func (s *stats) reset() {
++	s.hijacks, s.drops, s.oks, s.doubles = 0, 0, 0, 0
++	s.maxLatency = 0
++	s.errs = make(map[string]int)
++	s.askers = make(map[string]int)
++	s.sockets = make(map[string]*socketStat)
++}
++
++func (s *stats) flush(now time.Time) {
++	lines := s.window(now)
++	if len(lines) == 0 {
++		return
++	}
++	s.mu.Lock()
++	log := s.log
++	s.mu.Unlock()
++	for _, line := range lines {
++		log.Warn(line)
++	}
++}
++
++// window closes the current window and returns its lines, none when it is not
++// worth a line yet.
++func (s *stats) window(now time.Time) []string {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	if s.errs == nil {
++		return nil
++	}
++	socketTrouble := false
++	for _, sk := range s.sockets {
++		if len(sk.writeErrs) > 0 {
++			socketTrouble = true
++		}
++	}
++	trouble := len(s.errs) > 0 || s.drops > 0 || s.doubles > 0 || socketTrouble || s.hijacks >= busyHijacks
++	active := s.hijacks > 0 || len(s.sockets) > 0
++	if !trouble && !(active && now.Sub(s.lastLine) >= quietEvery) {
++		return nil
++	}
++	lines := []string{fmt.Sprintf("[dns-diag] window hijack=%d drop=%d ok=%d err=%s max=%s double=%d top=[%s]",
++		s.hijacks, s.drops, s.oks, formatCounts(s.errs), s.maxLatency.Round(time.Millisecond), s.doubles, formatTop(s.askers, topAskers))}
++	servers := make([]string, 0, len(s.sockets))
++	for server := range s.sockets {
++		servers = append(servers, server)
++	}
++	sort.Strings(servers)
++	for _, server := range servers {
++		sk := s.sockets[server]
++		lines = append(lines, fmt.Sprintf("[dns-diag] socket server=%s local=%s dials=%d writes=%d write_err=%s replies=%d",
++			server, sk.local, sk.dials, sk.writes, formatCounts(sk.writeErrs), sk.replies))
++	}
++	s.reset()
++	s.lastLine = now
++	return lines
++}
++
++// Hijack counts a query the TUN handed to the router.
++func Hijack(process, name, qtype string) {
++	if process == "" {
++		process = "?"
++	}
++	global.mu.Lock()
++	defer global.mu.Unlock()
++	if global.errs == nil {
++		return
++	}
++	global.hijacks++
++	global.askers[process+" "+name+" "+qtype]++
++}
++
++// HijackDropped counts a query lost to the hijack concurrency limit.
++func HijackDropped() {
++	global.mu.Lock()
++	defer global.mu.Unlock()
++	if global.errs != nil {
++		global.drops++
++	}
++}
++
++// HijackDone records how a hijacked query ended.
++func HijackDone(err error, latency time.Duration) {
++	global.mu.Lock()
++	defer global.mu.Unlock()
++	if global.errs == nil {
++		return
++	}
++	if latency > global.maxLatency {
++		global.maxLatency = latency
++	}
++	if err == nil {
++		global.oks++
++		return
++	}
++	global.errs[Classify(err)]++
++}
++
++func (s *stats) socket(server string) *socketStat {
++	sk := s.sockets[server]
++	if sk == nil {
++		sk = &socketStat{writeErrs: make(map[string]int)}
++		s.sockets[server] = sk
++	}
++	return sk
++}
++
++// Dialed records a new socket of a plain DNS transport: where it sends and the
++// address and interface the system chose for it. A local address on a utun
++// means the query goes back into a tunnel.
++func Dialed(server string, local net.Addr) {
++	global.mu.Lock()
++	defer global.mu.Unlock()
++	if global.errs == nil {
++		return
++	}
++	sk := global.socket(AddrTag(server))
++	sk.dials++
++	sk.local = LocalTag(local)
++}
++
++// Wrote records one write of a query.
++func Wrote(server string, err error) {
++	global.mu.Lock()
++	defer global.mu.Unlock()
++	if global.errs == nil {
++		return
++	}
++	sk := global.socket(AddrTag(server))
++	sk.writes++
++	if err != nil {
++		sk.writeErrs[Classify(err)]++
++	}
++}
++
++// Replied records one datagram read from a resolver.
++func Replied(server string) {
++	global.mu.Lock()
++	defer global.mu.Unlock()
++	if global.errs != nil {
++		global.socket(AddrTag(server)).replies++
++	}
++}
++
++// LocalConfig logs the system resolver setting the local transport works from.
++func LocalConfig(log logger.Logger, servers []string, attempts int, timeout time.Duration, useTCP bool) {
++	tags := make([]string, 0, len(servers))
++	for _, server := range servers {
++		tags = append(tags, AddrTag(server))
++	}
++	log.Warn(fmt.Sprintf("[dns-diag] local config servers=[%s] attempts=%d timeout=%s tcp=%v", strings.Join(tags, " "), attempts, timeout, useTCP))
++}
++
++// Stack is the calling goroutine's stack, compact enough for one log line.
++func Stack() string {
++	buffer := make([]byte, stackBufSize)
++	return CompactStack(string(buffer[:runtime.Stack(buffer, false)]))
++}
++
++// DoubleCallback reports an exchange whose callback ran again, with the stack
++// of each call.
++func DoubleCallback(log logger.Logger, name string, ctxErr, firstErr, secondErr error, gap time.Duration, firstStack string) {
++	global.mu.Lock()
++	var nth int
++	if global.errs != nil {
++		global.doubles++
++	}
++	doubleCount++
++	nth = doubleCount
++	global.mu.Unlock()
++	if nth > stackedDoubles {
++		return
++	}
++	log.Error(fmt.Sprintf("[dns-diag] double callback #%d name=%s ctx=%v gap=%s first_err=%v second_err=%v first_stack=%s second_stack=%s",
++		nth, name, ctxErr, gap.Round(time.Microsecond), firstErr, secondErr, firstStack, Stack()))
++}
++
++var doubleCount int
++
++// AddrTag names a resolver without the form the client's log sanitizer erases.
++// Private addresses are this machine's and its router's and say what the check
++// needs: 172-19-0-2 is the core's own TUN. A public one stays a class.
++func AddrTag(hostPort string) string {
++	host := hostPort
++	if h, _, err := net.SplitHostPort(hostPort); err == nil {
++		host = h
++	}
++	address, err := netip.ParseAddr(host)
++	if err != nil {
++		return "unparsed"
++	}
++	address = address.Unmap()
++	if address.IsLoopback() || address.IsPrivate() || address.IsLinkLocalUnicast() || address.IsUnspecified() {
++		if address.Is4() {
++			return strings.ReplaceAll(address.String(), ".", "-")
++		}
++		return "v6-private"
++	}
++	if address.Is4() {
++		return "public"
++	}
++	return "v6-public"
++}
++
++// LocalTag is a socket's local address and the interface that holds it.
++func LocalTag(local net.Addr) string {
++	if local == nil {
++		return "none"
++	}
++	tag := AddrTag(local.String())
++	host, _, err := net.SplitHostPort(local.String())
++	if err != nil {
++		return tag
++	}
++	address, err := netip.ParseAddr(host)
++	if err != nil {
++		return tag
++	}
++	interfaces, err := net.Interfaces()
++	if err != nil {
++		return tag
++	}
++	for _, iface := range interfaces {
++		addresses, addrErr := iface.Addrs()
++		if addrErr != nil {
++			continue
++		}
++		for _, candidate := range addresses {
++			if prefix, parseErr := netip.ParsePrefix(candidate.String()); parseErr == nil && prefix.Addr().Unmap() == address.Unmap() {
++				return tag + "/" + iface.Name
++			}
++		}
++	}
++	return tag + "/?"
++}
++
++// Classify reduces an error to a stable word. It reads the text: the errnos it
++// names do not all exist on every platform, and wrapped DNS errors keep them
++// only in the message.
++func Classify(err error) string {
++	message := strings.ToLower(err.Error())
++	for _, known := range []struct{ needle, word string }{
++		{"no buffer space", "enobufs"},
++		{"no route to host", "no_route"},
++		{"network is unreachable", "net_unreach"},
++		{"network is down", "net_down"},
++		{"can't assign requested address", "addr_not_avail"},
++		{"connection refused", "refused"},
++		{"operation not permitted", "eperm"},
++		{"use of closed network connection", "closed"},
++		{"deadline exceeded", "deadline"},
++		{"i/o timeout", "timeout"},
++		{"query timeout", "timeout"},
++		{"context canceled", "canceled"},
++		{"rejected", "rejected"},
++	} {
++		if strings.Contains(message, known.needle) {
++			return known.word
++		}
++	}
++	return "other"
++}
++
++// CompactStack turns runtime.Stack output into "func@file:line < ..." with the
++// innermost call first and the spawning goroutine kept as "created-by".
++func CompactStack(stack string) string {
++	lines := strings.Split(strings.TrimSpace(stack), "\n")
++	frames := make([]string, 0, len(lines)/2)
++	for i := 1; i+1 < len(lines); i += 2 {
++		function := lines[i]
++		if strings.HasPrefix(function, "created by ") {
++			function = "created-by:" + strings.Fields(strings.TrimPrefix(function, "created by "))[0]
++		} else if open := strings.LastIndex(function, "("); open > 0 {
++			function = function[:open]
++		}
++		function = strings.TrimPrefix(function, "github.com/sagernet/sing-box/")
++		location := strings.Fields(strings.TrimSpace(lines[i+1]))[0]
++		frames = append(frames, function+"@"+path.Base(path.Dir(location))+"/"+path.Base(location))
++	}
++	return strings.Join(frames, " < ")
++}
++
++func formatCounts(counts map[string]int) string {
++	if len(counts) == 0 {
++		return "{}"
++	}
++	return "{" + formatTop(counts, len(counts)) + "}"
++}
++
++// formatTop lists the largest counts first, ties by name.
++func formatTop(counts map[string]int, limit int) string {
++	keys := make([]string, 0, len(counts))
++	for key := range counts {
++		keys = append(keys, key)
++	}
++	sort.Slice(keys, func(i, j int) bool {
++		if counts[keys[i]] != counts[keys[j]] {
++			return counts[keys[i]] > counts[keys[j]]
++		}
++		return keys[i] < keys[j]
++	})
++	if len(keys) > limit {
++		keys = keys[:limit]
++	}
++	parts := make([]string, 0, len(keys))
++	for _, key := range keys {
++		parts = append(parts, fmt.Sprintf("%s x%d", key, counts[key]))
++	}
++	return strings.Join(parts, "; ")
++}
+diff --git a/common/dnsdiag/dnsdiag_test.go b/common/dnsdiag/dnsdiag_test.go
+new file mode 100644
+index 0000000..0e54dae
+--- /dev/null
++++ b/common/dnsdiag/dnsdiag_test.go
+@@ -0,0 +1,88 @@
++package dnsdiag
++
++import (
++	"errors"
++	"fmt"
++	"net"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestAddrTagNeverPrintsPublicAddress(t *testing.T) {
++	for in, want := range map[string]string{
++		"172.19.0.2:53": "172-19-0-2",
++		"192.168.1.1":   "192-168-1-1",
++		"77.88.8.8:53":  "public",
++		"[fc00::1]:53":  "v6-private",
++		"[2a00::1]:53":  "v6-public",
++		"nonsense":      "unparsed",
++	} {
++		if got := AddrTag(in); got != want {
++			t.Errorf("AddrTag(%q) = %q, want %q", in, got, want)
++		}
++	}
++}
++
++func TestClassifyReadsWrappedErrors(t *testing.T) {
++	err := fmt.Errorf("yandex.ru.: %w", errors.New("write udp 1.2.3.4:5->6.7.8.9:53: write: no buffer space available"))
++	if got := Classify(err); got != "enobufs" {
++		t.Fatalf("got %q", got)
++	}
++	if got := Classify(errors.New("strange")); got != "other" {
++		t.Fatalf("got %q", got)
++	}
++}
++
++func TestCompactStackKeepsThePath(t *testing.T) {
++	stack := "goroutine 7 [running]:\n" +
++		"github.com/sagernet/sing-box/dns/transport/local.(*Transport).Exchange.func1(0x0?)\n" +
++		"\t/w/dns/transport/local/local.go:151 +0x58\n" +
++		"created by context.(*afterFuncCtx).cancel.func1 in goroutine 256411\n" +
++		"\t/go/src/context/context.go:358 +0x24\n"
++	want := "dns/transport/local.(*Transport).Exchange.func1@local/local.go:151 < created-by:context.(*afterFuncCtx).cancel.func1@context/context.go:358"
++	if got := CompactStack(stack); got != want {
++		t.Fatalf("got  %s\nwant %s", got, want)
++	}
++}
++
++func TestWindowNamesAskersSocketsAndErrors(t *testing.T) {
++	s := &stats{lastLine: time.Now()}
++	s.reset()
++	saved := global
++	global = s
++	defer func() { global = saved }()
++
++	Hijack("sing-box", "yandex.ru.", "A")
++	Hijack("sing-box", "yandex.ru.", "A")
++	Hijack("", "dns-shop.ru.", "AAAA")
++	Dialed("172.19.0.2:53", &net.UDPAddr{IP: net.IPv4(172, 19, 0, 1), Port: 5})
++	Wrote("172.19.0.2:53", errors.New("write: no buffer space available"))
++	HijackDone(errors.New("write: no buffer space available"), 6*time.Second)
++
++	lines := strings.Join(s.window(time.Now()), "\n")
++	for _, want := range []string{
++		"hijack=3", "err={enobufs x1}", "max=6s", "sing-box yandex.ru. A x2; ? dns-shop.ru. AAAA x1",
++		"server=172-19-0-2", "local=172-19-0-1/", "dials=1 writes=1 write_err={enobufs x1}",
++	} {
++		if !strings.Contains(lines, want) {
++			t.Errorf("no %q in:\n%s", want, lines)
++		}
++	}
++	if again := s.window(time.Now()); again != nil {
++		t.Errorf("an emptied window still reports: %v", again)
++	}
++}
++
++func TestQuietWindowWaitsForTheMinute(t *testing.T) {
++	s := &stats{lastLine: time.Now()}
++	s.reset()
++	s.hijacks = 1
++	s.askers["a b A"] = 1
++	if lines := s.window(time.Now()); lines != nil {
++		t.Fatalf("a quiet window logged: %v", lines)
++	}
++	if lines := s.window(s.lastLine.Add(quietEvery)); len(lines) == 0 {
++		t.Fatal("a quiet minute logged nothing")
++	}
++}
+diff --git a/dns/transport/local/local.go b/dns/transport/local/local.go
+index 9c24768..e37096c 100644
+--- a/dns/transport/local/local.go
++++ b/dns/transport/local/local.go
+@@ -4,8 +4,10 @@ import (
+ 	"context"
+ 	"sync"
+ 	"sync/atomic"
++	"time"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/dnsdiag"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/dns"
+ 	"github.com/sagernet/sing-box/dns/transport/local/systemconfig"
+@@ -142,15 +144,34 @@ func (t *Transport) Environment() []string {
+ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+ 	done := make(chan struct{})
+ 	var (
+-		response *mDNS.Msg
+-		err      error
++		response   *mDNS.Msg
++		err        error
++		access     sync.Mutex
++		called     bool
++		firstAt    time.Time
++		firstStack string
+ 	)
+ 	t.ExchangeAsync(ctx, message, func(callbackResponse *mDNS.Msg, callbackErr error) {
++		// hikkari diag: a second call used to panic on close(done) and take the
++		// whole core down. Keep the core up and log who called, each time.
++		access.Lock()
++		if called {
++			firstCallErr, firstCallAt, firstCallStack := err, firstAt, firstStack
++			access.Unlock()
++			dnsdiag.DoubleCallback(t.logger, message.Question[0].Name, ctx.Err(), firstCallErr, callbackErr, time.Since(firstCallAt), firstCallStack)
++			return
++		}
++		called = true
+ 		response = callbackResponse
+ 		err = callbackErr
++		firstAt = time.Now()
++		firstStack = dnsdiag.Stack()
++		access.Unlock()
+ 		close(done)
+ 	})
+ 	<-done
++	access.Lock()
++	defer access.Unlock()
+ 	return response, err
+ }
+ 
+diff --git a/dns/transport/local/local_shared.go b/dns/transport/local/local_shared.go
+index e0d5d0f..5aa06f3 100644
+--- a/dns/transport/local/local_shared.go
++++ b/dns/transport/local/local_shared.go
+@@ -4,11 +4,14 @@ import (
+ 	"context"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/dnsdiag"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/dns"
+ 	"github.com/sagernet/sing-box/dns/transport"
+ 	"github.com/sagernet/sing-box/dns/transport/local/systemconfig"
++	"github.com/sagernet/sing/common"
+ 	E "github.com/sagernet/sing/common/exceptions"
++	M "github.com/sagernet/sing/common/metadata"
+ 
+ 	mDNS "github.com/miekg/dns"
+ )
+@@ -30,6 +33,7 @@ func (t *Transport) serverSetFor(systemConfig *systemconfig.Config) (*localServe
+ 	if serverSet != nil && serverSet.config == systemConfig {
+ 		return serverSet, nil
+ 	}
++	dnsdiag.LocalConfig(t.logger, common.Map(systemConfig.Servers, func(server M.Socksaddr) string { return server.String() }), systemConfig.Attempts, systemConfig.Timeout, systemConfig.UseTCP)
+ 	serverScope := adapter.NewScope(t.ctx, t.logger)
+ 	transports := make([]adapter.DNSTransport, 0, len(systemConfig.Servers))
+ 	for _, serverAddr := range systemConfig.Servers {
+diff --git a/dns/transport/udp.go b/dns/transport/udp.go
+index a6bcd18..1b5613e 100644
+--- a/dns/transport/udp.go
++++ b/dns/transport/udp.go
+@@ -7,6 +7,7 @@ import (
+ 
+ 	"github.com/sagernet/sing-box/adapter"
+ 	"github.com/sagernet/sing-box/common/dialer"
++	"github.com/sagernet/sing-box/common/dnsdiag"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/dns"
+ 	"github.com/sagernet/sing-box/log"
+@@ -71,6 +72,7 @@ func NewUDPRaw(logger logger.ContextLogger, adapter dns.TransportAdapter, dialer
+ 			if err != nil {
+ 				return nil, E.Cause(err, "dial UDP connection")
+ 			}
++			dnsdiag.Dialed(t.serverAddr.String(), conn.LocalAddr())
+ 			return conn, nil
+ 		},
+ 		write:    t.writeQuery,
+@@ -154,7 +156,9 @@ func (t *UDPTransport) writeQuery(conn net.Conn, message *mDNS.Msg, queryId uint
+ 	if err != nil {
+ 		return err
+ 	}
+-	return common.Error(conn.Write(rawMessage))
++	writeErr := common.Error(conn.Write(rawMessage))
++	dnsdiag.Wrote(t.serverAddr.String(), writeErr)
++	return writeErr
+ }
+ 
+ func (t *UDPTransport) readResponse(conn net.Conn) (*mDNS.Msg, error) {
+@@ -164,6 +168,7 @@ func (t *UDPTransport) readResponse(conn net.Conn) (*mDNS.Msg, error) {
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	dnsdiag.Replied(t.serverAddr.String())
+ 	var message mDNS.Msg
+ 	err = message.Unpack(buffer.Bytes())
+ 	if err != nil {
+diff --git a/route/dns.go b/route/dns.go
+index d720270..facf1ac 100644
+--- a/route/dns.go
++++ b/route/dns.go
+@@ -3,9 +3,11 @@ package route
+ import (
+ 	"context"
+ 	"net"
++	"path"
+ 	"time"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/dnsdiag"
+ 	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/dns"
+ 	dnsOutbound "github.com/sagernet/sing-box/protocol/dns"
+@@ -73,11 +75,14 @@ func (r *Router) HijackDNSPacket(ctx context.Context, payload []byte, writer N.P
+ 		return
+ 	}
+ 	r.searchProcessInfo(ctx, &metadata)
++	diagHijack(&message, &metadata)
++	hijackedAt := time.Now()
+ 	destination := metadata.Destination
+ 	metadata.Destination = M.Socksaddr{}
+ 	// lx:begin dns-hijack-async
+ 	if !r.dnsHijackSem.TryAcquire(1) {
+ 		r.logger.DebugContext(ctx, "process DNS packet: hijack overloaded, dropping query")
++		dnsdiag.HijackDropped()
+ 		return
+ 	}
+ 	go func() {
+@@ -87,6 +92,7 @@ func (r *Router) HijackDNSPacket(ctx context.Context, payload []byte, writer N.P
+ 			if exchangeErr == nil {
+ 				exchangeErr = r.writeDNSPacketResponse(&message, response, writer, destination)
+ 			}
++			dnsdiag.HijackDone(exchangeErr, time.Since(hijackedAt))
+ 			if exchangeErr != nil && !R.IsRejected(exchangeErr) && !E.IsClosedOrCanceled(exchangeErr) {
+ 				r.logger.ErrorContext(ctx, E.Cause(exchangeErr, "process DNS packet"))
+ 			}
+@@ -94,6 +100,21 @@ func (r *Router) HijackDNSPacket(ctx context.Context, payload []byte, writer N.P
+ 	}() // lx: SPEC 046
+ }
+ 
++// diagHijack counts who asks what: on a Mac most names come from mDNSResponder,
++// and the core asking itself shows as sing-box.
++func diagHijack(message *mDNS.Msg, metadata *adapter.InboundContext) {
++	process := ""
++	if metadata.ProcessInfo != nil {
++		process = path.Base(metadata.ProcessInfo.ProcessPath)
++	}
++	name, queryType := "?", "?"
++	if len(message.Question) > 0 {
++		name = message.Question[0].Name
++		queryType = mDNS.TypeToString[message.Question[0].Qtype]
++	}
++	dnsdiag.Hijack(process, name, queryType)
++}
++
+ func (r *Router) writeDNSPacketResponse(message *mDNS.Msg, response *mDNS.Msg, writer N.PacketWriter, destination M.Socksaddr) error {
+ 	responseBuffer, err := dns.TruncateDNSMessage(message, response, N.CalculateFrontHeadroom(writer), N.CalculateRearHeadroom(writer))
+ 	if err != nil {
+diff --git a/route/router.go b/route/router.go
+index 70086f4..83de4bc 100644
+--- a/route/router.go
++++ b/route/router.go
+@@ -9,6 +9,7 @@ import (
+ 	"time"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/dnsdiag"
+ 	"github.com/sagernet/sing-box/common/process"
+ 	"github.com/sagernet/sing-box/common/taskmonitor"
+ 	C "github.com/sagernet/sing-box/constant"
+@@ -115,7 +116,8 @@ func NewRouter(ctx context.Context, logFactory log.Factory, options option.Route
+ 		endpoint:             service.FromContext[adapter.EndpointManager](ctx), // lx: SPEC 020 — idle tick iterates endpoints
+ 		dnsHijackSem:         semaphore.NewWeighted(dnsHijackConcurrencyLimit),  // lx: SPEC 046
+ 	}
+-	router.reachDirty.Store(true) // lx: SPEC 020 — first tick computes the reachable set
++	dnsdiag.Start(logFactory.NewLogger("dns")) // hikkari diag: temporary, see common/dnsdiag
++	router.reachDirty.Store(true)              // lx: SPEC 020 — first tick computes the reachable set
+ 	return router
+ }
+ 

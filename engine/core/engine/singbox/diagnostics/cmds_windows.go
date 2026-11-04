@@ -69,6 +69,9 @@ func postCommands() []command {
 // periodicCommands show which local address Discord's UDP sockets are
 // bound to — 0.0.0.0 / tun address is fine, a physical NIC IP means
 // WebRTC may be sending around the tunnel.
+// dnsFloodCommands: the DNS flood they look at was seen on macOS only.
+func dnsFloodCommands() []command { return nil }
+
 func periodicCommands() []command {
 	return []command{
 		ps(`Get-NetUDPEndpoint | Where-Object { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).Name -match 'discord' } | ForEach-Object { "discord pid=$($_.OwningProcess) udp $($_.LocalAddress):$($_.LocalPort)" }`),

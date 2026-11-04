@@ -88,7 +88,9 @@ type Details struct {
 	// BestKind is the class of the interface the OS picks: physical |
 	// virtual | none (no candidate is the OS's choice).
 	BestKind string `json:"bestKind"`
-	BestOK   bool   `json:"bestOk"`
+	// BestIface names the interface the OS picks. Only for the tester log.
+	BestIface string `json:"-"`
+	BestOK    bool   `json:"bestOk"`
 	// OthersReached counts the other candidates that completed a handshake
 	// (probing stops at the first, so it is 0 or 1).
 	OthersReached int `json:"othersReached"`
@@ -104,6 +106,22 @@ type Details struct {
 func (s Selection) Default() bool { return s.DirectInterface == "" && s.DirectDNS == "" }
 
 // LogLine is the anonymized one-line summary for the engine log.
+// PinLine says what the selection did with direct lookups: an empty pin where
+// the resolver has to be pinned leaves the core reading the system setting,
+// which the service points at the core itself. It also names the OS's interface
+// choice, which a foreign VPN changes. No addresses.
+func (s Selection) PinLine() string {
+	pin := "none"
+	if s.DirectDNS != "" {
+		pin = resolverKind(s.DirectDNS)
+	}
+	best := s.Details.BestIface
+	if best == "" {
+		best = "?"
+	}
+	return "pin=" + pin + " pins_required=" + strconv.FormatBool(PinsSystemResolver) + " os_iface=" + best
+}
+
 func (s Selection) LogLine() string {
 	// Attached to a tunnel already running: no selection was made, and its
 	// empty fields must not read as failed checks.
@@ -218,6 +236,9 @@ func pickInterface(env hostEnv, cs []Candidate, d *Details) (*Candidate, bool) {
 	bestIdx := -1
 	if idx, err := env.best(ProbeTargets[0]); err == nil {
 		bestIdx = idx
+		if iface, err := net.InterfaceByIndex(idx); err == nil {
+			d.BestIface = iface.Name
+		}
 	}
 	for i := range cs {
 		if cs[i].Index == bestIdx {

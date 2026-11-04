@@ -27,11 +27,14 @@ import (
 // the current network is reused. Callers hold operationMu, tunnel down.
 func (c *Core) selectHostLocked() {
 	if c.host.Probed && c.host.Network != "" && c.host.Network == netdoctor.CurrentNetwork() {
+		if c.logger != nil {
+			c.logger.Logf("[netdoctor] selection reused: %s %s", c.host.LogLine(), c.host.PinLine())
+		}
 		return
 	}
 	c.host = netdoctor.SelectHost()
 	if c.logger != nil {
-		c.logger.Logf("[netdoctor] %s", c.host.LogLine())
+		c.logger.Logf("[netdoctor] %s %s", c.host.LogLine(), c.host.PinLine())
 	}
 }
 

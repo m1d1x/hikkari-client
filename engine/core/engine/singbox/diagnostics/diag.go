@@ -155,6 +155,7 @@ func (r *Runner) loop(ctx context.Context) {
 	r.clashInfo()
 	r.goInterfaces("post")
 	runCommands(r.log, "post", postCommands())
+	runCommands(r.log, "dnsflood", dnsFloodCommands())
 	r.probeRound(ctx)
 	r.maybeReach(ctx)
 	r.maybeLoad(ctx)
@@ -176,6 +177,7 @@ func (r *Runner) loop(ctx context.Context) {
 		r.log.Logf("[diag] ----- periodic #%d (%s in) -----", tick, time.Since(started).Round(time.Second))
 		r.connections(false)
 		runCommands(r.log, "periodic", periodicCommands())
+		runCommands(r.log, "dnsflood", dnsFloodCommands())
 		if time.Since(started) <= 10*time.Minute && tick%3 == 0 || tick%5 == 0 {
 			r.probeRound(ctx)
 		}
