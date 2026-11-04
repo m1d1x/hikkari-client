@@ -202,20 +202,73 @@ func (r *Runner) loadNow(binary string, ifaces []physIface) []string {
 	return []string{fmt.Sprintf("started profiles=%d", len(targets))}
 }
 
-// loadLine carries the tag and counts only.
+// loadLine carries the tag, the knobs the profile ran with and the counts. The
+// knobs (loadKnobs) are what the hub's relay dataset charts a round by; no
+// address and no secret is among them.
 func loadLine(ctx context.Context, binary string, t loadTarget, iface string, plan loadPlan) string {
+	head := t.Tag + " proto=" + t.Proto + loadKnobs(t.Outbound)
 	proxy, stop, err := startProfile(ctx, binary, t.Outbound, iface)
 	if err != nil {
 		// err is ours and names no profile field; the core's own output is dropped.
-		return fmt.Sprintf("%s proto=%s load_error=%q", t.Tag, t.Proto, err.Error())
+		return fmt.Sprintf("%s load_error=%q", head, err.Error())
 	}
 	defer stop()
 	got, took, end := download(ctx, profileClient(proxy, 0), plan.DownloadURL, plan.DownWait)
 	ok, timedOut, med := burst(ctx, profileClient(proxy, plan.BurstWait), plan.CheckURL, plan.Burst)
 	after, afterMed := countRequests(ctx, profileClient(proxy, plan.AfterWait), plan.CheckURL)
-	return fmt.Sprintf("%s proto=%s dl=%d/%d took=%s end=%s burst=%d/%d timeout=%d med=%s after=%d/%d med=%s",
-		t.Tag, t.Proto, got, plan.Bytes, took.Round(time.Millisecond), end,
+	return fmt.Sprintf("%s dl=%d/%d took=%s end=%s burst=%d/%d timeout=%d med=%s after=%d/%d med=%s",
+		head, got, plan.Bytes, took.Round(time.Millisecond), end,
 		ok, plan.Burst, timedOut, med, after, protoTries, afterMed)
+}
+
+// loadKnobs are the config knobs of an outbound the relay search varies
+// (hikkari-client plans/2026-11-04-relay-search-method.md): fp, sni, port, flow
+// and alpn, as " key=value" in that order, each only when the outbound sets it.
+// The server name is a cover domain, which the log keeps; the port is not an
+// address. A value with anything but plain characters is left out, so the
+// line stays one token per knob.
+func loadKnobs(ob map[string]interface{}) string {
+	var b strings.Builder
+	add := func(k, v string) {
+		if v == "" || strings.IndexFunc(v, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-/:,", r))
+		}) >= 0 {
+			return
+		}
+		b.WriteString(" " + k + "=" + v)
+	}
+	tls, _ := ob["tls"].(map[string]interface{})
+	if u, _ := tls["utls"].(map[string]interface{}); u != nil {
+		if on, _ := u["enabled"].(bool); on {
+			fp, _ := u["fingerprint"].(string)
+			add("fp", fp)
+		}
+	}
+	sni, _ := tls["server_name"].(string)
+	add("sni", sni)
+	switch p := ob["server_port"].(type) {
+	case float64:
+		add("port", fmt.Sprintf("%d", int(p)))
+	case int:
+		add("port", fmt.Sprintf("%d", p))
+	}
+	if typ, _ := ob["type"].(string); typ == "vless" {
+		flow, _ := ob["flow"].(string)
+		if flow == "" {
+			flow = "none"
+		}
+		add("flow", flow)
+	}
+	if list, _ := tls["alpn"].([]interface{}); len(list) > 0 {
+		parts := make([]string, 0, len(list))
+		for _, v := range list {
+			if s, ok := v.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		add("alpn", strings.Join(parts, "/"))
+	}
+	return b.String()
 }
 
 // download reads the URL to its end and says how far it got and how it ended:

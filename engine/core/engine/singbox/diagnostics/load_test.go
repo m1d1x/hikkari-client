@@ -123,8 +123,35 @@ func TestBurstCountsAnswersAndTimeouts(t *testing.T) {
 func TestLoadLineHidesTheProfile(t *testing.T) {
 	line := loadLine(context.Background(), "/nonexistent/sing-box",
 		loadTarget{Tag: "p-a", Proto: "vless", Outbound: map[string]interface{}{"type": "vless", "server": "8.8.8.8", "uuid": "SECRET"}}, "lo", defaultLoadPlan)
-	if strings.Contains(line, "SECRET") || !strings.Contains(line, `p-a proto=vless load_error=`) {
+	if strings.Contains(line, "SECRET") || !strings.Contains(line, `p-a proto=vless flow=none load_error=`) {
 		t.Fatal(line)
+	}
+}
+
+func TestLoadLineNamesTheKnobs(t *testing.T) {
+	ob := map[string]interface{}{
+		"type": "vless", "server": "8.8.8.8", "server_port": float64(8443), "uuid": "SECRET", "flow": "xtls-rprx-vision",
+		"tls": map[string]interface{}{
+			"enabled": true, "server_name": "www.samsung.com", "alpn": []interface{}{"h2", "http/1.1"},
+			"utls":    map[string]interface{}{"enabled": true, "fingerprint": "firefox"},
+			"reality": map[string]interface{}{"enabled": true, "public_key": "PUBKEY", "short_id": "SID"},
+		},
+	}
+	got := loadKnobs(ob)
+	if want := " fp=firefox sni=www.samsung.com port=8443 flow=xtls-rprx-vision alpn=h2/http/1.1"; got != want {
+		t.Fatalf("knobs %q, want %q", got, want)
+	}
+	line := loadLine(context.Background(), "/nonexistent/sing-box", loadTarget{Tag: "p-a", Proto: "vless-reality", Outbound: ob}, "lo", defaultLoadPlan)
+	for _, secret := range []string{"SECRET", "8.8.8.8", "PUBKEY", "SID"} {
+		if strings.Contains(line, secret) {
+			t.Fatalf("line names %s: %s", secret, line)
+		}
+	}
+	if !strings.HasPrefix(line, "p-a proto=vless-reality fp=firefox sni=www.samsung.com port=8443 ") {
+		t.Fatal(line)
+	}
+	if got := loadKnobs(map[string]interface{}{"type": "hysteria2", "tls": map[string]interface{}{"server_name": "a b"}}); got != "" {
+		t.Fatalf("hysteria with a bad name: %q", got)
 	}
 }
 
@@ -202,7 +229,7 @@ func TestLoadLineThroughARealCore(t *testing.T) {
 
 	line := loadLine(ctx, binary, target, iface, plan)
 	t.Log(line)
-	want := fmt.Sprintf(`^p-live proto=vless dl=%d/%d took=\S+ end=ok burst=%d/%d timeout=0 med=\S+ after=%d/%d med=\S+$`,
+	want := fmt.Sprintf(`^p-live proto=vless port=\d+ flow=none dl=%d/%d took=\S+ end=ok burst=%d/%d timeout=0 med=\S+ after=%d/%d med=\S+$`,
 		loadBytes, loadBytes, loadBurst, loadBurst, protoTries, protoTries)
 	if !regexp.MustCompile(want).MatchString(line) {
 		t.Fatalf("want %s, got %s", want, line)
