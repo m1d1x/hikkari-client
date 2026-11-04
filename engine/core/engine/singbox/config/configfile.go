@@ -150,13 +150,20 @@ func canonicalDNS() map[string]interface{} {
 			},
 			// fakeip only answers A/AAAA; anything else (HTTPS, SVCB,
 			// PTR…) used to come back as an error the OS kept retrying
-			// every second. An empty NOERROR ends the retry loop.
+			// every second. An empty NOERROR ends the retry loop. Only the
+			// query type is inverted: an invert over the whole rule also
+			// emptied the core's own lookups, which have no inbound, and a
+			// WireGuard profile's delay test found no address (tester-002,
+			// 04.11: every probe of the Amnezia profile said 503).
 			map[string]interface{}{
-				"inbound":    []interface{}{"tun-in"},
-				"query_type": []interface{}{"A", "AAAA"},
-				"invert":     true,
-				"action":     "predefined",
-				"rcode":      "NOERROR",
+				"type": "logical",
+				"mode": "and",
+				"rules": []interface{}{
+					map[string]interface{}{"inbound": []interface{}{"tun-in"}},
+					map[string]interface{}{"query_type": []interface{}{"A", "AAAA"}, "invert": true},
+				},
+				"action": "predefined",
+				"rcode":  "NOERROR",
 			},
 			realAddressRule(),
 			map[string]interface{}{
