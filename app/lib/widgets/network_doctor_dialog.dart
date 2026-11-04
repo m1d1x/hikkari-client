@@ -406,6 +406,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
     'proxy_disable': 'отключение зависшего системного прокси',
     'dns_reset': 'сброс DNS, указывающего на неработающую локальную службу',
     'dns_flush': 'очистка кэша DNS',
+    'dns_fallback': 'резервный DNS вместо молчащего DNS сети (снимется сам)',
     'reconnect': 'переподключение туннеля с новой привязкой',
   };
 

@@ -359,3 +359,33 @@ func WatchNetwork(ctx context.Context, onChange func(network string)) error {
 func (macEnv) dialer(idx int, timeout time.Duration) *net.Dialer { return boundDialer(idx, timeout) }
 
 func hostEnvFor() physicalEnv { return macEnv{} }
+
+// PrimaryInterface names the interface the system's default route goes
+// through, or "" with no default route.
+func PrimaryInterface() string {
+	routes, err := defaultRoutes()
+	if err != nil || len(routes) == 0 {
+		return ""
+	}
+	return routes[0].Name
+}
+
+// ResolverAnswers reports whether server resolves through interface name, as
+// the doctor judges a resolver: two of three popular domains answered, and a
+// second try a short while later before calling it dead.
+func ResolverAnswers(name, server string) bool {
+	ifi, err := net.InterfaceByName(name)
+	if err != nil {
+		return false
+	}
+	env := macEnv{}
+	for attempt := 0; attempt < 2; attempt++ {
+		if attempt > 0 {
+			env.sleep(500 * time.Millisecond)
+		}
+		if resolverWorks(env, ifi.Index, []string{server}) {
+			return true
+		}
+	}
+	return false
+}

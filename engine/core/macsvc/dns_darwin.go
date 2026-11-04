@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"NekkoVPN/core/netdoctor"
 )
@@ -26,6 +27,8 @@ import (
 type systemDNS struct {
 	dir string
 	net dnsSettings
+	// mu is shared with dnsFallback, the other writer of these settings.
+	mu *sync.Mutex
 }
 
 // dnsSettings is the system's per-service resolver setting.
@@ -46,6 +49,8 @@ func (netdoctorDNS) SetManualDNS(service string, servers ...string) error {
 }
 
 func (d systemDNS) Override(addr string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if net.ParseIP(addr) == nil {
 		return fmt.Errorf("%q is not an IP address", addr)
 	}
@@ -79,6 +84,8 @@ func (d systemDNS) Override(addr string) error {
 }
 
 func (d systemDNS) Restore() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	backups, _ := filepath.Glob(filepath.Join(d.dir, "backup-*"))
 	sort.Strings(backups)
 	var errs []string

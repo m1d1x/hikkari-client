@@ -5,6 +5,7 @@ package macsvc
 import (
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -25,7 +26,7 @@ func (f fakeSettings) SetManualDNS(service string, servers ...string) error {
 
 func TestOverrideAndRestoreGiveBackTheUsersSetting(t *testing.T) {
 	net := fakeSettings{"Wi-Fi": {"9.9.9.9"}}
-	d := systemDNS{dir: filepath.Join(t.TempDir(), "dns"), net: net}
+	d := systemDNS{dir: filepath.Join(t.TempDir(), "dns"), net: net, mu: &sync.Mutex{}}
 	if err := d.Override("172.19.0.2"); err != nil {
 		t.Fatal(err)
 	}
@@ -46,11 +47,11 @@ func TestBackupSurvivesASecondOverrideAndACrash(t *testing.T) {
 	net := fakeSettings{"Wi-Fi": {"9.9.9.9"}}
 	dir := filepath.Join(t.TempDir(), "dns")
 	for _, addr := range []string{"172.31.7.1", "172.19.0.2"} {
-		if err := (systemDNS{dir: dir, net: net}).Override(addr); err != nil {
+		if err := (systemDNS{dir: dir, net: net, mu: &sync.Mutex{}}).Override(addr); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := (systemDNS{dir: dir, net: net}).Restore(); err != nil {
+	if err := (systemDNS{dir: dir, net: net, mu: &sync.Mutex{}}).Restore(); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(net, fakeSettings{"Wi-Fi": {"9.9.9.9"}}) {
@@ -60,7 +61,7 @@ func TestBackupSurvivesASecondOverrideAndACrash(t *testing.T) {
 
 func TestRestoreWithNothingOverriddenChangesNothing(t *testing.T) {
 	net := fakeSettings{"Wi-Fi": {"9.9.9.9"}}
-	if err := (systemDNS{dir: filepath.Join(t.TempDir(), "dns"), net: net}).Restore(); err != nil {
+	if err := (systemDNS{dir: filepath.Join(t.TempDir(), "dns"), net: net, mu: &sync.Mutex{}}).Restore(); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(net, fakeSettings{"Wi-Fi": {"9.9.9.9"}}) {

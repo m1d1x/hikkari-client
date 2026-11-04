@@ -30,14 +30,17 @@ const (
 // netStack is the doctor's privileged side on macOS. The proxies, manual
 // resolvers, hosts and routes it changes belong to the whole machine, and the
 // daemon decides by itself what to change: a request carries no targets.
-type netStack struct{ log *logging.Logger }
+type netStack struct {
+	log *logging.Logger
+	dns dnsFallback
+}
 
 // StaticAdapters: nothing here wipes a manual address. Network settings stay
 // in the system's preferences and return when a service comes back up.
 func (*netStack) StaticAdapters() ([]string, error) { return nil, nil }
 
 // Repair is «починить сеть», or with proxyOnly the check before a connect.
-func (*netStack) Repair(proxyOnly bool) (svcproto.NetworkRepair, error) {
+func (n *netStack) Repair(proxyOnly bool) (svcproto.NetworkRepair, error) {
 	if proxyOnly {
 		a, err := netdoctor.SanitizeProxy()
 		if err != nil {
@@ -50,7 +53,7 @@ func (*netStack) Repair(proxyOnly bool) (svcproto.NetworkRepair, error) {
 		return svcproto.NetworkRepair{}, err
 	}
 	out := svcproto.NetworkRepair{Actions: make([]svcproto.NetworkAction, 0, len(res.Actions))}
-	for _, a := range res.Actions {
+	for _, a := range append(res.Actions, n.dns.Check()) {
 		out.Actions = append(out.Actions, wireAction(a))
 	}
 	return out, nil
@@ -108,6 +111,9 @@ func (n *netStack) Reset() (svcproto.NetworkReset, error) {
 		res.NetworkPending = true
 		fmt.Fprintf(&out, "> no default route after %s\n", networkBackTimeout)
 	}
+	// The cycled service has its resolvers from DHCP again: judge them.
+	dns := n.dns.Check()
+	fmt.Fprintf(&out, "> %s: done=%v\n", dns.Name, dns.Done)
 
 	res.Output = out.String()
 	if len(failed) > 0 {

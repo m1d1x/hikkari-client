@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -80,7 +81,14 @@ func Run() error {
 	if err := checkBundle(); err != nil {
 		return err
 	}
-	stack := &netStack{}
+	dnsState := filepath.Join(CoreDir, "dns-state")
+	dnsMu := &sync.Mutex{}
+	stack := &netStack{dns: dnsFallback{
+		dir: filepath.Join(CoreDir, "dns-fallback"),
+		net: netdoctorDNS{},
+		env: macFallbackEnv{dnsState: dnsState},
+		mu:  dnsMu,
+	}}
 	srv, err := service.NewServer(service.Config{
 		CoreDir: CoreDir,
 		CoreBin: coreBin,
@@ -88,7 +96,7 @@ func Run() error {
 		// the sanitiser allows none, and the daemon's own dir is the safe one.
 		CoreWorkDir: CoreDir,
 		XrayBin:     xrayBin,
-		SystemDNS:   systemDNS{dir: filepath.Join(CoreDir, "dns-state"), net: netdoctorDNS{}},
+		SystemDNS:   systemDNS{dir: dnsState, net: netdoctorDNS{}, mu: dnsMu},
 		Updater:     updaterBin,
 		UpdaterArgs: []string{"--root", filepath.Dir(Bundle), "--layout", "macos"},
 		Listen:      listen,
@@ -106,6 +114,7 @@ func Run() error {
 	srv.CaptureCrashes()
 	ctx, stop := signalContext()
 	defer stop()
+	go stack.dns.watch(ctx, srv.Log())
 	err = srv.Serve(ctx)
 	if errors.Is(err, service.ErrRestart) {
 		return nil
