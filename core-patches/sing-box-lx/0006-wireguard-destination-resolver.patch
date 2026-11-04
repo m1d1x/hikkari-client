@@ -1,0 +1,217 @@
+diff --git a/option/wireguard.go b/option/wireguard.go
+index d6810ed45..404f86c44 100644
+--- a/option/wireguard.go
++++ b/option/wireguard.go
+@@ -27,6 +27,11 @@ type WireGuardEndpointOptions struct {
+ 	// is an explicit error (see device gating in transport/wireguard).
+ 	AmneziaWGOptions
+ 	// lx:end awg
++	// hikkari: destination-resolver — the DNS server that resolves the names
++	// this endpoint dials (connection destinations, not the peer address). Set
++	// it to a server that detours through this endpoint and the names never
++	// leave the tunnel. Empty keeps upstream behaviour: the DNS rules decide.
++	DestinationResolver *DomainResolveOptions `json:"destination_resolver,omitempty"`
+ 	DialerOptions
+ }
+ 
+diff --git a/protocol/wireguard/endpoint.go b/protocol/wireguard/endpoint.go
+index 77ad904fe..a3e30a146 100644
+--- a/protocol/wireguard/endpoint.go
++++ b/protocol/wireguard/endpoint.go
+@@ -105,6 +105,9 @@ type Endpoint struct {
+ 	// resumeOnDial wake aborts instead of starting a fresh device rebuild that
+ 	// Close would then have to wait out. SPEC 030 fast shutdown.
+ 	closing atomic.Bool
++	// hikkari: destination-resolver — query options for the names this endpoint
++	// dials; the zero value leaves the choice to the DNS rules (upstream).
++	destinationQuery adapter.DNSQueryOptions
+ }
+ 
+ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
+@@ -139,6 +142,10 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+ 		return nil, err
+ 	}
+ 	ep.outboundDialer = outboundDialer
++	ep.destinationQuery, err = destinationQueryOptions(ctx, options.DestinationResolver) // hikkari: destination-resolver
++	if err != nil {
++		return nil, err
++	}
+ 	var udpTimeout time.Duration
+ 	if options.UDPTimeout != 0 {
+ 		udpTimeout = time.Duration(options.UDPTimeout)
+@@ -652,7 +659,7 @@ func (w *Endpoint) DialContext(ctx context.Context, network string, destination
+ 		// lx: SPEC 020 — resolve BEFORE waking: the lookup does not go through this
+ 		// endpoint (a DNS detour through it re-enters DialContext with an IP and
+ 		// wakes it itself), so a failed lookup must not pay a full Up+handshake.
+-		destinationAddresses, err := w.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
++		destinationAddresses, err := w.dnsRouter.Lookup(ctx, destination.Fqdn, w.destinationQuery) // hikkari: destination-resolver
+ 		if err != nil {
+ 			return nil, err
+ 		}
+@@ -675,7 +682,7 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination
+ 	w.logger.InfoContext(ctx, "outbound packet connection to ", destination)
+ 	if destination.IsDomain() {
+ 		// lx: SPEC 020 — resolve before waking (see DialContext).
+-		destinationAddresses, err := w.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
++		destinationAddresses, err := w.dnsRouter.Lookup(ctx, destination.Fqdn, w.destinationQuery) // hikkari: destination-resolver
+ 		if err != nil {
+ 			return nil, netip.Addr{}, err
+ 		}
+diff --git a/protocol/wireguard/endpoint_resolver_hikkari.go b/protocol/wireguard/endpoint_resolver_hikkari.go
+new file mode 100644
+index 000000000..f110504c8
+--- /dev/null
++++ b/protocol/wireguard/endpoint_resolver_hikkari.go
+@@ -0,0 +1,23 @@
++package wireguard
++
++import (
++	"context"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/dialer"
++	"github.com/sagernet/sing-box/option"
++)
++
++// destinationQueryOptions turns destination_resolver into the query options the
++// endpoint passes when it resolves a connection's destination name. Without
++// the option the endpoint asks the DNS router with no transport, so the DNS
++// rules pick the server: for the core's own lookups that is dns.final, a
++// resolver outside the tunnel, and the provider sees (and may forge) every name
++// that then travels inside it. DNS servers are created before endpoints, so the
++// transport is looked up here and a wrong tag fails the config at start.
++func destinationQueryOptions(ctx context.Context, resolver *option.DomainResolveOptions) (adapter.DNSQueryOptions, error) {
++	if resolver == nil || resolver.Server == "" {
++		return adapter.DNSQueryOptions{}, nil
++	}
++	return dialer.NewDNSQueryOptions(ctx, resolver, false)
++}
+diff --git a/protocol/wireguard/endpoint_resolver_hikkari_test.go b/protocol/wireguard/endpoint_resolver_hikkari_test.go
+new file mode 100644
+index 000000000..32c56c201
+--- /dev/null
++++ b/protocol/wireguard/endpoint_resolver_hikkari_test.go
+@@ -0,0 +1,123 @@
++package wireguard
++
++import (
++	"context"
++	"net/netip"
++	"testing"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/adapter/endpoint"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing-box/transport/wireguard"
++	E "github.com/sagernet/sing/common/exceptions"
++	"github.com/sagernet/sing/common/logger"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/service"
++)
++
++type resolverTestTransport struct {
++	adapter.DNSTransport
++	tag string
++}
++
++func (t resolverTestTransport) Tag() string { return t.tag }
++
++type resolverTestTransports struct {
++	adapter.DNSTransportManager
++	transports map[string]adapter.DNSTransport
++}
++
++func (m resolverTestTransports) Transport(tag string) (adapter.DNSTransport, bool) {
++	transport, loaded := m.transports[tag]
++	return transport, loaded
++}
++
++// lookupRecorder is a DNS router that refuses every lookup and keeps the
++// options it was asked with, so the dial stops before touching the device.
++type lookupRecorder struct {
++	adapter.DNSRouter
++	asked []adapter.DNSQueryOptions
++}
++
++var errLookupRecorded = E.New("lookup recorded")
++
++func (r *lookupRecorder) Lookup(_ context.Context, _ string, options adapter.DNSQueryOptions) ([]netip.Addr, error) {
++	r.asked = append(r.asked, options)
++	return nil, errLookupRecorded
++}
++
++func resolverTestContext() (context.Context, adapter.DNSTransport) {
++	tunnelled := resolverTestTransport{tag: "dns-p-awg"}
++	ctx := service.ContextWith[adapter.DNSTransportManager](context.Background(), resolverTestTransports{
++		transports: map[string]adapter.DNSTransport{"dns-p-awg": tunnelled},
++	})
++	return ctx, tunnelled
++}
++
++func newResolverTestEndpoint(t *testing.T, ctx context.Context, resolver *option.DomainResolveOptions) (*Endpoint, *lookupRecorder) {
++	t.Helper()
++	query, err := destinationQueryOptions(ctx, resolver)
++	if err != nil {
++		t.Fatal(err)
++	}
++	router := &lookupRecorder{}
++	w := &Endpoint{
++		Adapter:          endpoint.NewAdapter(C.TypeWireGuard, "p-awg", []string{N.NetworkTCP, N.NetworkUDP}, nil),
++		logger:           logger.NOP(),
++		dnsRouter:        router,
++		endpoint:         &wireguard.Endpoint{},
++		destinationQuery: query,
++	}
++	w.started.Store(true)
++	return w, router
++}
++
++// The names a WireGuard endpoint dials are resolved by destination_resolver's
++// server, on the TCP path and on the UDP path alike.
++func TestDestinationResolverResolvesDialedNames(t *testing.T) {
++	ctx, tunnelled := resolverTestContext()
++	w, router := newResolverTestEndpoint(t, ctx, &option.DomainResolveOptions{
++		Server:   "dns-p-awg",
++		Strategy: option.DomainStrategy(C.DomainStrategyIPv4Only),
++	})
++	destination := M.ParseSocksaddrHostPort("discord.com", 443)
++	if _, err := w.DialContext(context.Background(), N.NetworkTCP, destination); err == nil || !E.IsMulti(err, errLookupRecorded) {
++		t.Fatalf("dial: want the recorded lookup error, got %v", err)
++	}
++	if _, _, err := w.ListenPacketWithDestination(context.Background(), destination); err == nil || !E.IsMulti(err, errLookupRecorded) {
++		t.Fatalf("listen: want the recorded lookup error, got %v", err)
++	}
++	if len(router.asked) != 2 {
++		t.Fatalf("want 2 lookups, got %d", len(router.asked))
++	}
++	for i, asked := range router.asked {
++		if asked.Transport != tunnelled {
++			t.Fatalf("lookup %d went to %v, want the tunnelled server", i, asked.Transport)
++		}
++		if asked.Strategy != C.DomainStrategyIPv4Only {
++			t.Fatalf("lookup %d strategy %v, want ipv4_only", i, asked.Strategy)
++		}
++	}
++}
++
++// Without the option the endpoint keeps upstream behaviour: no transport, the
++// DNS rules decide.
++func TestDestinationResolverUnsetLeavesRules(t *testing.T) {
++	ctx, _ := resolverTestContext()
++	w, router := newResolverTestEndpoint(t, ctx, nil)
++	_, _ = w.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPort("discord.com", 443))
++	if len(router.asked) != 1 || router.asked[0].Transport != nil {
++		t.Fatalf("want one lookup with no transport, got %+v", router.asked)
++	}
++}
++
++// A tag that names no DNS server fails the endpoint at construction instead of
++// silently resolving outside the tunnel.
++func TestDestinationResolverUnknownServer(t *testing.T) {
++	ctx, _ := resolverTestContext()
++	if _, err := destinationQueryOptions(ctx, &option.DomainResolveOptions{Server: "dns-missing"}); err == nil {
++		t.Fatal("want an error for an unknown server")
++	}
++}

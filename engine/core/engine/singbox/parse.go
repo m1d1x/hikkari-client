@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"sort"
@@ -628,6 +629,9 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 			cfg["mtu"] = n
 		}
 	}
+	if dns := wireGuardDNS(getIniField(iface, "DNS")); len(dns) > 0 {
+		cfg["dns"] = dns
+	}
 
 	// AmneziaWG obfuscation params — presence of Jc marks this as "awg"
 	// rather than plain WireGuard.
@@ -661,6 +665,21 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 
 	label := host
 	return Draft{Kind: profile.KindEndpoint, Label: label, Config: cfg}, nil
+}
+
+// wireGuardDNS keeps the resolver addresses of an [Interface] DNS line. The
+// line also takes search domains (wg-quick and amneziawg-windows both put
+// anything that is not an address there); the client has no use for them, so
+// they are dropped. The engine resolves through the first address the tunnel
+// can carry, inside the tunnel.
+func wireGuardDNS(line string) []interface{} {
+	var out []interface{}
+	for _, item := range splitAndTrim(line) {
+		if addr, err := netip.ParseAddr(item); err == nil {
+			out = append(out, addr.Unmap().String())
+		}
+	}
+	return out
 }
 
 // applyAwgMasquerade takes Ip, Id and Ib, which ask the core to generate the first

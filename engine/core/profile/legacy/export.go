@@ -184,6 +184,9 @@ func exportWireGuard(p profile.Profile) (string, error) {
 	if addrs := joinIfaceList(c["address"]); addrs != "" {
 		b.WriteString("Address = " + addrs + "\n")
 	}
+	if dns := joinIfaceList(c["dns"]); dns != "" {
+		b.WriteString("DNS = " + dns + "\n")
+	}
 	if mtu := cfgInt(c, "mtu"); mtu != 0 {
 		b.WriteString("MTU = " + strconv.Itoa(mtu) + "\n")
 	}

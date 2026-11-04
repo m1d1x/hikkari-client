@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,7 +75,7 @@ func TestAwgEndpointPassesTheRealCoresCheck(t *testing.T) {
 	if _, err := os.Stat(core); err != nil {
 		t.Skip("no sing-box binary at archive/sing-box")
 	}
-	raw, err := json.Marshal(map[string]interface{}{"endpoints": []interface{}{singBoxEndpoint(awgProfile())}})
+	raw, err := json.Marshal(endpointConfig(awgProfile()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +102,7 @@ func TestAwg2FieldsPassTheRealCoresCheck(t *testing.T) {
 	block["s3"], block["s4"] = 40, 50
 	block["h1"], block["h2"], block["h3"], block["h4"] = "100-200", "300-400", "500-600", "700-800"
 	block["i1"] = "<b 0xc0><r 16>"
-	raw, err := json.Marshal(map[string]interface{}{"endpoints": []interface{}{singBoxEndpoint(block)}})
+	raw, err := json.Marshal(endpointConfig(block))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestAwgMasqueradePassesTheRealCoresCheck(t *testing.T) {
 	}
 	block := awgProfile()
 	block["ip"], block["id"], block["ib"] = "quic", "www.gstatic.com", "chrome"
-	raw, err := json.Marshal(map[string]interface{}{"endpoints": []interface{}{singBoxEndpoint(block)}})
+	raw, err := json.Marshal(endpointConfig(block))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +157,7 @@ func TestLegacyPresharedKeyReachesTheCoreUnderItsName(t *testing.T) {
 			block["peers"].([]interface{})[0].(map[string]interface{})["preshared_key"] = psk
 			before, _ := json.Marshal(block)
 
-			ep := singBoxEndpoint(block)
+			ep, resolver := singBoxEndpoint(block)
 			peer := ep["peers"].([]interface{})[0].(map[string]interface{})
 			if peer["pre_shared_key"] != psk || peer["preshared_key"] != nil {
 				t.Fatalf("peer as written: %v", peer)
@@ -164,9 +165,23 @@ func TestLegacyPresharedKeyReachesTheCoreUnderItsName(t *testing.T) {
 			if after, _ := json.Marshal(block); string(after) != string(before) {
 				t.Fatal("the stored profile was changed")
 			}
-			coreCheck(t, map[string]interface{}{"endpoints": []interface{}{ep}})
+			coreCheck(t, map[string]interface{}{
+				"dns":       map[string]interface{}{"servers": []interface{}{resolver}},
+				"endpoints": []interface{}{ep},
+			})
 		})
 	}
+}
+
+// endpointConfig is the smallest config the core takes for one WireGuard
+// profile: the endpoint and the DNS server its destination_resolver names.
+func endpointConfig(block map[string]interface{}) map[string]interface{} {
+	ep, resolver := singBoxEndpoint(block)
+	cfg := map[string]interface{}{"endpoints": []interface{}{ep}}
+	if resolver != nil {
+		cfg["dns"] = map[string]interface{}{"servers": []interface{}{resolver}}
+	}
+	return cfg
 }
 
 // coreCheck runs the real core's own config check on cfg; skipped where the
@@ -190,5 +205,38 @@ func coreCheck(t *testing.T, cfg map[string]interface{}) {
 	}
 	if out, err := exec.Command(core, "check", "-c", path).CombinedOutput(); err != nil {
 		t.Fatalf("sing-box check: %v\n%s", err, out)
+	}
+}
+
+// A rebuild owns the tunnel resolvers: one whose profile is gone goes with it,
+// or the core refuses the config over a detour it does not have. A tunnel with
+// an IPv6 address may get AAAA answers.
+func TestTunnelResolversFollowTheProfiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"outbounds":[{"type":"direct","tag":"direct"}],"route":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := New(path)
+	dual := awgProfile()
+	dual["address"] = []interface{}{"10.66.0.7/32", "fd00:66::7/128"}
+	dual["peers"].([]interface{})[0].(map[string]interface{})["allowed_ips"] = []interface{}{"0.0.0.0/0", "::/0"}
+	if err := s.RebuildActive([]ProfileSpec{{Tag: "p-awg", Kind: "endpoint", Config: dual}}, "p-awg", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := s.Read()
+	ep := cfg["endpoints"].([]interface{})[0].(map[string]interface{})
+	if r, _ := ep["destination_resolver"].(map[string]interface{}); r["strategy"] != "prefer_ipv4" {
+		t.Fatalf("dual-stack tunnel: %v", ep["destination_resolver"])
+	}
+	coreCheck(t, cfg)
+
+	direct := map[string]interface{}{"tag": "p-out", "type": "socks", "server": "127.0.0.1", "server_port": 1080}
+	if err := s.RebuildActive([]ProfileSpec{{Tag: "p-out", Kind: "outbound", Config: direct}}, "p-out", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = s.Read()
+	servers, _ := json.Marshal(cfg["dns"].(map[string]interface{})["servers"])
+	if strings.Contains(string(servers), "dns-in-") {
+		t.Fatalf("a resolver outlived its endpoint: %s", servers)
 	}
 }

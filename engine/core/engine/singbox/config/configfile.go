@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -315,6 +316,7 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 	}
 
 	endpoints := make([]interface{}, 0, len(specs))
+	tunnelResolvers := make([]interface{}, 0)
 	outboundBlocks := make([]interface{}, 0, len(specs))
 	profileTags := make([]interface{}, 0, len(specs))
 	hasOutbound := false
@@ -328,7 +330,11 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 			outboundBlocks = append(outboundBlocks, p.Config)
 			hasOutbound = true
 		} else {
-			endpoints = append(endpoints, singBoxEndpoint(p.Config))
+			ep, resolver := singBoxEndpoint(p.Config)
+			endpoints = append(endpoints, ep)
+			if resolver != nil {
+				tunnelResolvers = append(tunnelResolvers, resolver)
+			}
 		}
 	}
 
@@ -385,6 +391,7 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 		head = AutoTag
 	}
 	rewriteRouteRefs(cfg, head, legacyTags)
+	addTunnelResolvers(cfg, tunnelResolvers)
 	applyHostNetwork(cfg, host)
 
 	// Keep ICMP routed direct whenever ANY profile is outbound-kind —
@@ -598,6 +605,7 @@ func (s *Store) ApplyActive(kind string, block map[string]interface{}, newTag st
 	case "outbound":
 		cfg["endpoints"] = []interface{}{}
 		cfg["outbounds"] = upsertTaggedOutbound(cfg["outbounds"], outboundTag, block)
+		addTunnelResolvers(cfg, nil) // their detours were the endpoints
 		// Hysteria2/VLESS/Trojan don't carry ICMP — without an explicit
 		// route rule sing-box logs a WARN for every ping and the packets
 		// die. Send ICMP to the system "direct" outbound so ping/tracert
@@ -605,7 +613,11 @@ func (s *Store) ApplyActive(kind string, block map[string]interface{}, newTag st
 		// don't need this — they handle ICMP natively.
 		ensureICMPDirectRule(cfg, true)
 	case "endpoint":
-		cfg["endpoints"] = []interface{}{singBoxEndpoint(block)}
+		ep, resolver := singBoxEndpoint(block)
+		cfg["endpoints"] = []interface{}{ep}
+		if resolver != nil {
+			addTunnelResolvers(cfg, []interface{}{resolver})
+		}
 		cfg["outbounds"] = removeTaggedOutbound(cfg["outbounds"], outboundTag)
 		ensureICMPDirectRule(cfg, false)
 	default:
@@ -812,31 +824,182 @@ func stripLineComments(raw []byte) []byte {
 	return []byte(strings.Join(out, "\n"))
 }
 
-// singBoxEndpoint is an endpoint as sing-box reads it. A profile keeps "awg" as
-// its type, which is what says AmneziaWG to the rest of the client, while the
+// singBoxEndpoint is an endpoint as sing-box reads it, with the DNS server
+// that resolves the names it dials, if it has one. A profile keeps "awg" as its
+// type, which is what says AmneziaWG to the rest of the client, while the
 // sing-box-lx core reads it as a "wireguard" endpoint with the obfuscation
 // fields, and refuses the whole config over a type it does not know. The same
 // refusal hits a peer's "preshared_key": 1.0.34 and earlier wrote the key under
-// that name and the core knows only "pre_shared_key". The stored profile is
-// never changed: the endpoint is a copy whenever anything differs.
-func singBoxEndpoint(block map[string]interface{}) map[string]interface{} {
+// that name and the core knows only "pre_shared_key", and the profile's "dns",
+// the [Interface] DNS line, which is the client's and not the core's. The
+// stored profile is never changed: the endpoint is always a copy.
+func singBoxEndpoint(block map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
 	typ := block["type"]
 	if typ != "awg" && typ != "wireguard" {
-		return block
-	}
-	peers, renamed := corePeers(block["peers"])
-	if typ != "awg" && !renamed {
-		return block
+		return block, nil
 	}
 	out := make(map[string]interface{}, len(block))
 	for k, v := range block {
 		out[k] = v
 	}
 	out["type"] = "wireguard"
-	if renamed {
+	if peers, renamed := corePeers(block["peers"]); renamed {
 		out["peers"] = peers
 	}
+	delete(out, "dns")
+	delete(out, "destination_resolver")
+	resolver := tunnelResolver(block)
+	if resolver != nil {
+		strategy := "ipv4_only"
+		if tunnelCarries(block["address"], true) {
+			strategy = "prefer_ipv4"
+		}
+		out["destination_resolver"] = map[string]interface{}{
+			"server":   resolver["tag"],
+			"strategy": strategy,
+		}
+	}
+	return out, resolver
+}
+
+// tunnelResolverPrefix marks the DNS servers the engine adds per WireGuard
+// endpoint; a rebuild drops every one of them before adding the current set.
+const tunnelResolverPrefix = "dns-in-"
+
+// defaultTunnelDNS is what a config with no DNS line resolves through: the
+// Amnezia client's own default primary DNS (Cloudflare), reached through the
+// tunnel like the configured one would be.
+var defaultTunnelDNS = map[bool]string{false: "1.1.1.1", true: "2606:4700:4700::1111"}
+
+// tunnelResolver is the DNS server for the names a WireGuard endpoint dials
+// (patch 0006, destination_resolver): the config's DNS, or Cloudflare without
+// one, asked through the endpoint itself. A name that reaches a WireGuard
+// profile by name (a fake address the TUN handed out, the delay test, a port the
+// sniffer skips) is resolved by the endpoint, and without its own server the
+// DNS rules sent it to dns.final, the provider's resolver: the provider saw the
+// name and could answer it with a stub, while the traffic itself went through
+// the tunnel. The Amnezia client sets the config's DNS on the tunnel interface
+// and blocks port 53 elsewhere for the same reason. A server the tunnel cannot
+// carry (AllowedIPs leave it out, or the family has no tunnel address) is
+// skipped for the next one; with none left, a split tunnel that carries no
+// resolver at all, the endpoint keeps the DNS rules, as in the Amnezia client,
+// where such a server is reached outside the tunnel.
+func tunnelResolver(block map[string]interface{}) map[string]interface{} {
+	tag, _ := block["tag"].(string)
+	if tag == "" {
+		return nil
+	}
+	candidates := make([]string, 0, 3)
+	if list, ok := block["dns"].([]interface{}); ok {
+		for _, item := range list {
+			if s, ok := item.(string); ok {
+				candidates = append(candidates, s)
+			}
+		}
+	}
+	// Cloudflare stands behind the config's servers too: one the tunnel
+	// cannot carry (an IPv6 server on an IPv4-only tunnel, say) would otherwise
+	// leave the names with the provider.
+	candidates = append(candidates, defaultTunnelDNS[false], defaultTunnelDNS[true])
+	allowed := peerAllowedIPs(block["peers"])
+	for _, candidate := range candidates {
+		addr, err := netip.ParseAddr(candidate)
+		if err != nil {
+			continue
+		}
+		addr = addr.Unmap()
+		if !tunnelCarries(block["address"], addr.Is6()) || !prefixesContain(allowed, addr) {
+			continue
+		}
+		return map[string]interface{}{
+			"tag":    tunnelResolverPrefix + tag,
+			"type":   "udp",
+			"server": addr.String(),
+			"detour": tag,
+		}
+	}
+	return nil
+}
+
+// tunnelCarries says whether the endpoint has a tunnel address of the family.
+func tunnelCarries(addresses interface{}, v6 bool) bool {
+	for _, p := range parsePrefixes(addresses) {
+		if p.Addr().Is6() == v6 {
+			return true
+		}
+	}
+	return false
+}
+
+func peerAllowedIPs(raw interface{}) []netip.Prefix {
+	peers, _ := raw.([]interface{})
+	var out []netip.Prefix
+	for _, p := range peers {
+		if peer, ok := p.(map[string]interface{}); ok {
+			out = append(out, parsePrefixes(peer["allowed_ips"])...)
+		}
+	}
 	return out
+}
+
+func parsePrefixes(raw interface{}) []netip.Prefix {
+	var items []string
+	switch v := raw.(type) {
+	case string:
+		items = []string{v}
+	case []interface{}:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				items = append(items, s)
+			}
+		}
+	case []string:
+		items = v
+	}
+	out := make([]netip.Prefix, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if p, err := netip.ParsePrefix(item); err == nil {
+			out = append(out, p.Masked())
+		} else if a, err := netip.ParseAddr(item); err == nil {
+			out = append(out, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+		}
+	}
+	return out
+}
+
+func prefixesContain(prefixes []netip.Prefix, addr netip.Addr) bool {
+	for _, p := range prefixes {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// addTunnelResolvers replaces the per-endpoint DNS servers in dns.servers with
+// the given set. They answer only the endpoints' destination_resolver: no DNS
+// rule names them, so TUN queries keep fakeip and dns-direct.
+func addTunnelResolvers(cfg map[string]interface{}, resolvers []interface{}) {
+	dns, _ := cfg["dns"].(map[string]interface{})
+	if dns == nil {
+		if len(resolvers) == 0 {
+			return
+		}
+		dns = map[string]interface{}{}
+		cfg["dns"] = dns
+	}
+	servers, _ := dns["servers"].([]interface{})
+	kept := make([]interface{}, 0, len(servers)+len(resolvers))
+	for _, sv := range servers {
+		if m, ok := sv.(map[string]interface{}); ok {
+			if tag, _ := m["tag"].(string); strings.HasPrefix(tag, tunnelResolverPrefix) {
+				continue
+			}
+		}
+		kept = append(kept, sv)
+	}
+	dns["servers"] = append(kept, resolvers...)
 }
 
 // corePeers returns copies of the peers with "preshared_key" renamed, and
