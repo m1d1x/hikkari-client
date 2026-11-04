@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -424,4 +425,64 @@ func TestAutoTunnelRulesComeBeforeTheAppsAndOnlyWhenDeclared(t *testing.T) {
 	if i := ruleIndex(bare["route"].(map[string]interface{})["rules"].([]interface{}), isAuto); i >= 0 {
 		t.Errorf("rule without a declared set at %d: the core would refuse the config", i)
 	}
+}
+
+// A browser with Secure DNS connects to real IPv6 addresses our exits cannot
+// reach. The rule that sends those flows by name runs right after the one that
+// keeps Russian addresses as they are, in a new config, in an old one healed on
+// rebuild, and through a routing compile.
+func TestRealIPv6GoesByNameExceptRussian(t *testing.T) {
+	check := func(t *testing.T, cfg map[string]interface{}) {
+		t.Helper()
+		route, _ := cfg["route"].(map[string]interface{})
+		rules, _ := route["rules"].([]interface{})
+		if len(rules) < 3 {
+			t.Fatalf("%d rules", len(rules))
+		}
+		russian, _ := rules[0].(map[string]interface{})
+		byName, _ := rules[1].(map[string]interface{})
+		general, _ := rules[2].(map[string]interface{})
+		if _, on := russian["override_destination"]; on || russian["action"] != "sniff" {
+			t.Fatalf("first rule: %v", russian)
+		}
+		ranges, _ := russian["ip_cidr"].([]interface{})
+		found := false
+		for _, r := range ranges {
+			cidr, _ := r.(string)
+			if !strings.Contains(cidr, ":") {
+				t.Fatalf("an IPv4 range among the Russian ones: %s", cidr)
+			}
+			found = found || cidr == "2a02:6b8::/32"
+		}
+		if !found {
+			t.Fatalf("no Yandex range in %v", ranges)
+		}
+		if on, _ := byName["override_destination"].(bool); !on {
+			t.Fatalf("second rule: %v", byName)
+		}
+		if general["action"] != "sniff" || general["ip_cidr"] != nil {
+			t.Fatalf("third rule: %v", general)
+		}
+		overrides := 0
+		for _, r := range rules {
+			m, _ := r.(map[string]interface{})
+			if on, _ := m["override_destination"].(bool); on {
+				overrides++
+			}
+		}
+		if overrides != 1 {
+			t.Fatalf("%d rules override", overrides)
+		}
+	}
+	fresh := DefaultConfig()
+	check(t, fresh)
+	ApplyRouting(fresh, RoutingState{Enabled: true, Mode: ModeBypass}, SelectorTag)
+	check(t, fresh)
+
+	old := freshCfg()
+	route := old["route"].(map[string]interface{})
+	route["rules"] = healRealIPv6Sniff(route["rules"].([]interface{}))
+	check(t, old)
+	route["rules"] = healRealIPv6Sniff(route["rules"].([]interface{}))
+	check(t, old)
 }

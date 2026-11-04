@@ -1,0 +1,81 @@
+diff --git a/option/rule_action.go b/option/rule_action.go
+index ae05200..b4cc741 100644
+--- a/option/rule_action.go
++++ b/option/rule_action.go
+@@ -325,6 +325,8 @@ func (r *RejectActionOptions) UnmarshalJSON(bytes []byte) error {
+ type RouteActionSniff struct {
+ 	Sniffer badoption.Listable[string] `json:"sniffer,omitempty" enum:"tls,http,quic,dns,stun,bittorrent,dtls,ssh,rdp,ntp"`
+ 	Timeout badoption.Duration         `json:"timeout,omitempty"`
++	// hikkari: dial the sniffed name instead of the address the client chose.
++	OverrideDestination bool `json:"override_destination,omitempty"`
+ }
+ 
+ type RouteActionResolve struct {
+diff --git a/route/rule/rule_action.go b/route/rule/rule_action.go
+index bef998b..3039bea 100644
+--- a/route/rule/rule_action.go
++++ b/route/rule/rule_action.go
+@@ -105,8 +105,9 @@ func NewRuleAction(ctx context.Context, logger logger.ContextLogger, action opti
+ 		return &RuleActionHijackDNS{}, nil
+ 	case C.RuleActionTypeSniff:
+ 		sniffAction := &RuleActionSniff{
+-			SnifferNames: action.SniffOptions.Sniffer,
+-			Timeout:      time.Duration(action.SniffOptions.Timeout),
++			SnifferNames:        action.SniffOptions.Sniffer,
++			Timeout:             time.Duration(action.SniffOptions.Timeout),
++			OverrideDestination: action.SniffOptions.OverrideDestination,
+ 		}
+ 		return sniffAction, sniffAction.build()
+ 	case C.RuleActionTypeResolve:
+@@ -508,12 +509,11 @@ func (r *RuleActionHijackDNS) String() string {
+ }
+ 
+ type RuleActionSniff struct {
+-	SnifferNames   []string
+-	StreamSniffers []sniff.StreamSniffer
+-	PacketSniffers []sniff.PacketSniffer
+-	Timeout        time.Duration
+-	// Deprecated
+-	OverrideDestination bool
++	SnifferNames        []string
++	StreamSniffers      []sniff.StreamSniffer
++	PacketSniffers      []sniff.PacketSniffer
++	Timeout             time.Duration
++	OverrideDestination bool // hikkari: set by the rule, not only by a legacy inbound
+ }
+ 
+ func (r *RuleActionSniff) Type() string {
+diff --git a/route/rule/rule_action_hikkari_test.go b/route/rule/rule_action_hikkari_test.go
+new file mode 100644
+index 0000000..7484b24
+--- /dev/null
++++ b/route/rule/rule_action_hikkari_test.go
+@@ -0,0 +1,28 @@
++package rule
++
++import (
++	"context"
++	"testing"
++
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++
++	C "github.com/sagernet/sing-box/constant"
++)
++
++// The rule itself turns the override on: the inbound field that used to is gone
++// from the configs we write.
++func TestSniffRuleCarriesTheOverride(t *testing.T) {
++	for _, want := range []bool{true, false} {
++		action, err := NewRuleAction(context.Background(), log.NewNOPFactory().Logger(), option.RuleAction{
++			Action:       C.RuleActionTypeSniff,
++			SniffOptions: option.RouteActionSniff{OverrideDestination: want},
++		})
++		if err != nil {
++			t.Fatal(err)
++		}
++		if got := action.(*RuleActionSniff).OverrideDestination; got != want {
++			t.Fatalf("override = %v, want %v", got, want)
++		}
++	}
++}
