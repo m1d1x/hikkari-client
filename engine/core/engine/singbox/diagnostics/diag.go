@@ -55,6 +55,7 @@ type Runner struct {
 	reachAt      time.Time   // last reach round
 	loadAt       time.Time   // last load round; see load.go
 	loadBusy     bool        // a load round is running
+	loadMobile   bool        // the last round found a mobile network
 }
 
 type physIface struct {

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -155,6 +156,179 @@ func TestLoadLineNamesTheKnobs(t *testing.T) {
 	}
 }
 
+// silentListener accepts TCP and never says a word: what a banned address looks
+// like from outside.
+func silentListener(t *testing.T) (string, func()) {
+	t.Helper()
+	l, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		var held []net.Conn
+		defer func() {
+			for _, c := range held {
+				_ = c.Close()
+			}
+		}()
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			held = append(held, c)
+			select {
+			case <-done:
+				return
+			default:
+			}
+		}
+	}()
+	return l.Addr().String(), func() { close(done); _ = l.Close() }
+}
+
+func TestHelloFlowsTellSilenceFromAnAnswer(t *testing.T) {
+	local := net.IPv4(127, 0, 0, 1)
+	silent, stop := silentListener(t)
+	defer stop()
+	if opened, answered := helloFlows(context.Background(), local, silent, "www.example.com", 200*time.Millisecond); opened != addrFlows || answered != 0 {
+		t.Fatalf("silent: opened=%d answered=%d", opened, answered)
+	}
+
+	tlsSrv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer tlsSrv.Close()
+	if opened, answered := helloFlows(context.Background(), local, tlsSrv.Listener.Addr().String(), "www.example.com", 2*time.Second); opened != addrFlows || answered != addrFlows {
+		t.Fatalf("tls: opened=%d answered=%d", opened, answered)
+	}
+
+	// A server that closes on sight has answered: it is there.
+	closing, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closing.Close()
+	go func() {
+		for {
+			c, err := closing.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	if _, answered := helloFlows(context.Background(), local, closing.Addr().String(), "", 2*time.Second); answered != addrFlows {
+		t.Fatalf("closing: answered=%d", answered)
+	}
+}
+
+func TestLoadLineOnADeadAddressMeasuresNothing(t *testing.T) {
+	addr, stop := silentListener(t)
+	defer stop()
+	host, port, _ := net.SplitHostPort(addr)
+	p, _ := strconv.Atoi(port)
+	ob := map[string]interface{}{
+		"type": "vless", "server": host, "server_port": float64(p), "uuid": "SECRET",
+		"tls": map[string]interface{}{"enabled": true, "server_name": "www.samsung.com"},
+	}
+	plan := defaultLoadPlan
+	plan.Local = net.IPv4(127, 0, 0, 1)
+	start := time.Now()
+	line := loadLine(context.Background(), "/nonexistent/sing-box", loadTarget{Tag: "p-a", Proto: "vless", Outbound: ob}, "lo", plan)
+	if !strings.Contains(line, " addr_dead=1 tcp=12/12 reply=0/12") || strings.Contains(line, "burst=") || strings.Contains(line, "load_error") {
+		t.Fatal(line)
+	}
+	if strings.Contains(line, "SECRET") || strings.Contains(line, host) {
+		t.Fatalf("names the profile: %s", line)
+	}
+	if took := time.Since(start); took > addrWait+5*time.Second {
+		t.Fatalf("took %s", took)
+	}
+}
+
+func TestAddrDeadAsksOnlyWhatCanAnswer(t *testing.T) {
+	addr, stop := silentListener(t)
+	defer stop()
+	host, port, _ := net.SplitHostPort(addr)
+	p, _ := strconv.Atoi(port)
+	local := net.IPv4(127, 0, 0, 1)
+	for name, ob := range map[string]map[string]interface{}{
+		"no TLS: it would stay silent alive": {"type": "shadowsocks", "server": host, "server_port": p},
+		"UDP: there is no TCP to ask":        {"type": "hysteria2", "server": host, "server_port": p, "tls": map[string]interface{}{"enabled": true}},
+		"a name that does not resolve":       {"type": "vless", "server": "no-such-host.invalid", "server_port": p, "tls": map[string]interface{}{"enabled": true}},
+	} {
+		if _, dead := addrDead(context.Background(), loadTarget{Tag: "p-a", Outbound: ob}, local); dead {
+			t.Errorf("%s: read as dead", name)
+		}
+	}
+	if _, dead := addrDead(context.Background(), loadTarget{Tag: "p-a", Outbound: map[string]interface{}{"type": "vless", "server": host, "server_port": p, "tls": map[string]interface{}{"enabled": true}}}, nil); dead {
+		t.Error("no card to ask from: read as dead")
+	}
+}
+
+func TestOnMobile(t *testing.T) {
+	for _, c := range []struct {
+		iface, network string
+		want           bool
+	}{
+		{"Ethernet", "AS31133", true},
+		{"Wi-Fi", "AS16345", true},
+		{"Cellular", "unknown", true},
+		{"Мобильная сеть", "unknown", true},
+		{"Ethernet", "unknown", false},
+		{"Ethernet", "AS12389", false},
+	} {
+		if got := onMobile(c.iface, c.network); got != c.want {
+			t.Errorf("%s %s: %v", c.iface, c.network, got)
+		}
+	}
+}
+
+func stubSelfNet(t *testing.T, network string) {
+	t.Helper()
+	was := loadSelfNet
+	loadSelfNet = func(net.IP, []string) string { return network }
+	t.Cleanup(func() { loadSelfNet = was })
+}
+
+func TestLoadOnAMobileNetworkAsksASmallBurstAndNotOften(t *testing.T) {
+	defer func(os string) { loadOS = os }(loadOS)
+	loadOS = "windows"
+	stubSelfNet(t, "AS31133")
+	config := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(config, []byte(`{"outbounds":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := New(discard{}, config)
+	ifaces := []physIface{{Name: "lo"}}
+	if got := r.loadNow("/nonexistent/sing-box", ifaces); len(got) != 1 || !strings.HasPrefix(got[0], "started") {
+		t.Fatalf("first round: %v", got)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.Lock()
+		idle, mobile := !r.loadBusy, r.loadMobile
+		r.mu.Unlock()
+		if idle && mobile {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the round did not find the mobile network")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := r.loadNow("/nonexistent/sing-box", ifaces)
+	if len(got) != 1 || !strings.Contains(got[0], "mobile network") {
+		t.Fatalf("a second round within the limit: %v", got)
+	}
+	r.mu.Lock()
+	r.loadAt = time.Now().Add(-loadEvery - time.Minute)
+	r.mu.Unlock()
+	if got := r.loadNow("/nonexistent/sing-box", ifaces); !strings.HasPrefix(got[0], "started") {
+		t.Fatalf("after the limit: %v", got)
+	}
+}
+
 func TestLoadRunsOnlyWhenAllowed(t *testing.T) {
 	r := New(discard{}, "/nonexistent")
 	r.maybeLoad(context.Background())
@@ -265,6 +439,7 @@ func (l *lines) snapshot() []string {
 func TestLoadNowAnswersAtOnceAndClosesTheRound(t *testing.T) {
 	defer func(os string) { loadOS = os }(loadOS)
 	loadOS = "windows"
+	stubSelfNet(t, "unknown")
 	config := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(config, []byte(`{"outbounds":[
 		{"tag":"p-a","type":"vless","server":"8.8.8.8","uuid":"SECRET"},

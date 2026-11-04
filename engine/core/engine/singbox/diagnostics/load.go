@@ -30,6 +30,12 @@ import (
 // last requests show whether the path came back after the burst or stayed shut.
 //
 // About 1 MB and 50 connections per profile, so tester mode only and not often.
+//
+// Before any of it, the address is asked whether it answers at all (addr.go): on
+// a banned address every profile setting reads red and says nothing, and 50
+// connections to it are only more noise. On a mobile network the burst is small
+// (mobile.go): parallel connections there can shut the whole network down until
+// the phone reconnects.
 const (
 	loadEvery     = 30 * time.Minute
 	loadBytes     = 1 << 20
@@ -47,6 +53,8 @@ type loadPlan struct {
 	BurstWait   time.Duration
 	DownWait    time.Duration
 	AfterWait   time.Duration
+	// Local is the card's address the address check leaves from; nil skips it.
+	Local net.IP
 }
 
 var defaultLoadPlan = loadPlan{
@@ -128,7 +136,7 @@ func (r *Runner) loadRound(ctx context.Context, binary string, ifaces []physIfac
 		r.log.Logf("[diag:load] %s", skipped)
 		return
 	}
-	r.runLoad(ctx, binary, targets, ifaces[0].Name)
+	r.runLoad(ctx, binary, targets, ifaces[0])
 }
 
 // loadOS is runtime.GOOS; a test stands in for Windows.
@@ -154,12 +162,21 @@ func (r *Runner) prepareLoad(ifaces []physIface) ([]loadTarget, string) {
 	return targets, ""
 }
 
-func (r *Runner) runLoad(ctx context.Context, binary string, targets []loadTarget, iface string) {
+func (r *Runner) runLoad(ctx context.Context, binary string, targets []loadTarget, iface physIface) {
+	plan := defaultLoadPlan
+	plan.Local = iface.IP
+	mobile := onMobile(iface.Name, loadSelfNet(iface.IP, r.stunList()))
+	r.mu.Lock()
+	r.loadMobile = mobile
+	r.mu.Unlock()
+	if mobile {
+		plan.Burst = loadBurstMobile
+	}
 	for _, t := range targets {
 		if ctx.Err() != nil {
 			return
 		}
-		r.log.Logf("[diag:load] %s", loadLine(ctx, binary, t, iface, defaultLoadPlan))
+		r.log.Logf("[diag:load] %s", loadLine(ctx, binary, t, iface.Name, plan))
 	}
 }
 
@@ -185,6 +202,12 @@ func (r *Runner) loadNow(binary string, ifaces []physIface) []string {
 		r.mu.Unlock()
 		return []string{`error="a round is running, its lines follow"`}
 	}
+	// A request does not get past the mobile network's limit of one round in
+	// loadEvery: a burst there can shut the tester's whole network.
+	if left := loadEvery - time.Since(r.loadAt); r.loadMobile && left > 0 {
+		r.mu.Unlock()
+		return []string{fmt.Sprintf(`error="mobile network: next round in %s"`, left.Round(time.Minute))}
+	}
 	r.loadAt = time.Now()
 	r.loadBusy = true
 	r.mu.Unlock()
@@ -196,7 +219,7 @@ func (r *Runner) loadNow(binary string, ifaces []physIface) []string {
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), loadNowWait)
 		defer cancel()
-		r.runLoad(ctx, binary, targets, ifaces[0].Name)
+		r.runLoad(ctx, binary, targets, ifaces[0])
 		r.log.Logf("[diag:load] on request: done")
 	}()
 	return []string{fmt.Sprintf("started profiles=%d", len(targets))}
@@ -207,6 +230,9 @@ func (r *Runner) loadNow(binary string, ifaces []physIface) []string {
 // address and no secret is among them.
 func loadLine(ctx context.Context, binary string, t loadTarget, iface string, plan loadPlan) string {
 	head := t.Tag + " proto=" + t.Proto + loadKnobs(t.Outbound)
+	if tcp, dead := addrDead(ctx, t, plan.Local); dead {
+		return fmt.Sprintf("%s addr_dead=1 tcp=%d/%d reply=0/%d", head, tcp, addrFlows, addrFlows)
+	}
 	proxy, stop, err := startProfile(ctx, binary, t.Outbound, iface)
 	if err != nil {
 		// err is ours and names no profile field; the core's own output is dropped.
