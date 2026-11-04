@@ -197,7 +197,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hikkari-updater"
-version = "1.0.39"
+version = "1.0.40"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -344,7 +344,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "nekko-updater"
-version = "1.0.39"
+version = "1.0.40"
 dependencies = [
  "base64",
  "ed25519-dalek",
