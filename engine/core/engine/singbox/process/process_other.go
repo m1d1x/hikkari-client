@@ -21,6 +21,9 @@ func (m *ProcessManager) Start() error {
 	return fmt.Errorf("vpn.ProcessManager.Start: not implemented on this platform")
 }
 
+// ReadyWhen has nothing to wait for: Start never launches a core here.
+func (m *ProcessManager) ReadyWhen(func() bool) *ProcessManager { return m }
+
 func (m *ProcessManager) Stop() error    { return nil }
 func (m *ProcessManager) Restart() error { return m.Start() }
 func (m *ProcessManager) Pid() int       { return 0 }
