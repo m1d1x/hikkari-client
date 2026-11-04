@@ -374,6 +374,16 @@ func (c *Core) routeSubscriptionAroundTunnel() {
 	}
 	logger := c.logger
 	subscription.Logf = func(format string, args ...any) { logger.Logf(format, args...) }
+	subscription.Network = c.subscriptionNetwork
+}
+
+// subscriptionNetwork is the user's network for our hub, resolved here from
+// the ISP address the health checker keeps; the address itself stays here.
+func (c *Core) subscriptionNetwork() string {
+	if asn := c.downdetectorNet().ASN; asn != 0 {
+		return fmt.Sprintf("AS%d", asn)
+	}
+	return ""
 }
 
 func (c *Core) logSubscriptionError(id string, err error) {

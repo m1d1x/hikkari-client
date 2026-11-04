@@ -311,6 +311,22 @@ func (e *unreadableError) Unwrap() error { return e.err }
 // provider, or the network may cut the handshake the default route makes.
 var DirectDial func(ctx context.Context, network, addr string) (net.Conn, error)
 
+// Network, when set, is the user's own network («AS12389», "" when unknown) as
+// the database embedded in the client resolves it (core/netinfo). Only our own
+// hub is told (ownHub): it serves knob values chosen for that network, and a
+// third-party provider has no use for it.
+var Network func() string
+
+// networkHeader carries Network to our hub (hikkari-control
+// internal/subscription, networkOf).
+const networkHeader = "Hikkari-Network"
+
+// ownHub reports whether a subscription is served by our hub.
+func ownHub(u *url.URL) bool {
+	h := strings.ToLower(u.Hostname())
+	return u.Scheme == "https" && (h == "hikkari.net" || strings.HasSuffix(h, ".hikkari.net"))
+}
+
 // Logf receives which path answered. Nil discards.
 var Logf func(format string, args ...any)
 
@@ -353,6 +369,11 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 	// What this client can dial beyond what every client can: the hub holds
 	// back what a released client's core would refuse.
 	req.Header.Set("Hikkari-Features", "amneziawg")
+	if Network != nil && ownHub(req.URL) {
+		if n := Network(); n != "" {
+			req.Header.Set(networkHeader, n)
+		}
+	}
 	if deviceID != "" {
 		req.Header.Set("X-Hwid", deviceID)
 		osName := runtime.GOOS

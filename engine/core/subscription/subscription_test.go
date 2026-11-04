@@ -7,9 +7,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -28,6 +30,89 @@ func TestFetchSaysWhatThisClientCanDial(t *testing.T) {
 	_, _ = Fetch(context.Background(), srv.URL, "", func(s string) (string, error) { return s, nil })
 	if got != "amneziawg" {
 		t.Fatalf("Hikkari-Features = %q", got)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// The user's network goes to our hub and nowhere else: a third-party provider
+// has no use for it.
+func TestFetchTellsOnlyOurHubTheNetwork(t *testing.T) {
+	oldNetwork, oldTransport := Network, http.DefaultTransport
+	defer func() { Network, http.DefaultTransport = oldNetwork, oldTransport }()
+
+	decode := func(s string) (string, error) { return s, nil }
+
+	// A real provider over the wire: the header must not reach it.
+	Network = func() string { return "AS12389" }
+	var local []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		local = r.Header.Values(networkHeader)
+		fmt.Fprint(w, "vless://u@h:443#n")
+	}))
+	defer srv.Close()
+	if _, err := Fetch(context.Background(), srv.URL, "", decode); err != nil {
+		t.Fatal(err)
+	}
+	if len(local) != 0 {
+		t.Fatalf("a third-party provider got %s: %v", networkHeader, local)
+	}
+
+	// Our hub's name can't be served locally over TLS, so these stop at the
+	// transport: what is under test is what the request carries.
+	var got []string
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.Header.Values(networkHeader)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{},
+			Body:       io.NopCloser(strings.NewReader("vless://u@h:443#n")),
+			Request:    r,
+		}, nil
+	})
+	for _, tc := range []struct {
+		url, network, want string
+	}{
+		{"https://sub.hikkari.net/x", "AS12389", "AS12389"},
+		{"https://sub.hikkari.net/x", "", ""},
+		{"https://hikkari.net.evil.com/x", "AS12389", ""},
+		{"http://sub.hikkari.net/x", "AS12389", ""},
+	} {
+		got = nil
+		Network = func() string { return tc.network }
+		if _, err := Fetch(context.Background(), tc.url, "", decode); err != nil {
+			t.Fatalf("%s: %v", tc.url, err)
+		}
+		switch {
+		case tc.want == "" && len(got) != 0:
+			t.Errorf("%s network %q: header sent: %v", tc.url, tc.network, got)
+		case tc.want != "" && (len(got) != 1 || got[0] != tc.want):
+			t.Errorf("%s network %q: header = %v, want %s", tc.url, tc.network, got, tc.want)
+		}
+	}
+}
+
+func TestOwnHub(t *testing.T) {
+	for raw, want := range map[string]bool{
+		"https://sub.hikkari.net/x":      true,
+		"https://SUB.Hikkari.NET/x":      true,
+		"https://hikkari.net/x":          true,
+		"https://sub.hikkari.net:8443/x": true,
+		"https://hikkari.net.evil.com/x": false,
+		"https://evilhikkari.net/x":      false,
+		"https://hikkari.net@evil.com/x": false,
+		"http://sub.hikkari.net/x":       false,
+		"http://127.0.0.1:8080/x":        false,
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ownHub(u); got != want {
+			t.Errorf("ownHub(%s) = %v, want %v", raw, got, want)
+		}
 	}
 }
 
