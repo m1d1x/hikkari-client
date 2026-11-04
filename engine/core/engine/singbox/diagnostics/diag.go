@@ -31,7 +31,7 @@ type Logger interface {
 	Logf(format string, args ...interface{})
 }
 
-const clashBase = "http://127.0.0.1:9090"
+var clashBase = "http://127.0.0.1:9090" // a var so tests can answer for the core
 
 // stunTargets are public STUN servers. The binding response carries the
 // public address the server saw us from — the key signal for "did this UDP
@@ -88,12 +88,13 @@ const snapshotReachTimeout = time.Minute
 func (r *Runner) ProbeNow() {
 	r.log.Logf("[diag] ----- probe after a profile switch -----")
 	r.proxyDelay()
-	r.connections()
+	r.connections(false)
 }
 
 // Snapshot is one round on request, tunnel up or down: the machine, its
-// interfaces and routes, UDP, and with the tunnel up the server's delay and the
-// live connections. It takes as long as Baseline, ~10–20s on Windows.
+// interfaces and routes, UDP, and with the tunnel up the server's delay and
+// every live connection, a browser's TCP included. It takes as long as
+// Baseline, ~10–20s on Windows.
 func (r *Runner) Snapshot(tunnelUp bool) {
 	r.log.Logf("[diag] ===== snapshot on request (tunnel up: %v) =====", tunnelUp)
 	r.sysInfo()
@@ -105,7 +106,7 @@ func (r *Runner) Snapshot(tunnelUp bool) {
 			r.stunBound(pi)
 		}
 		r.proxyDelay()
-		r.connections()
+		r.connections(true)
 		runCommands(r.log, "snapshot", postCommands())
 		// Every profile from the physical card, not only the selected one.
 		ctx, cancel := context.WithTimeout(context.Background(), snapshotReachTimeout)
@@ -173,7 +174,7 @@ func (r *Runner) loop(ctx context.Context) {
 		}
 		tick++
 		r.log.Logf("[diag] ----- periodic #%d (%s in) -----", tick, time.Since(started).Round(time.Second))
-		r.connections()
+		r.connections(false)
 		runCommands(r.log, "periodic", periodicCommands())
 		if time.Since(started) <= 10*time.Minute && tick%3 == 0 || tick%5 == 0 {
 			r.probeRound(ctx)
@@ -197,7 +198,7 @@ func (r *Runner) probeRound(ctx context.Context) {
 		r.stunBound(pi)
 	}
 	r.proxyDelay()
-	r.connections()
+	r.connections(false)
 }
 
 // ---------------------------------------------------------------- system
@@ -389,7 +390,10 @@ type clashConn struct {
 	RulePayload string   `json:"rulePayload"`
 }
 
-func (r *Runner) connections() {
+// connections logs the live flows. everyFlow details all of them: a snapshot
+// is one round an operator asked for, so a browser cannot flood the log, and it
+// is the only way to see where a browser's TCP goes and whether it is answered.
+func (r *Runner) connections(everyFlow bool) {
 	var res struct {
 		DownloadTotal int64       `json:"downloadTotal"`
 		UploadTotal   int64       `json:"uploadTotal"`
@@ -424,11 +428,7 @@ func (r *Runner) connections() {
 		if c.Metadata.Network == "udp" {
 			udp++
 		}
-		// Full detail for UDP, anything Discord-related and every process the
-		// user listed by name; TCP from other apps is only counted, otherwise
-		// a browser floods the log.
-		low := strings.ToLower(proc + c.Metadata.Host)
-		if c.Metadata.Network == "udp" || strings.Contains(low, "discord") || listed[strings.ToLower(proc)] != "" {
+		if everyFlow || detailedFlow(c.Metadata.Network, proc, c.Metadata.Host, listed) {
 			r.log.Logf("[diag:conn] %s %s:%s → %s:%s host=%q proc=%q chains=%v rule=%q(%s) up=%d down=%d start=%s",
 				c.Metadata.Network, c.Metadata.SourceIP, c.Metadata.SourcePort,
 				c.Metadata.DestIP, c.Metadata.DestPort, c.Metadata.Host, proc,
@@ -458,6 +458,16 @@ func (r *Runner) connections() {
 	}
 	r.log.Logf("[diag:conns] total=%d udp=%d up=%d down=%d mem=%d by_proc: %s",
 		len(res.Connections), udp, res.UploadTotal, res.DownloadTotal, res.Memory, strings.Join(parts, " "))
+}
+
+// detailedFlow picks the flows the periodic rounds log in full: UDP, anything
+// Discord-related and every process the user listed by name. TCP from other
+// apps is only counted, otherwise a browser floods the log.
+func detailedFlow(network, proc, host string, listed map[string]string) bool {
+	if network == "udp" || listed[strings.ToLower(proc)] != "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(proc+host), "discord")
 }
 
 // listedProcesses reads the process_name entries out of the live sing-box
