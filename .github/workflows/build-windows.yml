@@ -684,3 +684,68 @@ jobs:
           HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
           HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
         run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}" windows
+
+  # The matrix stand's kit for the hub's vantages (scripts/build-stand-kit.sh):
+  # the core users run and the client's link parser, linux-amd64, from this
+  # tag. The hub's observation points measure relays with them on schedule
+  # (hikkari-control internal/stand), so the stand always runs the release.
+  stand-kit:
+    name: Build stand kit (linux-amd64)
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache-dependency-path: engine/go.sum
+
+      - name: Build
+        run: bash scripts/build-stand-kit.sh stand-kit "${GITHUB_REF_NAME#v}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stand-kit
+          path: stand-kit
+          retention-days: 3
+
+  # After the channel: a kit for a release clients cannot get yet would have
+  # the stand measure a core nobody runs. Same writer lock as the channel.
+  publish-stand-kit:
+    name: Publish stand kit
+    needs: [stand-kit, publish-channel]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: release
+    concurrency:
+      group: update-channel
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: stand-kit
+          path: stand-kit
+
+      - name: SSH
+        env:
+          SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.HIKKARI_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$SSH_KEY" | ssh-add -
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+          echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> "$GITHUB_ENV"
+
+      - name: Publish
+        env:
+          HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
+          HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
+        run: bash scripts/publish-stand-kit.sh stand-kit
