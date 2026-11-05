@@ -1,5 +1,5 @@
 diff --git a/route/route.go b/route/route.go
-index 0e5b189..fd603f8 100644
+index 0e5b189..53ab507 100644
 --- a/route/route.go
 +++ b/route/route.go
 @@ -121,7 +121,10 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
@@ -8,7 +8,7 @@ index 0e5b189..fd603f8 100644
  	}
 -	selectedRule, _, buffers, _, err := r.matchRule(ctx, &metadata, conn, nil)
 +	// hikkari: temporary, see route_ipv6diag_hikkari.go.
-+	ipv6Diag := newIPv6FlowDiag(metadata)
++	ipv6Diag := newIPv6FlowDiag(metadata, r.rules)
 +	selectedRule, selectedRuleIndex, buffers, _, err := r.matchRule(ctx, &metadata, conn, nil)
 +	ipv6Diag.report(ctx, r.logger, &metadata, selectedRule, selectedRuleIndex, err)
  	if err != nil {
@@ -16,14 +16,15 @@ index 0e5b189..fd603f8 100644
  	}
 diff --git a/route/route_ipv6diag_hikkari.go b/route/route_ipv6diag_hikkari.go
 new file mode 100644
-index 0000000..e38b297
+index 0000000..2d3b380
 --- /dev/null
 +++ b/route/route_ipv6diag_hikkari.go
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,66 @@
 +package route
 +
 +import (
 +	"context"
++	"fmt"
 +	"path/filepath"
 +	"time"
 +
@@ -40,10 +41,27 @@ index 0000000..e38b297
 +type ipv6FlowDiag struct {
 +	active bool
 +	start  time.Time
++	addr   string
++	first  bool
 +}
 +
-+func newIPv6FlowDiag(metadata adapter.InboundContext) ipv6FlowDiag {
-+	return ipv6FlowDiag{active: metadata.Destination.IsIPv6(), start: time.Now()}
++// The first two groups name the network, as a whois lookup would; the rest of the
++// address stays out. first says whether the first route rule, the one that replaces
++// the address with the name, matched this flow before anything changed it.
++func newIPv6FlowDiag(metadata adapter.InboundContext, rules []adapter.Rule) ipv6FlowDiag {
++	d := ipv6FlowDiag{active: metadata.Destination.IsIPv6(), start: time.Now()}
++	if !d.active {
++		return d
++	}
++	a := metadata.Destination.Addr
++	raw := a.As16()
++	d.addr = fmt.Sprintf("%02x%02x_%02x%02x zone=%q mapped=%v private=%v global=%v", raw[0], raw[1], raw[2], raw[3], a.Zone(), a.Is4In6(), a.IsPrivate(), a.IsGlobalUnicast())
++	if len(rules) > 0 {
++		probe := metadata
++		probe.ResetRuleCache()
++		d.first = rules[0].Match(&probe)
++	}
++	return d
 +}
 +
 +func (d ipv6FlowDiag) report(ctx context.Context, log logger.ContextLogger, metadata *adapter.InboundContext, rule adapter.Rule, ruleIndex int, matchErr error) {
@@ -64,7 +82,7 @@ index 0000000..e38b297
 +	} else {
 +		ruleIndex = -1
 +	}
-+	log.WarnContext(ctx, "[ipv6-diag] proc=", process, " port=", metadata.Destination.Port, " dest=", dest,
++	log.WarnContext(ctx, "[ipv6-diag] proc=", process, " port=", metadata.Destination.Port, " addr=", d.addr, " first=", d.first, " dest=", dest,
 +		" proto=", metadata.Protocol, " domain=", metadata.Domain, " sniff_err=", metadata.SniffError,
 +		" rule=", ruleIndex, " action=", action, " took=", time.Since(d.start).Round(time.Millisecond), " err=", matchErr)
 +}
