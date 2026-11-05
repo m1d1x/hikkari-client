@@ -1,0 +1,70 @@
+diff --git a/route/route.go b/route/route.go
+index 0e5b189..fd603f8 100644
+--- a/route/route.go
++++ b/route/route.go
+@@ -121,7 +121,10 @@ func (r *Router) routeConnection(ctx context.Context, conn net.Conn, metadata ad
+ 	if deadline.NeedAdditionalReadDeadline(conn) {
+ 		conn = deadline.NewConn(conn)
+ 	}
+-	selectedRule, _, buffers, _, err := r.matchRule(ctx, &metadata, conn, nil)
++	// hikkari: temporary, see route_ipv6diag_hikkari.go.
++	ipv6Diag := newIPv6FlowDiag(metadata)
++	selectedRule, selectedRuleIndex, buffers, _, err := r.matchRule(ctx, &metadata, conn, nil)
++	ipv6Diag.report(ctx, r.logger, &metadata, selectedRule, selectedRuleIndex, err)
+ 	if err != nil {
+ 		return err
+ 	}
+diff --git a/route/route_ipv6diag_hikkari.go b/route/route_ipv6diag_hikkari.go
+new file mode 100644
+index 0000000..e38b297
+--- /dev/null
++++ b/route/route_ipv6diag_hikkari.go
+@@ -0,0 +1,48 @@
++package route
++
++import (
++	"context"
++	"path/filepath"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing/common/logger"
++)
++
++// ipv6FlowDiag is Hikkari's temporary instrument for Russian sites with an AAAA
++// record that close in Chrome on Windows (tester-002, 05.11): a flow dialled
++// direct by its IPv6 address although a rule should have replaced it with the
++// sniffed name. For each TCP flow that arrives at an IPv6 address it logs who
++// sent it, what the sniff found and where it was routed. The address itself stays
++// out. It only logs. Remove it with the fix.
++type ipv6FlowDiag struct {
++	active bool
++	start  time.Time
++}
++
++func newIPv6FlowDiag(metadata adapter.InboundContext) ipv6FlowDiag {
++	return ipv6FlowDiag{active: metadata.Destination.IsIPv6(), start: time.Now()}
++}
++
++func (d ipv6FlowDiag) report(ctx context.Context, log logger.ContextLogger, metadata *adapter.InboundContext, rule adapter.Rule, ruleIndex int, matchErr error) {
++	if !d.active {
++		return
++	}
++	process := "?"
++	if metadata.ProcessInfo != nil && metadata.ProcessInfo.ProcessPath != "" {
++		process = filepath.Base(metadata.ProcessInfo.ProcessPath)
++	}
++	dest := "ipv6"
++	if metadata.Destination.IsFqdn() {
++		dest = "name"
++	}
++	action := "final"
++	if rule != nil {
++		action = rule.Action().String()
++	} else {
++		ruleIndex = -1
++	}
++	log.WarnContext(ctx, "[ipv6-diag] proc=", process, " port=", metadata.Destination.Port, " dest=", dest,
++		" proto=", metadata.Protocol, " domain=", metadata.Domain, " sniff_err=", metadata.SniffError,
++		" rule=", ruleIndex, " action=", action, " took=", time.Since(d.start).Round(time.Millisecond), " err=", matchErr)
++}
