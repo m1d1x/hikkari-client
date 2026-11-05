@@ -26,14 +26,6 @@ var domainsTxt string
 //go:embed cidrs.txt.gz
 var cidrsGz []byte
 
-// extraCIDRs are the IPv6 allocations the edge appends to its table.
-var extraCIDRs = []string{
-	"2a02:6b8::/32",  // Yandex IPv6
-	"2a00:1148::/32", // VK / Mail.ru IPv6
-	"2a00:1fa0::/32", // MTS IPv6
-	"2a02:2168::/32", // Beeline / VimpelCom IPv6
-}
-
 var (
 	domains = strings.Fields(domainsTxt)
 	cidrs   = sync.OnceValue(loadCIDRs)
@@ -57,8 +49,5 @@ func loadCIDRs() []string {
 	if err != nil {
 		panic("ruzone: reading embedded cidrs.txt.gz: " + err.Error())
 	}
-	lines := strings.Fields(string(raw))
-	out := make([]string, 0, len(lines)+len(extraCIDRs))
-	out = append(out, lines...)
-	return append(out, extraCIDRs...)
+	return strings.Fields(string(raw))
 }

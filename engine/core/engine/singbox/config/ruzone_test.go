@@ -39,7 +39,7 @@ func TestTheRussianZoneGoesDirectInEveryMode(t *testing.T) {
 			if m["outbound"] != "direct" {
 				t.Fatalf("%+v: Russian zone goes to %v", state, m["outbound"])
 			}
-			if !slices.Contains(m["ip_cidr"].([]interface{}), interface{}("2a02:6b8::/32")) {
+			if !slices.Contains(m["ip_cidr"].([]interface{}), interface{}("2a02:6b8::/29")) {
 				t.Fatalf("%+v: Russian zone without the edge's addresses", state)
 			}
 		}
