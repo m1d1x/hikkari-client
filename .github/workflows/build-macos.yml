@@ -286,20 +286,30 @@ jobs:
           [[ "$(cat "$app/Contents/Resources/VERSION")" == "$to" ]] || { echo "the bundle is not $to"; exit 1; }
           [[ -d "$app.old" ]] || { echo "the previous version was not kept"; exit 1; }
 
-          # The daemon replaced itself: wait for the new one and its core.
+          # The daemon replaced itself: wait for the new one. The core stays down
+          # for the GUI's config, so that the update costs one break.
           back=0
           for i in $(seq 1 60); do
             sleep 0.5
+            new_pid=$(sudo launchctl print system/net.hikkari.service | sed -n 's/^[[:space:]]*pid = //p')
+            [[ -n "$new_pid" && "$new_pid" != "$old_pid" ]] || continue
             st=$(python3 svc.py '{"op":"status"}' 2>/dev/null) || continue
-            [[ "$(echo "$st" | field 'd.get("running", False)')" == True ]] && { back=1; break; }
+            back=1; break
           done
-          [[ $back == 1 ]] || { echo "the core did not come back after the swap"; exit 1; }
-          new_pid=$(sudo launchctl print system/net.hikkari.service | sed -n 's/^[[:space:]]*pid = //p')
-          [[ "$new_pid" != "$old_pid" ]] || { echo "the daemon was not restarted into the new version"; exit 1; }
-          curl -sf --max-time 5 http://127.0.0.1:9090/version
+          [[ $back == 1 ]] || { echo "the daemon was not restarted into the new version"; exit 1; }
+          [[ "$(echo "$st" | field 'd.get("running", False)')" == False ]] || { echo "the core came back on the previous release's config"; exit 1; }
+          [[ "$(echo "$st" | field 'd.get("wanted", False)')" == True ]] || { echo "the restart lost the wish to be up"; exit 1; }
 
           [[ "$(call '{"op":"recover_update"}' | field 'd["recovery"]')" == on_trial ]]
+          # The GUI's start: the one that brings the core up.
+          start=$(python3 -c "import json; d=json.load(open('start.json')); d['configHash']='hash-$to'; print(json.dumps(d))")
+          st=$(call "$start")
+          [[ "$(echo "$st" | field 'd.get("running", False)')" == True ]] || { echo "the GUI's start did not bring the core up"; exit 1; }
+          [[ "$(echo "$st" | field 'd.get("configHash")')" == "hash-$to" ]] || { echo "the service did not keep the fingerprint"; exit 1; }
+          core_pid=$(echo "$st" | field 'd["pid"]')
+          curl -sf --max-time 5 http://127.0.0.1:9090/version
           call '{"op":"confirm_update"}' >/dev/null
+          [[ "$(call '{"op":"status"}' | field 'd["pid"]')" == "$core_pid" ]] || { echo "a second break after the confirmation"; exit 1; }
           [[ ! -e "$app.old" ]] || { echo "hikkari.app.old survived the confirmation"; exit 1; }
           [[ "$(stat -f %Su "$app/Contents/MacOS/HikkariService")" == root ]] || { echo "the updated bundle is not root-owned"; exit 1; }
           call '{"op":"stop"}' >/dev/null

@@ -456,7 +456,8 @@ jobs:
 
           function Hash([string]$path) { (Get-FileHash -Algorithm SHA256 $path).Hash }
 
-          # check → stage → apply with reconnect → trial → confirm.
+          # check → stage → apply with reconnect → the core waits → trial → the
+          # GUI's start, the one that brings it up → confirm.
           function Update-To([string]$version, [string]$previous) {
             $st = Invoke-Hikkari '{"op":"check_update"}'
             for ($i = 0; $i -lt 120 -and $st.update.state -ne "ready"; $i++) {
@@ -469,7 +470,8 @@ jobs:
 
             $ap = Invoke-Hikkari '{"op":"apply_update","reconnect":true}'
             if (-not $ap.ok -or $ap.from -ne $previous -or $ap.to -ne $version) { throw "apply failed" }
-            if (-not $ap.running) { throw "the core did not come back after the swap" }
+            if ($ap.running) { throw "the core came back on the previous release's config" }
+            if (-not $ap.wanted) { throw "the swap lost the wish to be up" }
             if ((Get-Content -Raw "$root\app\VERSION") -ne $version) { throw "app\ is not $version" }
             if (-not (Test-Path "$root\app.old\nekkobox.exe")) { throw "the previous version was not kept" }
             $dv = (Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\hikkari").DisplayVersion
@@ -477,15 +479,20 @@ jobs:
 
             $rec = Invoke-Hikkari '{"op":"recover_update"}'
             if ($rec.recovery -ne "on_trial") { throw "expected a trial, got $($rec.recovery)" }
-            if ($rec.pid -ne $ap.pid) { throw "counting a trial start restarted the core" }
+            if ($rec.running) { throw "counting a trial start brought the core up" }
+            $st = Invoke-Hikkari ('{"op":"start","configHash":"hash-' + $version + '","config":' + $cfg + '}')
+            if (-not $st.running) { throw "the GUI's start did not bring the core up" }
+            if ($st.configHash -ne "hash-$version") { throw "the service holds fingerprint '$($st.configHash)'" }
+            $script:corePid = $st.pid
             $null = Invoke-Hikkari '{"op":"confirm_update"}'
             if (Test-Path "$root\app.old") { throw "app.old survived the confirmation" }
           }
 
-          # Waits for the service to have settled on `$version` with the
-          # tunnel up: binaries in place, service restarted, core resumed.
+          # Waits for the service to have settled on `$version`: binaries in place,
+          # service restarted. Then the tunnel up, resumed or started here.
           function Wait-Settled([string]$version, [hashtable]$want) {
             $ok = $false
+            $st = $null
             for ($i = 0; $i -lt 360 -and -not $ok; $i++) {
               Start-Sleep -Milliseconds 500
               $same = $true
@@ -494,18 +501,22 @@ jobs:
               }
               if (-not $same) { continue }
               $st = Get-Status
-              $ok = $st -and $st.ok -and $st.version -eq $version -and $st.running -and $st.syncsBinaries -and
+              $ok = $st -and $st.ok -and $st.version -eq $version -and $st.syncsBinaries -and
                     (Get-Service HikkariService).Status -eq 'Running'
             }
             if (-not $ok) {
               foreach ($name in $want.Keys) { Write-Host "$name : $(Hash "$root\$name") want $($want[$name])" }
-              throw "the service did not settle on $version with the tunnel up"
+              throw "the service did not settle on $version"
+            }
+            if (-not $st.running) {
+              $st = Invoke-Hikkari ('{"op":"start","config":' + $cfg + '}')
+              if (-not $st.running) { throw "the core did not start on $version" }
             }
             $up = $false
             for ($i = 0; $i -lt 20 -and -not $up; $i++) {
               try { $null = Invoke-RestMethod -TimeoutSec 2 http://127.0.0.1:9090/version; $up = $true } catch { Start-Sleep -Milliseconds 500 }
             }
-            if (-not $up) { throw "the tunnel is not up after the service restarted" }
+            if (-not $up) { throw "the tunnel is not up on $version" }
           }
 
           try {
@@ -520,10 +531,31 @@ jobs:
               if ($new[$name] -eq (Hash "$root\$name")) { throw "$name of $to is the installed one: nothing to test" }
             }
             Update-To $to $from
+
+            # One break: the service binary waits while the core runs. The old
+            # helper stopped the service 60 s after the confirmation, so look past that.
+            foreach ($name in "hikkari.exe", "hikkari-updater.exe") {
+              $placed = $false
+              for ($i = 0; $i -lt 60 -and -not $placed; $i++) {
+                $placed = (Hash "$root\$name") -eq $new[$name]
+                if (-not $placed) { Start-Sleep -Milliseconds 500 }
+              }
+              if (-not $placed) { throw "$name did not follow the update" }
+            }
+            Start-Sleep -Seconds 70
+            $st = Invoke-Hikkari '{"op":"status"}'
+            if (-not $st.running -or $st.pid -ne $script:corePid) { throw "a second break: core pid $($st.pid), was $script:corePid" }
+            if ($st.version -ne $from) { throw "the service was replaced under a running core: $($st.version)" }
+            if ((Hash "$root\HikkariService.exe") -eq $new["HikkariService.exe"]) { throw "the service binary was placed under a running core" }
+            Write-Host "no break after the confirmation; the service binary waits"
+
+            # A stop hands over to the new service binary.
+            $null = Invoke-Hikkari '{"op":"stop"}'
             Wait-Settled $to $new
             Write-Host "binaries beside app\ are $to's, the service restarted into $to, the tunnel is up"
 
-            # 2. A service binary that does not come up is put back.
+            # 2. A service binary that does not come up is put back. This one is
+            # placed at the service's start, before the core resumes.
             $rel2 = "$tmp\release-$to2"
             Copy-Item -Recurse "$root\app" $rel2
             Set-Content -NoNewline -Encoding ascii -Path "$rel2\VERSION" -Value $to2
@@ -531,6 +563,7 @@ jobs:
             $broken = Hash "$rel2\HikkariService.exe"
             Publish $rel2 $to2
             Update-To $to2 $to
+            Restart-Service HikkariService -ErrorAction SilentlyContinue
             $refused = $null
             for ($i = 0; $i -lt 360 -and -not $refused; $i++) {
               Start-Sleep -Milliseconds 500
@@ -544,6 +577,31 @@ jobs:
             # Restarting must not retry the refused build.
             Restart-Service HikkariService
             Wait-Settled $to $new
+
+            # 3. A rollback brings the core up on the config the previous release
+            # wrote, not the one the new GUI has just sent.
+            $to3 = "$($v.Major).$($v.Minor).$($v.Build + 3)"
+            $rel3 = "$tmp\release-$to3"
+            Copy-Item -Recurse "$root\app" $rel3
+            Set-Content -NoNewline -Encoding ascii -Path "$rel3\VERSION" -Value $to3
+            Publish $rel3 $to3
+            $before = Invoke-Hikkari ('{"op":"start","configHash":"before-rollback","config":' + $cfg + '}')
+            if ($before.configHash -ne "before-rollback") { throw "fingerprint '$($before.configHash)'" }
+            $st = Invoke-Hikkari '{"op":"check_update"}'
+            for ($i = 0; $i -lt 120 -and $st.update.state -ne "ready"; $i++) {
+              Start-Sleep -Milliseconds 500
+              $st = Invoke-Hikkari '{"op":"status"}'
+            }
+            if ($st.update.version -ne $to3) { throw "$to3 was not staged" }
+            $ap = Invoke-Hikkari '{"op":"apply_update","reconnect":true}'
+            if (-not $ap.ok -or $ap.running) { throw "apply of $to3: $($ap.error)" }
+            $st = Invoke-Hikkari ('{"op":"start","configHash":"after-swap","config":' + $cfg + '}')
+            if ($st.configHash -ne "after-swap") { throw "fingerprint '$($st.configHash)'" }
+            $rb = Invoke-Hikkari '{"op":"rollback_update"}'
+            if (-not $rb.ok -or -not $rb.running) { throw "the rollback left the core down" }
+            if ($rb.configHash -ne "before-rollback") { throw "the rollback left fingerprint '$($rb.configHash)'" }
+            if ((Get-Content -Raw "$root\app\VERSION") -ne $to2) { throw "the rollback left app\ at $(Get-Content -Raw "$root\app\VERSION")" }
+            Write-Host "the rollback brought the core up on the previous release's config"
             $null = Invoke-Hikkari '{"op":"stop"}'
           } finally {
             Stop-Process -Id $server.Id -ErrorAction SilentlyContinue
