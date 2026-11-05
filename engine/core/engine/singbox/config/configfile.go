@@ -15,8 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"NekkoVPN/core/ruzone"
 )
 
 // Store is a thin file-backed config repository. It owns two files:
@@ -474,43 +472,30 @@ const realIPv6SniffTimeout = "5s"
 // accepted the TCP that failure reaches the browser as a closed connection,
 // ERR_CONNECTION_CLOSED, and it never tries the site's IPv4.
 //
-// Russian ranges are refused first. These go direct, where the name no longer
-// helps, and a name could take them into the tunnel, where our exits refuse them.
-// This rule runs before any sniff, while the handshake is still ahead, so the
-// browser sees a failed connect and moves on to the site's IPv4.
-//
-// Every other global address goes by the name it sniffed, so the exit picks the
-// address. Global unicast only: LAN and fake addresses keep their routes. This
-// sniff waits far longer than the core's default 300 ms: a ClientHello in two
-// slow parts would otherwise run out here, the general sniff below would read the
-// name without replacing the address, and the flow would reach the exit as IPv6.
+// Every global address goes by the name it sniffed: a Russian name then goes
+// direct and connects over whatever the machine has, any other leaves the exit to
+// pick the address. A refusal of Russian ranges before the handshake did not do
+// this: on Windows sites with an AAAA record stayed closed in Chrome while those
+// without one opened (plans/2026-11-05-fleet-ipv6-exit.md). Global unicast only:
+// LAN and fake addresses keep their routes. This sniff waits far longer than the
+// core's default 300 ms: a ClientHello in two slow parts would otherwise run out
+// here, the general sniff below would read the name without replacing the address,
+// and the flow would reach the exit as IPv6.
 func realIPv6Rules() []interface{} {
-	ports := func() []interface{} { return []interface{}{80, 443, 8080, 8443} }
-	var russian []string
-	for _, cidr := range ruzone.CIDRs() {
-		if strings.Contains(cidr, ":") {
-			russian = append(russian, cidr)
-		}
-	}
 	return []interface{}{
-		map[string]interface{}{
-			"action":  "reject",
-			"ip_cidr": toAnySlice(russian),
-			"network": "tcp",
-			"port":    ports(),
-		},
 		map[string]interface{}{
 			"action":               "sniff",
 			"ip_cidr":              []interface{}{"2000::/3"},
 			"override_destination": true,
-			"port":                 ports(),
+			"port":                 []interface{}{80, 443, 8080, 8443},
 			"timeout":              realIPv6SniffTimeout,
 		},
 	}
 }
 
-// isRussianIPv6Reject recognises the first of realIPv6Rules. The other reject
-// that names addresses, Secure DNS over QUIC, is UDP.
+// isRussianIPv6Reject recognises the refusal of Russian ranges that configs from
+// 1.0.42 and 1.0.43 carry, for healRealIPv6Rules to take out. The other reject that
+// names addresses, Secure DNS over QUIC, is UDP.
 func isRussianIPv6Reject(m map[string]interface{}) bool {
 	action, _ := m["action"].(string)
 	network, _ := m["network"].(string)
@@ -519,9 +504,9 @@ func isRussianIPv6Reject(m map[string]interface{}) bool {
 }
 
 // healRealIPv6Rules puts the current rules ahead of the general sniff, in a
-// config written before they existed or with an older list of ranges.
+// config written before they existed or with older ones.
 func healRealIPv6Rules(rules []interface{}) []interface{} {
-	kept := make([]interface{}, 0, len(rules)+2)
+	kept := make([]interface{}, 0, len(rules)+1)
 	first := -1
 	for _, r := range rules {
 		if m, ok := r.(map[string]interface{}); ok {
@@ -542,7 +527,7 @@ func healRealIPv6Rules(rules []interface{}) []interface{} {
 	if first < 0 {
 		return kept
 	}
-	out := make([]interface{}, 0, len(kept)+2)
+	out := make([]interface{}, 0, len(kept)+1)
 	out = append(out, kept[:first]...)
 	out = append(out, realIPv6Rules()...)
 	return append(out, kept[first:]...)

@@ -2,7 +2,6 @@ package configfile
 
 import (
 	"encoding/json"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -436,52 +435,34 @@ func TestRealIPv6RulesRunFirst(t *testing.T) {
 		t.Helper()
 		route, _ := cfg["route"].(map[string]interface{})
 		rules, _ := route["rules"].([]interface{})
-		if len(rules) < 3 {
+		if len(rules) < 2 {
 			t.Fatalf("%d rules", len(rules))
 		}
-		russian, _ := rules[0].(map[string]interface{})
-		byName, _ := rules[1].(map[string]interface{})
-		general, _ := rules[2].(map[string]interface{})
-		if !isRussianIPv6Reject(russian) || russian["network"] != "tcp" {
-			t.Fatalf("first rule: %v", russian)
-		}
-		ranges, _ := russian["ip_cidr"].([]interface{})
-		yandex := netip.MustParseAddr("2a02:6b8::2:242")
-		found := false
-		for _, r := range ranges {
-			cidr, _ := r.(string)
-			prefix := netip.MustParsePrefix(cidr)
-			if !prefix.Addr().Is6() {
-				t.Fatalf("an IPv4 range among the refused ones: %s", cidr)
-			}
-			found = found || prefix.Contains(yandex)
-		}
-		if !found {
-			t.Fatalf("Yandex is not among %d refused ranges", len(ranges))
-		}
+		byName, _ := rules[0].(map[string]interface{})
+		general, _ := rules[1].(map[string]interface{})
 		if on, _ := byName["override_destination"].(bool); !on {
-			t.Fatalf("second rule: %v", byName)
+			t.Fatalf("first rule: %v", byName)
 		}
 		// With the core's 300 ms a slow ClientHello falls through to the general
 		// sniff, which reads the name and leaves the IPv6 address in place.
 		if byName["timeout"] != realIPv6SniffTimeout {
-			t.Fatalf("second rule waits %v", byName["timeout"])
+			t.Fatalf("first rule waits %v", byName["timeout"])
 		}
 		if general["action"] != "sniff" || general["ip_cidr"] != nil {
-			t.Fatalf("third rule: %v", general)
+			t.Fatalf("second rule: %v", general)
 		}
-		refusals, overrides := 0, 0
+		overrides := 0
 		for _, r := range rules {
 			m, _ := r.(map[string]interface{})
 			if isRussianIPv6Reject(m) {
-				refusals++
+				t.Fatalf("Russian IPv6 is refused, and a browser does not move on to IPv4: %v", m)
 			}
 			if on, _ := m["override_destination"].(bool); on {
 				overrides++
 			}
 		}
-		if refusals != 1 || overrides != 1 {
-			t.Fatalf("%d refusals, %d overrides", refusals, overrides)
+		if overrides != 1 {
+			t.Fatalf("%d overrides", overrides)
 		}
 	}
 	fresh := DefaultConfig()
@@ -500,7 +481,17 @@ func TestRealIPv6RulesRunFirst(t *testing.T) {
 	route["rules"] = healRealIPv6Rules(route["rules"].([]interface{}))
 	check(t, old)
 
-	// A config written by 1.0.41 sniffs the Russian ranges instead of refusing.
+	// A config written by 1.0.43 refuses the Russian ranges.
+	refusing := freshCfg()
+	route = refusing["route"].(map[string]interface{})
+	route["rules"] = append([]interface{}{
+		map[string]interface{}{"action": "reject", "network": "tcp", "ip_cidr": []interface{}{"2a02:6b8::/29"}},
+		map[string]interface{}{"action": "sniff", "ip_cidr": []interface{}{"2000::/3"}, "override_destination": true},
+	}, route["rules"].([]interface{})...)
+	route["rules"] = healRealIPv6Rules(route["rules"].([]interface{}))
+	check(t, refusing)
+
+	// A config written by 1.0.41 sniffs the Russian ranges on their own.
 	stale := freshCfg()
 	route = stale["route"].(map[string]interface{})
 	route["rules"] = append([]interface{}{

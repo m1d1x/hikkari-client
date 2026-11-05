@@ -172,13 +172,13 @@ func TestSanitizeLog_IPAddresses(t *testing.T) {
 		{
 			name:        "IPv6 public redacted",
 			input:       "Route to 2001:db8:85a3::8a2e:370:7334 via tun0",
-			mustContain: "[REDACTED_IP]",
+			mustContain: "[REDACTED_IPV6]",
 			mustNotHave: "2001:db8:85a3::8a2e:370:7334",
 		},
 		{
 			name:        "IPv6 bracketed with port redacted",
 			input:       "Connected to [2606:4700:4700::1111]:443 successfully",
-			mustContain: "[REDACTED_IP]:443",
+			mustContain: "[REDACTED_IPV6]:443",
 			mustNotHave: "2606:4700:4700::1111",
 		},
 		{

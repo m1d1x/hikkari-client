@@ -54,7 +54,9 @@ var home, _ = os.UserHomeDir()
 // - WireGuard / AmneziaWG private keys -> [REDACTED_KEY]
 // - VLESS / Trojan UUIDs -> [REDACTED_UUID]
 // - Invite tokens, session tokens, Authorization Bearer -> [REDACTED_TOKEN]
-// - IPv4 and IPv6 addresses (except loopback 127.0.0.1 / ::1) -> [REDACTED_IP]
+// - IPv4 addresses (except loopback 127.0.0.1) -> [REDACTED_IP]
+// - IPv6 addresses (except loopback ::1) -> [REDACTED_IPV6]: the family tells a
+//   flow with no route on a machine without IPv6 from any other failure
 func SanitizeLog(text string) string {
 	if text == "" {
 		return ""
@@ -123,9 +125,9 @@ func SanitizeLog(text string) string {
 		}
 
 		if portSuffix != "" {
-			return "[REDACTED_IP]" + portSuffix
+			return "[REDACTED_IPV6]" + portSuffix
 		}
-		return "[REDACTED_IP]"
+		return "[REDACTED_IPV6]"
 	})
 
 	// 6. IPv4 addresses
