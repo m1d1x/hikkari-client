@@ -594,7 +594,7 @@ jobs:
             }
             if ($st.update.version -ne $to3) { throw "$to3 was not staged" }
             $ap = Invoke-Hikkari '{"op":"apply_update","reconnect":true}'
-            if (-not $ap.ok -or $ap.running) { throw "apply of $to3: $($ap.error)" }
+            if (-not $ap.ok -or $ap.running) { throw "apply of ${to3}: $($ap.error)" }
             $st = Invoke-Hikkari ('{"op":"start","configHash":"after-swap","config":' + $cfg + '}')
             if ($st.configHash -ne "after-swap") { throw "fingerprint '$($st.configHash)'" }
             $rb = Invoke-Hikkari '{"op":"rollback_update"}'
