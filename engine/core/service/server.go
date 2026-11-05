@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -75,11 +76,10 @@ type Config struct {
 	OnVersion func(version string)
 
 	// RestartAfterApply: the update replaced the service's own binary, so
-	// after a swap the service exits (and the system starts the new one)
-	// instead of bringing the core back itself. Serve then returns
-	// ErrRestart. The core's wanted state survives in CoreDir/run and the
-	// new service resumes it. (macOS: the service lives inside the bundle.
-	// Windows: it lives outside app\ and stays.)
+	// after a swap the service exits (and the system starts the new one).
+	// Serve then returns ErrRestart. The core's wanted state survives in
+	// CoreDir/run. (macOS: the service lives inside the bundle. Windows: it
+	// lives outside app\ and stays.)
 	RestartAfterApply bool
 	// ResumeCore: at start, bring the core up if it was wanted up when the
 	// previous service exited (CoreDir/run). Implied by RestartAfterApply.
@@ -93,10 +93,12 @@ type Config struct {
 	// SyncBinaries brings the binaries that live outside the replaced tree
 	// up to date with their copies inside it (Windows: the launcher, the
 	// updater and this service beside app\). Called with no version on
-	// trial and no updater running. restart: the service's own binary was
-	// replaced and the platform has arranged for the new one to start once
-	// this one exits — Serve then returns ErrRestart. Optional.
-	SyncBinaries func() (restart bool)
+	// trial and no updater running. idle: no core is up or wanted, so the
+	// service may be replaced now; otherwise its binary waits, since replacing
+	// it takes the tunnel down. restart: the service's own binary was replaced
+	// and the platform has arranged for the new one to start once this one
+	// exits — Serve then returns ErrRestart. Optional.
+	SyncBinaries func(idle bool) (restart bool)
 
 	// NetworkStack resets the OS network stack (OpResetNetwork). Nil: the
 	// platform has no such reset and the op is refused.
@@ -148,6 +150,12 @@ type NetworkStack interface {
 // coreExitPoll is how long a dead core can leave the resolver pointed at it.
 const coreExitPoll = 2 * time.Second
 
+// awaitConfigFor is how long an updated service leaves a wanted core down for the
+// new GUI to send its config, so that the core comes up once, on the new rules.
+// A GUI that does not arrive costs this much tunnel, then the core comes up on the
+// stored config. A version that dies on trial is rolled back well before it.
+var awaitConfigFor = time.Minute
+
 var ErrRestart = errors.New("service: restarting into the updated version")
 
 type Server struct {
@@ -164,11 +172,6 @@ type Server struct {
 	mu sync.Mutex
 
 	restart chan struct{}
-	// restartWhenIdle holds a restart into updated binaries until the core
-	// is stopped: the first connect after an update is exactly when the
-	// version gets confirmed and the binaries synced, and restarting then
-	// would kill the tunnel the user has just brought up.
-	restartWhenIdle atomic.Bool
 }
 
 // NewServer prepares the service's own directory and the core manager.
@@ -225,12 +228,14 @@ func (s *Server) Serve(ctx context.Context) error {
 			s.log.Logf("service: restoring system DNS: %v", err)
 		}
 	}
-	if s.cfg.ResumeCore {
+	// Before the core: this is the one moment replacing the service costs no
+	// tunnel, on a machine whose core never stops. It restarts us at once.
+	if !s.updates.settle(true) && s.cfg.ResumeCore {
 		s.resume()
 	}
 	go s.watchCoreExit(ctx)
+	go s.watchAwaitedConfig(ctx)
 	go s.updates.watchTrial(ctx)
-	go s.updates.settle()
 
 	var restarting atomic.Bool
 	go func() {
@@ -289,30 +294,25 @@ func (s *Server) handle(conn net.Conn) {
 	switch {
 	case req.Op == svcproto.OpApplyUpdate && s.cfg.RestartAfterApply:
 		s.requestRestart()
-	case req.Op == svcproto.OpStop && s.restartWhenIdle.Load():
-		s.log.Logf("service: core stopped, restarting into the updated binaries now")
-		s.requestRestart()
-	case req.Op == svcproto.OpConfirmUpdate, req.Op == svcproto.OpRollbackUpdate:
-		// The installed version is settled: bring the binaries outside
-		// it in line — after the answer is out, since that may restart
-		// the service.
-		go s.updates.settle()
+	case req.Op == svcproto.OpStop && !req.Restarting,
+		req.Op == svcproto.OpConfirmUpdate, req.Op == svcproto.OpRollbackUpdate:
+		// The installed version is settled, or the core no longer holds back
+		// a new service binary: bring the binaries outside it in line — after
+		// the answer is out, since that may restart the service.
+		go s.updates.settle(false)
 	}
 }
 
-// requestRestartWhenIdle restarts now when no core runs, and otherwise at
-// the next stop (handle → OpStop). The new binaries are already in place;
-// the running service only waits to hand over to them.
-func (s *Server) requestRestartWhenIdle() {
-	s.mu.Lock()
-	engine, pid := s.running()
-	s.mu.Unlock()
-	if pid == 0 {
-		s.requestRestart()
-		return
-	}
-	s.restartWhenIdle.Store(true)
-	s.log.Logf("service: updated binaries in place; restart deferred until %s (pid=%d) is stopped", engine, pid)
+// idle says that nothing would notice the service restarting. Callers hold mu.
+func (s *Server) idle() bool {
+	_, pid := s.running()
+	return pid == 0 && !s.wanted()
+}
+
+// wanted says the core should be up: the run marker.
+func (s *Server) wanted() bool {
+	_, err := os.Stat(s.runMarker())
+	return err == nil
 }
 
 // requestRestart makes Serve return ErrRestart.
@@ -377,11 +377,19 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 		if s.cores[engine] == nil {
 			return fail(fmt.Errorf("движок %q не поставляется в этой установке", engine))
 		}
-		if err := s.writeConfig(engine, req.Config); err != nil {
+		if err := s.writeConfig(engine, req.Config, req.ConfigHash); err != nil {
+			// A newer GUI may need a newer sanitiser, and this service may be
+			// the old one still waiting for the core to stop. The tunnel is
+			// not worth more than its way back: hand over now.
+			go s.updates.settle(true)
 			return fail(err)
 		}
+		awaited := s.awaitingConfig()
 		if err := s.startCore(engine); err != nil {
 			return fail(err)
+		}
+		if awaited {
+			s.log.Logf("service: %s is up on the config this release sent (hash=%s, service %s)", engine, shortHash(req.ConfigHash), Version)
 		}
 		return s.status()
 	case svcproto.OpResetNetwork:
@@ -430,6 +438,13 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 		resp.NetworkRepair = &repair
 		return resp
 	case svcproto.OpStop:
+		if req.Restarting {
+			s.log.Logf("service: stop for a restart")
+			if err := s.stopCores(); err != nil {
+				return fail(err)
+			}
+			return s.status()
+		}
 		s.log.Logf("service: stop")
 		if err := s.stopCore(); err != nil {
 			return fail(err)
@@ -492,8 +507,9 @@ func (s *Server) configPath(engine string) string {
 }
 
 // writeConfig sanitises a config from the GUI for engine and stores it
-// where that engine's core reads it. Callers hold mu.
-func (s *Server) writeConfig(engine string, raw []byte) error {
+// where that engine's core reads it, with the GUI's fingerprint of it. Callers
+// hold mu.
+func (s *Server) writeConfig(engine string, raw []byte, hash string) error {
 	var cfg []byte
 	var err error
 	if engine == svcproto.EngineXray {
@@ -511,17 +527,161 @@ func (s *Server) writeConfig(engine string, raw []byte) error {
 	if err != nil {
 		return fmt.Errorf("конфиг отклонён службой: %w", err)
 	}
-	s.log.Logf("service: %s config (%d bytes)", engine, len(cfg))
+	if len(hash) > maxConfigHash {
+		return fmt.Errorf("конфиг отклонён службой: отпечаток длиной %d", len(hash))
+	}
+	s.log.Logf("service: %s config (%d bytes) hash=%s", engine, len(cfg), shortHash(hash))
 	if err := writeAtomic(s.configPath(engine), cfg); err != nil {
 		return err
 	}
+	if err := writeAtomic(s.configHashPath(engine), []byte(hash)); err != nil {
+		return err
+	}
 	return writeAtomic(s.configVersionPath(engine), []byte(Version))
+}
+
+// maxConfigHash bounds what is stored for a fingerprint the service cannot check.
+const maxConfigHash = 128
+
+// shortHash is a fingerprint for the log.
+func shortHash(hash string) string {
+	if hash == "" {
+		return "none"
+	}
+	if len(hash) > 12 {
+		return hash[:12]
+	}
+	return hash
 }
 
 // configVersionPath records which version of the service received the engine's
 // config (svcproto.Response.ConfigVersion).
 func (s *Server) configVersionPath(engine string) string {
 	return s.configPath(engine) + ".version"
+}
+
+// configHashPath holds the GUI's fingerprint of the stored config
+// (svcproto.Response.ConfigHash).
+func (s *Server) configHashPath(engine string) string {
+	return s.configPath(engine) + ".hash"
+}
+
+// configFiles are what describes one engine's stored config.
+func (s *Server) configFiles(engine string) []string {
+	return []string{s.configPath(engine), s.configHashPath(engine), s.configVersionPath(engine)}
+}
+
+// keepConfigForRollback copies the stored configs aside before a swap. The new
+// GUI sends its config while its version is on trial, and a rollback must not leave
+// the previous core with rules of a release it never knew: it may refuse to
+// start on them. Callers hold mu.
+func (s *Server) keepConfigForRollback() {
+	for engine := range s.cores {
+		for _, path := range s.configFiles(engine) {
+			raw, err := os.ReadFile(path)
+			if err == nil {
+				err = writeAtomic(path+rollbackSuffix, raw)
+			} else {
+				err = os.Remove(path + rollbackSuffix)
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				s.log.Logf("service: keeping the config for a rollback: %v", err)
+			}
+		}
+	}
+}
+
+// restoreConfigFromRollback puts back what keepConfigForRollback kept. Callers
+// hold mu.
+func (s *Server) restoreConfigFromRollback() {
+	for engine := range s.cores {
+		for _, path := range s.configFiles(engine) {
+			if _, err := os.Stat(path + rollbackSuffix); err != nil {
+				continue
+			}
+			if err := fsutil.Replace(path+rollbackSuffix, path); err != nil {
+				s.log.Logf("service: restoring the config after a rollback: %v", err)
+			}
+		}
+	}
+}
+
+// dropConfigForRollback forgets it once the version is confirmed.
+func (s *Server) dropConfigForRollback() {
+	for engine := range s.cores {
+		for _, path := range s.configFiles(engine) {
+			_ = os.Remove(path + rollbackSuffix)
+		}
+	}
+}
+
+const rollbackSuffix = ".rollback"
+
+// awaitMarker exists while a wanted core stays down for the new release's config.
+// It holds the deadline, unix seconds, and survives the service being replaced.
+func (s *Server) awaitMarker() string { return filepath.Join(s.cfg.CoreDir, "await-config") }
+
+// beginAwaitingConfig leaves the core down for the new GUI (see awaitConfigFor).
+func (s *Server) beginAwaitingConfig() {
+	deadline := time.Now().Add(awaitConfigFor).Unix()
+	if err := writeAtomic(s.awaitMarker(), []byte(strconv.FormatInt(deadline, 10))); err != nil {
+		s.log.Logf("service: marking the wait for a config: %v", err)
+	}
+}
+
+func (s *Server) awaitingConfig() bool {
+	_, err := os.Stat(s.awaitMarker())
+	return err == nil
+}
+
+// awaitExpired: the wait is over, or its deadline makes no sense (the clock moved).
+func (s *Server) awaitExpired(now time.Time) bool {
+	raw, err := os.ReadFile(s.awaitMarker())
+	if err != nil {
+		return false
+	}
+	deadline, err := strconv.ParseInt(string(raw), 10, 64)
+	if err != nil {
+		return true
+	}
+	at := time.Unix(deadline, 0)
+	return !now.Before(at) || at.After(now.Add(awaitConfigFor))
+}
+
+func (s *Server) endAwaitingConfig() { _ = os.Remove(s.awaitMarker()) }
+
+// watchAwaitedConfig brings the core up on the stored config when the GUI never
+// sent a new one. The tunnel the user wanted beats the rules of the new release; a
+// GUI that arrives later finds the difference and reconnects.
+func (s *Server) watchAwaitedConfig(ctx context.Context) {
+	tick := time.NewTicker(coreExitPoll)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		s.mu.Lock()
+		s.startOnStoredConfigIfAwaitExpired(time.Now())
+		s.mu.Unlock()
+	}
+}
+
+// startOnStoredConfigIfAwaitExpired is one check of watchAwaitedConfig. Callers
+// hold mu.
+func (s *Server) startOnStoredConfigIfAwaitExpired(now time.Time) {
+	if !s.awaitExpired(now) {
+		return
+	}
+	s.endAwaitingConfig()
+	if engine, _ := s.running(); engine != "" || !s.wanted() {
+		return
+	}
+	s.log.Logf("service: no config from the app within %s, starting %s on the stored one", awaitConfigFor, s.engine)
+	if err := s.runCore(s.engine); err != nil {
+		s.log.Logf("service: start on the stored config failed: %v", err)
+	}
 }
 
 // runMarker exists while the GUI wants the core up: what ResumeCore reads.
@@ -542,12 +702,14 @@ func (s *Server) startCore(engine string) error {
 	if err := s.runCore(engine); err != nil {
 		return err
 	}
+	s.endAwaitingConfig()
 	_ = os.WriteFile(s.runMarker(), []byte(engine), 0o644)
 	return nil
 }
 
 func (s *Server) stopCore() error {
 	_ = os.Remove(s.runMarker())
+	s.endAwaitingConfig()
 	return s.stopCores()
 }
 
@@ -672,6 +834,12 @@ func (s *Server) resume() {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.engine = engine
+	if s.awaitingConfig() && !s.awaitExpired(time.Now()) {
+		s.log.Logf("service: %s stays down until the app sends this release's config", engine)
+		return
+	}
+	s.endAwaitingConfig()
 	s.log.Logf("service: resuming %s (it was up before the restart)", engine)
 	if err := s.runCore(engine); err != nil {
 		s.log.Logf("service: resume failed: %v", err)
@@ -680,11 +848,14 @@ func (s *Server) resume() {
 
 func (s *Server) status() svcproto.Response {
 	engine, pid := s.running()
-	configVersion := ""
+	configVersion, configHash := "", ""
 	if engine != "" {
 		// Absent: a config from before this was recorded, so an older release.
 		if raw, err := os.ReadFile(s.configVersionPath(engine)); err == nil {
 			configVersion = string(raw)
+		}
+		if raw, err := os.ReadFile(s.configHashPath(engine)); err == nil {
+			configHash = string(raw)
 		}
 	}
 	return svcproto.Response{
@@ -698,6 +869,9 @@ func (s *Server) status() svcproto.Response {
 
 		ConfigTracked: true,
 		ConfigVersion: configVersion,
+		Supervised:    true,
+		Wanted:        s.wanted(),
+		ConfigHash:    configHash,
 
 		SyncsBinaries: s.cfg.SyncBinaries != nil,
 		ScanSafe:      s.cfg.NetworkStack != nil,

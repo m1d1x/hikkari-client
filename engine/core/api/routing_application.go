@@ -110,7 +110,7 @@ func (c *Core) transactionRouting(previous, next routing.RoutingState, persist, 
 		// before reinstalling the previous configuration.
 		stopped := true
 		if startAttempted && c.backend.IsRunning() {
-			if err := c.backend.Stop(); err != nil {
+			if err := c.stopForRestart(); err != nil {
 				recovery = append(recovery, fmt.Errorf("остановка неудачной конфигурации: %w", err))
 				stopped = false
 			}
@@ -134,7 +134,7 @@ func (c *Core) transactionRouting(previous, next routing.RoutingState, persist, 
 		return rollback(err)
 	}
 	if restart {
-		if err := c.backend.Stop(); err != nil {
+		if err := c.stopForRestart(); err != nil {
 			return rollback(err)
 		}
 		startAttempted = true

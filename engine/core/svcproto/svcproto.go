@@ -10,7 +10,7 @@
 //	GUI ──{"op":"stop"}─────────────────▶ service      stop core
 //	GUI ──{"op":"status"}───────────────▶ service      running? core log? update state?
 //	GUI ──{"op":"check_update"}─────────▶ service      poll the channel now (throttled)
-//	launcher ──{"op":"apply_update"}────▶ service      stop core, swap in the staged version
+//	launcher ──{"op":"apply_update"}────▶ service      stop core, swap in the staged version; a wanted core stays down for the new GUI's start
 //	launcher ──{"op":"recover_update"}──▶ service      at every launch: repair / trial / roll back
 //	launcher ──{"op":"confirm_update"}──▶ service      the new version runs: keep it
 //	launcher ──{"op":"rollback_update"}─▶ service      the new version died: put the old back
@@ -91,6 +91,15 @@ type Request struct {
 	// engine. The service never runs it as given — see Sanitize and
 	// SanitizeXray.
 	Config json.RawMessage `json:"config,omitempty"`
+	// ConfigHash, for OpStart: the GUI's fingerprint of what Config means, taken
+	// before the parts that differ from start to start (see
+	// configfile.Store.Fingerprint). The service keeps it beside the config and
+	// answers with it: it cannot compute it, since it sees Config only after the
+	// server addresses are pinned.
+	ConfigHash string `json:"configHash,omitempty"`
+	// Restarting, for OpStop: a start follows at once, so the wish to be up
+	// stays. If that start fails the GUI keeps trying (Response.Wanted).
+	Restarting bool `json:"restarting,omitempty"`
 	// Hosts, for OpAutoTunnel: the whole autotunnel host list. The service
 	// validates it and writes its own rule set file from it.
 	Hosts []string `json:"hosts,omitempty"`
@@ -122,6 +131,16 @@ type Response struct {
 	// release, however new the GUI's own copy is.
 	ConfigTracked bool   `json:"configTracked,omitempty"`
 	ConfigVersion string `json:"configVersion,omitempty"`
+	// Supervised: this service answers Wanted and ConfigHash, and after an update
+	// waits for the GUI's config instead of resuming the core on the old one.
+	Supervised bool `json:"supervised,omitempty"`
+	// Wanted: the core should be up (the run marker). Wanted without Running is
+	// a core waiting for the new release's config, or a start that failed: the
+	// GUI starts it.
+	Wanted bool `json:"wanted,omitempty"`
+	// ConfigHash is the Request.ConfigHash the stored config came with; empty for
+	// a config stored without one.
+	ConfigHash string `json:"configHash,omitempty"`
 
 	Update *UpdateState `json:"update,omitempty"`
 	// SyncsBinaries: this service keeps the binaries outside the replaced

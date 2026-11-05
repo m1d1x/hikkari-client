@@ -100,7 +100,7 @@ func TestWriteConfigRewritesTheAutoTunnelRuleSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.writeConfig(svcproto.EngineSingBox, raw); err != nil {
+	if err := s.writeConfig(svcproto.EngineSingBox, raw, ""); err != nil {
 		t.Fatalf("the compiled config was refused: %v", err)
 	}
 	stored, err := os.ReadFile(filepath.Join(dir, "config.json"))

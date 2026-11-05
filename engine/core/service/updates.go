@@ -182,23 +182,18 @@ func (u *updates) check() {
 // Windows sing-box.exe inside app\ would hold the directory open, and on both
 // platforms the core must come back as the new version's binary.
 //
-// When the swap replaced the service itself (Config.RestartAfterApply) the
-// core is not brought back here: the service is about to exit, and the new
-// one resumes it from the run marker — which reconnect sets.
+// A wanted core does not come back here: it would run the new binary on the old
+// release's rules until the new GUI restarted it. It stays down for the GUI's
+// config, so an update costs one break (Server.beginAwaitingConfig). Xray has no
+// such GUI and comes back as before. A failed swap changed nothing: the core
+// comes back at once.
 func (u *updates) apply(reconnect bool) (from, to string, err error) {
 	u.opMu.Lock()
 	defer u.opMu.Unlock()
 	if st := u.snapshot(); st.State != svcproto.UpdateReady {
 		return "", "", errors.New("нет готового обновления")
 	}
-	swap := u.withCoreDown
-	if u.srv.cfg.RestartAfterApply {
-		swap = u.withCoreLeftDown
-		if reconnect {
-			_ = os.WriteFile(u.srv.runMarker(), nil, 0o644)
-		}
-	}
-	err = swap(reconnect, func() error {
+	err = u.swap(reconnect, func() error {
 		var err error
 		// A file inside app\ held for a moment after the core exits (an
 		// antivirus scanning it, a straggling handle) fails the first
@@ -229,6 +224,44 @@ func (u *updates) apply(reconnect bool) (from, to string, err error) {
 	return from, to, nil
 }
 
+// swap is apply's handling of the core around the updater.
+func (u *updates) swap(reconnect bool, f func() error) error {
+	s := u.srv
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	running, _ := s.running()
+	wanted := running != "" || reconnect || s.wanted()
+	s.keepConfigForRollback()
+	if running != "" {
+		s.engine = running
+		_ = s.stopCores()
+	}
+	if err := f(); err != nil {
+		if wanted {
+			if startErr := s.runCore(s.engine); startErr != nil {
+				s.log.Logf("updates: core did not come back: %v", startErr)
+			}
+		}
+		return err
+	}
+	if !wanted {
+		return nil
+	}
+	if !s.wanted() {
+		_ = os.WriteFile(s.runMarker(), []byte(s.engine), 0o644)
+	}
+	switch {
+	case s.engine == svcproto.EngineSingBox:
+		s.beginAwaitingConfig()
+		s.log.Logf("updates: core stays down until the app sends the new release's config")
+	case !s.cfg.RestartAfterApply:
+		if err := s.runCore(s.engine); err != nil {
+			s.log.Logf("updates: core did not come back: %v", err)
+		}
+	}
+	return nil
+}
+
 // recover runs at every launch. It only takes the core down when directories
 // are about to move, so an ordinary launch never drops the tunnel.
 func (u *updates) recover() (result, from, to string, err error) {
@@ -244,11 +277,15 @@ func (u *updates) recover() (result, from, to string, err error) {
 		moves = true // app\ unreadable: an interrupted swap to repair
 	}
 	do := func() error {
-		return u.run("recover", func(ev map[string]interface{}) {
+		err := u.run("recover", func(ev map[string]interface{}) {
 			if ev["event"] == "recovered" {
 				result, from, to = str(ev["result"]), str(ev["from"]), str(ev["to"])
 			}
 		})
+		if err == nil && result == "rolled_back" {
+			u.srv.restoreConfigFromRollback()
+		}
+		return err
 	}
 	if moves {
 		err = u.withCoreDown(false, do)
@@ -270,18 +307,26 @@ func (u *updates) recover() (result, from, to string, err error) {
 func (u *updates) confirm() error {
 	u.opMu.Lock()
 	defer u.opMu.Unlock()
-	return u.run("confirm", nil)
+	if err := u.run("confirm", nil); err != nil {
+		return err
+	}
+	u.srv.dropConfigForRollback()
+	return nil
 }
 
 func (u *updates) rollback() (from, to string, err error) {
 	u.opMu.Lock()
 	defer u.opMu.Unlock()
 	err = u.withCoreDown(false, func() error {
-		return u.run("rollback", func(ev map[string]interface{}) {
+		err := u.run("rollback", func(ev map[string]interface{}) {
 			if ev["event"] == "rolled_back" {
 				from, to = str(ev["from"]), str(ev["to"])
 			}
 		})
+		if err == nil {
+			u.srv.restoreConfigFromRollback()
+		}
+		return err
 	})
 	if err == nil {
 		u.srv.onVersion(from)
@@ -294,9 +339,9 @@ func (u *updates) rollback() (from, to string, err error) {
 }
 
 // withCoreDown stops the core around f and starts it again afterwards if it
-// was running before or if start is set. Restarting reuses the last config
-// the GUI sent for the last engine it ran, with whatever binary the
-// installation now holds.
+// is wanted: it was running, start is set, or it stayed down for a config that
+// will now not come. Restarting reuses the stored config for the last engine,
+// with whatever binary the installation now holds.
 func (u *updates) withCoreDown(start bool, f func() error) error {
 	s := u.srv
 	s.mu.Lock()
@@ -306,7 +351,8 @@ func (u *updates) withCoreDown(start bool, f func() error) error {
 		_ = s.stopCores()
 	}
 	err := f()
-	if running != "" || start {
+	s.endAwaitingConfig()
+	if running != "" || start || s.wanted() {
 		if _, statErr := os.Stat(s.configPath(s.engine)); statErr == nil {
 			if startErr := s.runCore(s.engine); startErr != nil {
 				s.log.Logf("updates: core did not come back: %v", startErr)
@@ -314,18 +360,6 @@ func (u *updates) withCoreDown(start bool, f func() error) error {
 		}
 	}
 	return err
-}
-
-// withCoreLeftDown stops the core around f and leaves it down: the service
-// is about to be replaced and the next one resumes it (see apply).
-func (u *updates) withCoreLeftDown(_ bool, f func() error) error {
-	s := u.srv
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if running, _ := s.running(); running != "" {
-		_ = s.stopCores()
-	}
-	return f()
 }
 
 // watchTrial rolls back a version that was swapped in moments before this
@@ -375,31 +409,39 @@ func (u *updates) pendingSince() time.Time {
 
 // settle hands over to Config.SyncBinaries once no version is on trial: a
 // version on trial may still be rolled back, and the binaries outside the
-// tree must not run ahead of it. Runs at start and after a confirmation or
-// rollback; with nothing to bring in line it costs two file hashes.
-func (u *updates) settle() {
+// tree must not run ahead of it. Runs at start, after a confirmation or
+// rollback, and after the core stops; with nothing to bring in line it costs two
+// file hashes. Replacing the service restarts it, so while the core is up or wanted
+// its binary waits for one of those moments: an update has already cost its
+// one break. now: restarting costs nothing (no core has run yet) or is worth it (a
+// config this service refuses), so the service is free to go.
+//
+// It reports a restart it has asked for.
+func (u *updates) settle(now bool) bool {
 	sync := u.srv.cfg.SyncBinaries
 	if sync == nil {
-		return
+		return false
 	}
 	u.opMu.Lock()
+	defer u.opMu.Unlock()
 	onTrial := false
 	if err := u.run("status", func(ev map[string]interface{}) {
 		_, onTrial = ev["pending"].(map[string]interface{})
 	}); err != nil {
-		u.opMu.Unlock()
 		u.srv.log.Logf("updates: not syncing binaries, status failed: %v", err)
-		return
+		return false
 	}
 	if onTrial {
-		u.opMu.Unlock()
-		return
+		return false
 	}
-	restart := sync()
-	u.opMu.Unlock()
+	u.srv.mu.Lock()
+	restart := sync(now || u.srv.idle())
+	u.srv.mu.Unlock()
 	if restart {
-		u.srv.requestRestartWhenIdle()
+		u.srv.log.Logf("service: restarting into the updated binaries")
+		u.srv.requestRestart()
 	}
+	return restart
 }
 
 // updaterError is a failed hikkari-updater command, with its error code.

@@ -70,6 +70,11 @@ func (c *Core) StartVPN() error {
 	if err := c.flushRoutingLocked(); err != nil {
 		return err
 	}
+	// A press that waited for superviseCore finds the core already up; starting
+	// it again would be a second break for nothing.
+	if !c.routingPreview && c.backend.IsRunning() {
+		return nil
+	}
 	started := time.Now()
 	err := c.startVPN()
 	if err != nil {
@@ -141,6 +146,11 @@ func (c *Core) StopVPN() error {
 func (c *Core) RestartVPN() error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
+	return c.restartVPNLocked()
+}
+
+// restartVPNLocked: callers hold operationMu.
+func (c *Core) restartVPNLocked() error {
 	wasRunning := c.backend.IsRunning()
 	pendingRestart := c.routingApp.pending != nil && wasRunning && !routing.ActiveEqual(c.routingApp.pending.effective, c.RoutingStatus().Effective)
 	if err := c.flushRoutingLocked(); err != nil {
@@ -159,10 +169,19 @@ func (c *Core) restartVPN() error {
 	if err := c.requireProfiles(); err != nil {
 		return err
 	}
-	if err := c.backend.Stop(); err != nil {
+	if err := c.stopForRestart(); err != nil {
 		return err
 	}
 	return c.startVPN()
+}
+
+// stopForRestart stops the core with a start to follow: if that start fails the
+// core stays wanted and superviseCore keeps trying. A user's stop is backend.Stop.
+func (c *Core) stopForRestart() error {
+	if core, ok := c.backend.(engine.CoreSupervision); ok {
+		return core.StopForRestart()
+	}
+	return c.backend.Stop()
 }
 func (c *Core) IsRunning() bool { return c.backend.IsRunning() }
 
@@ -377,7 +396,12 @@ func (c *Core) DeleteProfile(name string) error {
 	}
 	wasRunning := c.IsRunning()
 	if wasRunning {
-		if err := c.backend.Stop(); err != nil {
+		// Deleting the last profile ends the wish to be up: nothing can start.
+		stop := c.stopForRestart
+		if pf, err := c.profiles.Read(); err == nil && len(pf.Profiles) <= 1 {
+			stop = c.backend.Stop
+		}
+		if err := stop(); err != nil {
 			return err
 		}
 	}

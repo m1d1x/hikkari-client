@@ -88,10 +88,26 @@ type DirectProber interface {
 	ProbeDirect(url string, timeoutMs int) error
 }
 
-// CoreConfigStaleness is optional: the engine can tell that its running core was
-// started on a config from an older release, which a restart would replace.
-type CoreConfigStaleness interface {
-	CoreConfigStale() bool
+// CoreState is what the owner of a core separate from the GUI knows about it.
+type CoreState struct {
+	// Supervised: the owner reports the rest. An older one, kept for a moment
+	// by an update, does not.
+	Supervised bool
+	// Wanted: the core should be up. Wanted and not Running is for the GUI to
+	// put right.
+	Wanted  bool
+	Running bool
+	// ConfigCurrent: the core runs what this GUI would give it now.
+	ConfigCurrent bool
+}
+
+// CoreSupervision is optional: the core lives apart from the GUI and outlasts it,
+// so the GUI can find it down or on another release's config.
+type CoreSupervision interface {
+	CoreState() (CoreState, error)
+	// StopForRestart is Stop with a start to follow: the core stays wanted, so
+	// a start that fails is tried again.
+	StopForRestart() error
 }
 
 // TesterGated is optional: the engine has things it does only on a tester's

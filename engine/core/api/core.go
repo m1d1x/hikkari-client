@@ -283,8 +283,8 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		}
 		run(c.measureTunnelDown)
 		run(backend.Baseline)
-		if stale, ok := backend.(engine.CoreConfigStaleness); ok {
-			run(func() { c.watchCoreConfig(ctx, stale) })
+		if core, ok := backend.(engine.CoreSupervision); ok {
+			run(func() { c.superviseCore(ctx, core) })
 		}
 		run(func() { c.watchNetwork(ctx) })
 		run(func() { c.watchRoute(ctx) })
@@ -308,32 +308,107 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	return nil
 }
 
-// coreConfigCheckInterval is how often the running core's config is compared with
-// this release. A local question to the service. The GUI of an update starts before
-// the old service is replaced, so one check at start would miss the moment.
-var coreConfigCheckInterval = 30 * time.Second
+// coreSuperviseInterval is how often the GUI asks about the core: a local question
+// to the service. The first time is at once, since after an update the core is
+// waiting for this GUI's config.
+var coreSuperviseInterval = 5 * time.Second
 
-// watchCoreConfig reconnects when an update has left the core on the previous
-// release's config. The service resumes the tunnel on the file it holds, and the
-// GUI's own copy, however new, reaches it only at a start: on 05.11 five releases
-// of routing fixes never reached a tester's core until they pressed disconnect.
-func (c *Core) watchCoreConfig(ctx context.Context, core engine.CoreConfigStaleness) {
-	ticker := time.NewTicker(coreConfigCheckInterval)
-	defer ticker.Stop()
+// coreSettleTime is how long after its start the GUI asks more often while the
+// service does not answer.
+const coreSettleTime = 30 * time.Second
+
+// coreRetryMax caps the pause between attempts to bring up a wanted core.
+var coreRetryMax = time.Minute
+
+// superviseCore keeps the core the user wants. A core that is wanted and down gets
+// started: after an update that is the one start that delivers the new release's
+// rules, and it also covers a reconnect that failed or a core that died.
+func (c *Core) superviseCore(ctx context.Context, core engine.CoreSupervision) {
+	watch := coreWatch{}
+	started := time.Now()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
-		if !core.CoreConfigStale() || ctx.Err() != nil {
-			continue
+		answered := c.superviseCoreOnce(ctx, core, &watch)
+		// On macOS the updated GUI can open while launchd is still starting the
+		// new service, and the tunnel is waiting for this very call.
+		next := coreSuperviseInterval
+		if !answered && time.Since(started) < coreSettleTime {
+			next = min(next, time.Second)
 		}
-		c.logger.Logf("core config is from an older release: reconnecting")
-		if err := c.RestartVPN(); err != nil {
+		timer.Reset(next)
+	}
+}
+
+// coreWatch is what superviseCore remembers between checks.
+type coreWatch struct {
+	failures int
+	retryAt  time.Time
+	// configChecked: the core this GUI found running was compared with this
+	// GUI's config. Once: later the GUI's config changes without a restart by
+	// design (a profile added, one selected), and comparing then would break
+	// the tunnel in the middle of a call.
+	configChecked bool
+}
+
+// superviseCoreOnce holds operationMu from the question to the action: a user who
+// pressed disconnect a moment ago is seen here, and is not reconnected. It says
+// whether the service answered.
+func (c *Core) superviseCoreOnce(ctx context.Context, core engine.CoreSupervision, watch *coreWatch) (answered bool) {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if ctx.Err() != nil {
+		return true
+	}
+	state, err := core.CoreState()
+	if err != nil {
+		return false
+	}
+	if !state.Supervised {
+		return true // The previous service, until the update replaces it.
+	}
+	switch {
+	case state.Wanted && !state.Running:
+		if time.Now().Before(watch.retryAt) {
+			return true
+		}
+		c.logger.Logf("core is wanted and down: connecting (attempt %d)", watch.failures+1)
+		err := c.flushRoutingLocked()
+		if err == nil && !c.backend.IsRunning() {
+			err = c.startVPN()
+		}
+		if err != nil {
+			watch.failures++
+			pause := min(coreSuperviseInterval<<min(watch.failures-1, 10), coreRetryMax)
+			watch.retryAt = time.Now().Add(pause)
+			c.logger.Logf("connect failed, next attempt in %s: %v", pause, err)
+			return true
+		}
+		c.logger.Logf("core is up on this release's config")
+		*watch = coreWatch{configChecked: true}
+	case state.Running && !watch.configChecked:
+		watch.failures, watch.retryAt = 0, time.Time{}
+		watch.configChecked = true
+		if state.ConfigCurrent {
+			c.logger.Logf("core config matches this release")
+			return true
+		}
+		c.logger.Logf("core config differs from this release: reconnecting")
+		if err := c.restartVPNLocked(); err != nil {
 			c.logger.Logf("reconnect on the new config: %v", err)
 		}
+	case !state.Wanted:
+		// The next start sends this GUI's config anyway.
+		*watch = coreWatch{configChecked: true}
+	default:
+		watch.failures, watch.retryAt = 0, time.Time{}
 	}
+	return true
 }
 
 // Shutdown cancels background loops, stops the VPN core, and closes the log.

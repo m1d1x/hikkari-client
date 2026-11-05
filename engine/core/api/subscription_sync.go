@@ -168,12 +168,17 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 		return rollback(err, false)
 	}
 	if running {
-		if err := c.backend.Stop(); err != nil {
+		// With no profiles left nothing can start, so the wish to be up ends.
+		stop := c.stopForRestart
+		if len(after.Profiles) == 0 {
+			stop = c.backend.Stop
+		}
+		if err := stop(); err != nil {
 			return rollback(err, !c.backend.IsRunning())
 		}
 		if len(after.Profiles) > 0 {
 			if err := c.backend.Start(ctx); err != nil {
-				stopErr := c.backend.Stop()
+				stopErr := c.stopForRestart()
 				return rollback(errors.Join(err, stopErr), stopErr == nil)
 			}
 		}
@@ -183,7 +188,7 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 	if err := pending.Commit(); err != nil {
 		var stopErr error
 		if running && len(after.Profiles) > 0 {
-			stopErr = c.backend.Stop()
+			stopErr = c.stopForRestart()
 		}
 		return rollback(errors.Join(err, stopErr), running && stopErr == nil)
 	}

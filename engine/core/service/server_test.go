@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -115,16 +116,14 @@ func TestServiceRefusesAnEngineItDoesNotShip(t *testing.T) {
 // update confirms the version) must not restart the service under the
 // tunnel: the restart waits for the core to be stopped.
 func TestBinaryRestartWaitsForTheCoreToStop(t *testing.T) {
-	dir := t.TempDir()
-	core := filepath.Join(dir, "core")
-	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, CoreReady: fakeCoreUp})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.stopCores()
+	var offered []bool
+	var mu sync.Mutex
+	s := updateServer(t, Config{SyncBinaries: func(idle bool) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		offered = append(offered, idle)
+		return idle
+	}})
 	restarted := func() bool {
 		select {
 		case <-s.restart:
@@ -134,24 +133,38 @@ func TestBinaryRestartWaitsForTheCoreToStop(t *testing.T) {
 		}
 	}
 
-	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`)}); !resp.OK {
-		t.Fatalf("start: %+v", resp)
-	}
-	s.requestRestartWhenIdle()
+	startCoreForTest(t, s, "h1")
+	s.updates.settle(false)
 	if restarted() {
 		t.Fatal("service restarted under a running core")
 	}
 
-	client, server := net.Pipe()
-	go s.handle(server)
-	if err := svcproto.WriteMessage(client, svcproto.Request{Op: svcproto.OpStop}); err != nil {
-		t.Fatal(err)
+	// A stop for a restart hands nothing over: a start is about to follow.
+	stop := func(req svcproto.Request) {
+		t.Helper()
+		client, server := net.Pipe()
+		go s.handle(server)
+		if err := svcproto.WriteMessage(client, req); err != nil {
+			t.Fatal(err)
+		}
+		var resp svcproto.Response
+		if err := svcproto.ReadMessage(client, &resp); err != nil || !resp.OK {
+			t.Fatalf("stop: %+v %v", resp, err)
+		}
+		client.Close()
 	}
-	var resp svcproto.Response
-	if err := svcproto.ReadMessage(client, &resp); err != nil || !resp.OK {
-		t.Fatalf("stop: %+v %v", resp, err)
+	stop(svcproto.Request{Op: svcproto.OpStop, Restarting: true})
+	time.Sleep(100 * time.Millisecond)
+	if restarted() {
+		t.Fatal("a stop for a restart restarted the service")
 	}
-	client.Close()
+	s.updates.settle(false)
+	if restarted() {
+		t.Fatal("the core is still wanted, yet the service restarted")
+	}
+
+	startCoreForTest(t, s, "h1")
+	stop(svcproto.Request{Op: svcproto.OpStop})
 	deadline := time.Now().Add(2 * time.Second)
 	for !restarted() {
 		if time.Now().After(deadline) {
@@ -160,15 +173,30 @@ func TestBinaryRestartWaitsForTheCoreToStop(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// With no core running the restart is immediate.
-	s.restartWhenIdle.Store(false)
-	s.requestRestartWhenIdle()
-	if !restarted() {
-		t.Fatal("idle service did not restart at once")
+	// A config this service refuses may need the new one, core or no core.
+	if err := os.WriteFile(s.runMarker(), []byte(svcproto.EngineSingBox), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[],"unknown":1}`)}); resp.OK {
+		t.Fatal("a config with an unknown section was accepted")
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for !restarted() {
+		if time.Now().After(deadline) {
+			t.Fatal("a refused config did not hand over to the new binary")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// At start no core has run yet, whatever the marker says.
+	if err := os.WriteFile(s.runMarker(), []byte(svcproto.EngineSingBox), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !s.updates.settle(true) || !restarted() {
+		t.Fatal("a starting service did not take its new binary before the core")
 	}
 }
 
-// A core that cannot start must not leave the system resolver pointed at it.
 func TestFailedSingBoxStartGivesTheResolverBack(t *testing.T) {
 	dir := t.TempDir()
 	dns := &fakeDNS{}
@@ -298,40 +326,28 @@ func TestCoreThatExitsAtStartFailsTheStartWithItsReason(t *testing.T) {
 	}
 }
 
-// A service replaced by an update resumes the core on the file it holds. Status
-// says so until the GUI sends a config, whichever release wrote the old one.
-func TestStatusNamesTheReleaseThatWroteTheConfig(t *testing.T) {
-	dir := t.TempDir()
-	core := filepath.Join(dir, "core")
-	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, SystemDNS: &fakeDNS{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.stopCores()
-
-	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`)}); !resp.OK {
-		t.Fatalf("start: %+v", resp)
-	}
+// Status names what the running core was started on, and asks for nothing but the
+// fingerprint the GUI itself sent: the service sees the config after pinning.
+func TestStatusReportsWhatTheCoreWasStartedOn(t *testing.T) {
+	s := updateServer(t, Config{})
+	startCoreForTest(t, s, "h1")
 	resp := s.dispatch(svcproto.Request{Op: svcproto.OpStatus})
-	if !resp.ConfigTracked || resp.ConfigVersion != Version {
-		t.Fatalf("after a start: tracked=%v config=%q, version %q", resp.ConfigTracked, resp.ConfigVersion, Version)
+	if !resp.Supervised || !resp.Wanted || !resp.Running || resp.ConfigHash != "h1" || resp.ConfigVersion != Version {
+		t.Fatalf("after a start: %+v", resp)
 	}
-
-	for name, written := range map[string]func() error{
-		"older release": func() error { return os.WriteFile(s.configVersionPath(svcproto.EngineSingBox), []byte("1.0.0"), 0o644) },
-		"no record":     func() error { return os.Remove(s.configVersionPath(svcproto.EngineSingBox)) },
-	} {
-		if err := written(); err != nil {
-			t.Fatal(err)
-		}
-		if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStatus}); resp.ConfigVersion == Version {
-			t.Fatalf("%s reads as this release", name)
-		}
-		if err := os.WriteFile(s.configVersionPath(svcproto.EngineSingBox), []byte(Version), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.Remove(s.configHashPath(svcproto.EngineSingBox)); err != nil {
+		t.Fatal(err)
+	}
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStatus}); resp.ConfigHash != "" {
+		t.Fatalf("a config with no record reads as %q", resp.ConfigHash)
+	}
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStop, Restarting: true}); !resp.OK || !resp.Wanted || resp.Running {
+		t.Fatalf("a stop for a restart must keep the wish: %+v", resp)
+	}
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStop}); !resp.OK || resp.Wanted {
+		t.Fatalf("a stop must end the wish: %+v", resp)
+	}
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`), ConfigHash: strings.Repeat("x", maxConfigHash+1)}); resp.OK {
+		t.Fatal("an oversized fingerprint was stored")
 	}
 }

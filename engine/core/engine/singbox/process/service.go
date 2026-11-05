@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"NekkoVPN/core/engine"
 	"NekkoVPN/core/svcclient"
 	"NekkoVPN/core/svcproto"
 )
@@ -34,12 +35,17 @@ type ServiceManager struct {
 
 	followOnce sync.Once
 	following  atomic.Bool
+	configHash atomic.Pointer[string]
 }
+
+// serviceReturnWithin is how long a start waits for a service that was there
+// and is gone: it is restarting into updated binaries after a stop.
+const serviceReturnWithin = 15 * time.Second
 
 // attachInterval is how often a manager that has not reached the service yet
 // asks for its status, so the core log is mirrored from the start even when
-// the GUI attaches to a tunnel already running (restart after an update with
-// --reconnect, a GUI crash) and Start is never called.
+// the GUI attaches to a tunnel already running (a GUI crash, a core the service
+// resumed after a reboot) and Start is never called.
 const attachInterval = 10 * time.Second
 
 func NewServiceManager(configPath string, log LineLogger) *ServiceManager {
@@ -83,16 +89,23 @@ func (m *ServiceManager) followCore(resp svcproto.Response) {
 	})
 }
 
-// CoreConfigStale reports a running core on a config an older release wrote: the
-// service that replaced itself in an update resumes the core on what it has. A
-// service that does not track this is not stale: it may be the old one still
-// waiting to be replaced, and restarting through it would not last.
-func (m *ServiceManager) CoreConfigStale() bool {
+// SetConfigHash names the config the next Start sends.
+func (m *ServiceManager) SetConfigHash(hash string) { m.configHash.Store(&hash) }
+
+// CoreState reports what the service knows of the core. Whether it runs the config
+// behind currentHash is by content: a release that changes no rule costs no
+// reconnect, and one that does is seen whichever service version wrote the file.
+func (m *ServiceManager) CoreState(currentHash string) (engine.CoreState, error) {
 	resp, err := m.call(svcproto.Request{Op: svcproto.OpStatus}, 5*time.Second)
 	if err != nil {
-		return false
+		return engine.CoreState{}, err
 	}
-	return resp.Running && resp.ConfigTracked && resp.ConfigVersion != resp.Version
+	return engine.CoreState{
+		Supervised:    resp.Supervised,
+		Wanted:        resp.Wanted,
+		Running:       resp.Running,
+		ConfigCurrent: resp.ConfigHash == currentHash,
+	}, nil
 }
 
 func (m *ServiceManager) Start() error {
@@ -107,7 +120,16 @@ func (m *ServiceManager) Start() error {
 	_, _ = m.call(svcproto.Request{Op: svcproto.OpStatus}, 5*time.Second)
 	// Generous: the service stops strays, unblocks binaries and flushes DNS
 	// before spawning the core.
-	resp, err := m.call(svcproto.Request{Op: svcproto.OpStart, Config: raw}, 30*time.Second)
+	hash := ""
+	if h := m.configHash.Load(); h != nil {
+		hash = *h
+	}
+	request := svcproto.Request{Op: svcproto.OpStart, Config: raw, ConfigHash: hash}
+	resp, err := m.call(request, 30*time.Second)
+	for deadline := time.Now().Add(serviceReturnWithin); errors.Is(err, svcclient.ErrNoService) && m.following.Load() && time.Now().Before(deadline); {
+		time.Sleep(time.Second)
+		resp, err = m.call(request, 30*time.Second)
+	}
 	if err != nil {
 		m.log.Logf("vpn.Start (service): %v", err)
 		return err
@@ -116,8 +138,13 @@ func (m *ServiceManager) Start() error {
 	return nil
 }
 
-func (m *ServiceManager) Stop() error {
-	_, err := m.call(svcproto.Request{Op: svcproto.OpStop}, 30*time.Second)
+func (m *ServiceManager) Stop() error { return m.stop(false) }
+
+// StopForRestart leaves the core wanted: the start that follows may fail.
+func (m *ServiceManager) StopForRestart() error { return m.stop(true) }
+
+func (m *ServiceManager) stop(restarting bool) error {
+	_, err := m.call(svcproto.Request{Op: svcproto.OpStop, Restarting: restarting}, 30*time.Second)
 	if errors.Is(err, svcclient.ErrNoService) {
 		// The core belongs to the service: with no service there is no core
 		// to stop. Start still reports the missing service to the user.
@@ -134,7 +161,7 @@ func (m *ServiceManager) Stop() error {
 
 func (m *ServiceManager) Restart() error {
 	m.log.Logf("vpn.Restart (service): begin")
-	if err := m.Stop(); err != nil {
+	if err := m.StopForRestart(); err != nil {
 		return err
 	}
 	time.Sleep(1500 * time.Millisecond)

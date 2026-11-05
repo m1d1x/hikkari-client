@@ -40,6 +40,7 @@ type Backend struct {
 	check       configChecker
 	compiled    *compiled
 	rejected    map[string]error // profile name -> why the running core was started without it
+	fingerprint string           // of what the last Configure wrote, before admit and the pins
 }
 
 // selectActiveTimeout bounds the wait for a freshly started core's Clash API.
@@ -111,6 +112,11 @@ func (b *Backend) Configure(c engine.Configuration) error {
 	if err := rebuild(specs, active); err != nil {
 		return err
 	}
+	fingerprint, err := b.config.Fingerprint()
+	if err != nil {
+		return err
+	}
+	b.fingerprint = fingerprint
 	b.active = active
 	b.compiled = &compiled{specs: specs, labels: labels, names: names, auto: c.AutoSelect, rebuild: rebuild}
 	return nil
@@ -151,6 +157,9 @@ func (b *Backend) Start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if tracked, ok := b.process.(supervisedProcess); ok {
+		tracked.SetConfigHash(b.fingerprint)
+	}
 	if err := b.process.Start(); err != nil {
 		return err
 	}
@@ -184,6 +193,20 @@ func (b *Backend) selectActive(ctx context.Context) {
 func (b *Backend) Stop() error {
 	b.diagnostics.Stop()
 	if err := b.process.Stop(); err != nil {
+		return err
+	}
+	b.stoppedAt = time.Now()
+	return nil
+}
+
+// StopForRestart implements engine.CoreSupervision.
+func (b *Backend) StopForRestart() error {
+	tracked, ok := b.process.(supervisedProcess)
+	if !ok {
+		return b.Stop()
+	}
+	b.diagnostics.Stop()
+	if err := tracked.StopForRestart(); err != nil {
 		return err
 	}
 	b.stoppedAt = time.Now()
@@ -303,8 +326,8 @@ func (b *Backend) LastDelay(id string) (bool, int, bool) {
 }
 
 // Baseline snapshots the machine at engine init. When the core is already up
-// — the GUI attached to a tunnel the service kept or brought back (restart
-// after an update with --reconnect, a GUI crash) — Start is never called, so
+// — the GUI attached to a tunnel the service kept or brought back (a GUI crash,
+// a reboot) — Start is never called, so
 // the session diagnostics start here instead; Stop ends them as usual.
 func (b *Backend) Baseline() {
 	b.diagnostics.Baseline()
@@ -314,11 +337,20 @@ func (b *Backend) Baseline() {
 	}
 }
 
-// CoreConfigStale reports a core the service brought back after an update on the
-// config of the previous release (vpn.ServiceManager).
-func (b *Backend) CoreConfigStale() bool {
-	stale, ok := b.process.(interface{ CoreConfigStale() bool })
-	return ok && stale.CoreConfigStale()
+// supervisedProcess is a core owned by the service (vpn.ServiceManager).
+type supervisedProcess interface {
+	SetConfigHash(hash string)
+	StopForRestart() error
+	CoreState(currentHash string) (engine.CoreState, error)
+}
+
+// CoreState implements engine.CoreSupervision.
+func (b *Backend) CoreState() (engine.CoreState, error) {
+	tracked, ok := b.process.(supervisedProcess)
+	if !ok {
+		return engine.CoreState{}, nil
+	}
+	return tracked.CoreState(b.fingerprint)
 }
 
 // ProbeNow measures the selected profile right now.

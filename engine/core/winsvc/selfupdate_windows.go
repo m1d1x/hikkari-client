@@ -10,7 +10,8 @@ package winsvc
 // app\, covered by the signed manifest like every other file, and the
 // service puts them in place once the version holding them is settled (no
 // version on trial: right after the launcher confirms one, after a rollback,
-// at every service start):
+// at every service start, and for the service itself only with no core up or
+// wanted):
 //
 //	app\X differs from <root>\X (sha256), and is not refused:
 //	    app\X → <root>\X.new;  <root>\X → <root>\X.old;  X.new → X
@@ -23,8 +24,7 @@ package winsvc
 // restart-service` — and exits; the helper starts the new service through
 // the SCM and waits for it to answer on the pipe. One that does not is
 // stopped, the .old put back and started again, and its hash refused
-// (core\binaries.json): the same build is not tried twice. The tunnel
-// survives the restart through the run marker (Config.ResumeCore).
+// (core\binaries.json): the same build is not tried twice.
 //
 // Installs from before this (1.0.x) run a service that knows none of it. The
 // first new code that runs there is the GUI, unelevated; seeing a service
@@ -77,8 +77,10 @@ func (b *binaries) path(name string) string    { return filepath.Join(b.root, na
 func (b *binaries) appCopy(name string) string { return filepath.Join(b.root, "app", name) }
 func (b *binaries) refusedFile() string        { return filepath.Join(b.root, "core", "binaries.json") }
 
-// sync is service.Config.SyncBinaries.
-func (b *binaries) sync() (restart bool) {
+// sync is service.Config.SyncBinaries. The service's own binary is placed only
+// when idle: placing it starts the helper, which restarts the service, and that
+// takes a running tunnel down.
+func (b *binaries) sync(idle bool) (restart bool) {
 	b.dropOld()
 	refused := b.refused()
 	for _, name := range syncOrder {
@@ -88,6 +90,10 @@ func (b *binaries) sync() (restart bool) {
 		}
 		have, _ := fileHash(b.path(name))
 		if want == have || refused[name] == want {
+			continue
+		}
+		if name == serviceExe && !idle {
+			b.log.Logf("binaries: %s %s waits until the core stops", name, short(want))
 			continue
 		}
 		b.log.Logf("binaries: %s %s -> %s", name, short(have), short(want))
