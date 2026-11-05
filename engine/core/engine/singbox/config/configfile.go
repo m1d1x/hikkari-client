@@ -463,6 +463,11 @@ func containsTag(arr []interface{}, tag string) bool {
 	return false
 }
 
+// realIPv6SniffTimeout is how long a flow to a real IPv6 address may take to show
+// its name. Only a flow that never sends a ClientHello waits it out, and with no
+// name it could not have worked anyway.
+const realIPv6SniffTimeout = "5s"
+
 // realIPv6Rules handle a browser that connects to real IPv6 addresses: with
 // Secure DNS it resolves past our fake IPs, and our TUN's IPv6 route makes it
 // prefer them. The machine or the exit often has no IPv6. Once the TUN has
@@ -475,7 +480,10 @@ func containsTag(arr []interface{}, tag string) bool {
 // browser sees a failed connect and moves on to the site's IPv4.
 //
 // Every other global address goes by the name it sniffed, so the exit picks the
-// address. Global unicast only: LAN and fake addresses keep their routes.
+// address. Global unicast only: LAN and fake addresses keep their routes. This
+// sniff waits far longer than the core's default 300 ms: a ClientHello in two
+// slow parts would otherwise run out here, the general sniff below would read the
+// name without replacing the address, and the flow would reach the exit as IPv6.
 func realIPv6Rules() []interface{} {
 	ports := func() []interface{} { return []interface{}{80, 443, 8080, 8443} }
 	var russian []string
@@ -496,6 +504,7 @@ func realIPv6Rules() []interface{} {
 			"ip_cidr":              []interface{}{"2000::/3"},
 			"override_destination": true,
 			"port":                 ports(),
+			"timeout":              realIPv6SniffTimeout,
 		},
 	}
 }

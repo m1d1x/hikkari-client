@@ -462,6 +462,11 @@ func TestRealIPv6RulesRunFirst(t *testing.T) {
 		if on, _ := byName["override_destination"].(bool); !on {
 			t.Fatalf("second rule: %v", byName)
 		}
+		// With the core's 300 ms a slow ClientHello falls through to the general
+		// sniff, which reads the name and leaves the IPv6 address in place.
+		if byName["timeout"] != realIPv6SniffTimeout {
+			t.Fatalf("second rule waits %v", byName["timeout"])
+		}
 		if general["action"] != "sniff" || general["ip_cidr"] != nil {
 			t.Fatalf("third rule: %v", general)
 		}
