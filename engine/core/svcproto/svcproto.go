@@ -115,6 +115,13 @@ type Response struct {
 	Engine  string `json:"engine,omitempty"`
 	CoreLog string `json:"coreLog,omitempty"`
 	Version string `json:"version,omitempty"`
+	// ConfigTracked: this service records which version of itself received the
+	// stored config. ConfigVersion is that version, empty for a config written
+	// before it did. A service replaced by an update resumes the core on the old
+	// config, so a difference from Version means the core runs rules of an older
+	// release, however new the GUI's own copy is.
+	ConfigTracked bool   `json:"configTracked,omitempty"`
+	ConfigVersion string `json:"configVersion,omitempty"`
 
 	Update *UpdateState `json:"update,omitempty"`
 	// SyncsBinaries: this service keeps the binaries outside the replaced

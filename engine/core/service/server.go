@@ -512,7 +512,16 @@ func (s *Server) writeConfig(engine string, raw []byte) error {
 		return fmt.Errorf("конфиг отклонён службой: %w", err)
 	}
 	s.log.Logf("service: %s config (%d bytes)", engine, len(cfg))
-	return writeAtomic(s.configPath(engine), cfg)
+	if err := writeAtomic(s.configPath(engine), cfg); err != nil {
+		return err
+	}
+	return writeAtomic(s.configVersionPath(engine), []byte(Version))
+}
+
+// configVersionPath records which version of the service received the engine's
+// config (svcproto.Response.ConfigVersion).
+func (s *Server) configVersionPath(engine string) string {
+	return s.configPath(engine) + ".version"
 }
 
 // runMarker exists while the GUI wants the core up: what ResumeCore reads.
@@ -671,6 +680,13 @@ func (s *Server) resume() {
 
 func (s *Server) status() svcproto.Response {
 	engine, pid := s.running()
+	configVersion := ""
+	if engine != "" {
+		// Absent: a config from before this was recorded, so an older release.
+		if raw, err := os.ReadFile(s.configVersionPath(engine)); err == nil {
+			configVersion = string(raw)
+		}
+	}
 	return svcproto.Response{
 		OK:      true,
 		Running: pid != 0,
@@ -679,6 +695,9 @@ func (s *Server) status() svcproto.Response {
 		CoreLog: s.log.Path(),
 		Version: Version,
 		Update:  s.updates.snapshot(),
+
+		ConfigTracked: true,
+		ConfigVersion: configVersion,
 
 		SyncsBinaries: s.cfg.SyncBinaries != nil,
 		ScanSafe:      s.cfg.NetworkStack != nil,

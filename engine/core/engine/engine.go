@@ -88,6 +88,12 @@ type DirectProber interface {
 	ProbeDirect(url string, timeoutMs int) error
 }
 
+// CoreConfigStaleness is optional: the engine can tell that its running core was
+// started on a config from an older release, which a restart would replace.
+type CoreConfigStaleness interface {
+	CoreConfigStale() bool
+}
+
 // TesterGated is optional: the engine has things it does only on a tester's
 // install, while they earn their place: counting the TCP flows that reach each
 // profile, and starting another attempt when a flow stays silent.

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"NekkoVPN/core/autotunnel"
 	"NekkoVPN/core/cleanliness"
@@ -282,6 +283,9 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		}
 		run(c.measureTunnelDown)
 		run(backend.Baseline)
+		if stale, ok := backend.(engine.CoreConfigStaleness); ok {
+			run(func() { c.watchCoreConfig(ctx, stale) })
+		}
 		run(func() { c.watchNetwork(ctx) })
 		run(func() { c.watchRoute(ctx) })
 	}
@@ -302,6 +306,34 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	c.logEnvironment()
 	c.startUpdates()
 	return nil
+}
+
+// coreConfigCheckInterval is how often the running core's config is compared with
+// this release. A local question to the service. The GUI of an update starts before
+// the old service is replaced, so one check at start would miss the moment.
+var coreConfigCheckInterval = 30 * time.Second
+
+// watchCoreConfig reconnects when an update has left the core on the previous
+// release's config. The service resumes the tunnel on the file it holds, and the
+// GUI's own copy, however new, reaches it only at a start: on 05.11 five releases
+// of routing fixes never reached a tester's core until they pressed disconnect.
+func (c *Core) watchCoreConfig(ctx context.Context, core engine.CoreConfigStaleness) {
+	ticker := time.NewTicker(coreConfigCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if !core.CoreConfigStale() || ctx.Err() != nil {
+			continue
+		}
+		c.logger.Logf("core config is from an older release: reconnecting")
+		if err := c.RestartVPN(); err != nil {
+			c.logger.Logf("reconnect on the new config: %v", err)
+		}
+	}
 }
 
 // Shutdown cancels background loops, stops the VPN core, and closes the log.

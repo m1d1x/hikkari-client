@@ -314,6 +314,13 @@ func (b *Backend) Baseline() {
 	}
 }
 
+// CoreConfigStale reports a core the service brought back after an update on the
+// config of the previous release (vpn.ServiceManager).
+func (b *Backend) CoreConfigStale() bool {
+	stale, ok := b.process.(interface{ CoreConfigStale() bool })
+	return ok && stale.CoreConfigStale()
+}
+
 // ProbeNow measures the selected profile right now.
 func (b *Backend) ProbeNow() { b.diagnostics.ProbeNow() }
 

@@ -297,3 +297,41 @@ func TestCoreThatExitsAtStartFailsTheStartWithItsReason(t *testing.T) {
 		t.Fatal("a core that never ran is remembered as wanted up")
 	}
 }
+
+// A service replaced by an update resumes the core on the file it holds. Status
+// says so until the GUI sends a config, whichever release wrote the old one.
+func TestStatusNamesTheReleaseThatWroteTheConfig(t *testing.T) {
+	dir := t.TempDir()
+	core := filepath.Join(dir, "core")
+	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, SystemDNS: &fakeDNS{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.stopCores()
+
+	if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStart, Config: json.RawMessage(`{"inbounds":[]}`)}); !resp.OK {
+		t.Fatalf("start: %+v", resp)
+	}
+	resp := s.dispatch(svcproto.Request{Op: svcproto.OpStatus})
+	if !resp.ConfigTracked || resp.ConfigVersion != Version {
+		t.Fatalf("after a start: tracked=%v config=%q, version %q", resp.ConfigTracked, resp.ConfigVersion, Version)
+	}
+
+	for name, written := range map[string]func() error{
+		"older release": func() error { return os.WriteFile(s.configVersionPath(svcproto.EngineSingBox), []byte("1.0.0"), 0o644) },
+		"no record":     func() error { return os.Remove(s.configVersionPath(svcproto.EngineSingBox)) },
+	} {
+		if err := written(); err != nil {
+			t.Fatal(err)
+		}
+		if resp := s.dispatch(svcproto.Request{Op: svcproto.OpStatus}); resp.ConfigVersion == Version {
+			t.Fatalf("%s reads as this release", name)
+		}
+		if err := os.WriteFile(s.configVersionPath(svcproto.EngineSingBox), []byte(Version), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

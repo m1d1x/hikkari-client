@@ -83,6 +83,18 @@ func (m *ServiceManager) followCore(resp svcproto.Response) {
 	})
 }
 
+// CoreConfigStale reports a running core on a config an older release wrote: the
+// service that replaced itself in an update resumes the core on what it has. A
+// service that does not track this is not stale: it may be the old one still
+// waiting to be replaced, and restarting through it would not last.
+func (m *ServiceManager) CoreConfigStale() bool {
+	resp, err := m.call(svcproto.Request{Op: svcproto.OpStatus}, 5*time.Second)
+	if err != nil {
+		return false
+	}
+	return resp.Running && resp.ConfigTracked && resp.ConfigVersion != resp.Version
+}
+
 func (m *ServiceManager) Start() error {
 	raw, err := os.ReadFile(m.configPath)
 	if err != nil {
