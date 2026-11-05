@@ -219,7 +219,7 @@ func DefaultConfig() map[string]interface{} {
 		},
 		"route": map[string]interface{}{
 			// Kept verbatim by ApplyRouting's prelude check.
-			"rules": append(realIPv6SniffRules(),
+			"rules": append(realIPv6Rules(),
 				map[string]interface{}{
 					"action": "sniff",
 					"port":   []interface{}{80, 443, 8080, 8443},
@@ -463,21 +463,20 @@ func containsTag(arr []interface{}, tag string) bool {
 	return false
 }
 
-// realIPv6SniffRules send a flow to a real IPv6 address by the name it sniffed,
-// so the exit picks the address. A browser with Secure DNS resolves past our
-// fake IPs and prefers IPv6, and our exits have none. The TUN has already
-// accepted the TCP by the time the exit refuses, so the browser sees the
-// connection close, ERR_CONNECTION_CLOSED, and never tries the site's IPv4.
+// realIPv6Rules handle a browser that connects to real IPv6 addresses: with
+// Secure DNS it resolves past our fake IPs, and our TUN's IPv6 route makes it
+// prefer them. The machine or the exit often has no IPv6. Once the TUN has
+// accepted the TCP that failure reaches the browser as a closed connection,
+// ERR_CONNECTION_CLOSED, and it never tries the site's IPv4.
 //
-// A rule cannot refuse these flows earlier in the way a browser would retry:
-// a domain or a process only matches after this sniff, and the handshake is
-// done by then. Global unicast only: LAN and fake addresses keep their routes.
+// Russian ranges are refused first. These go direct, where the name no longer
+// helps, and a name could take them into the tunnel, where our exits refuse them.
+// This rule runs before any sniff, while the handshake is still ahead, so the
+// browser sees a failed connect and moves on to the site's IPv4.
 //
-// The Russian ranges come first and without the override. A flow is sniffed
-// once, so they keep their address, and ruZoneRules can still send them direct
-// by it: under a name they could fall into the tunnel, where our exits refuse
-// them.
-func realIPv6SniffRules() []interface{} {
+// Every other global address goes by the name it sniffed, so the exit picks the
+// address. Global unicast only: LAN and fake addresses keep their routes.
+func realIPv6Rules() []interface{} {
 	ports := func() []interface{} { return []interface{}{80, 443, 8080, 8443} }
 	var russian []string
 	for _, cidr := range ruzone.CIDRs() {
@@ -487,8 +486,9 @@ func realIPv6SniffRules() []interface{} {
 	}
 	return []interface{}{
 		map[string]interface{}{
-			"action":  "sniff",
+			"action":  "reject",
 			"ip_cidr": toAnySlice(russian),
+			"network": "tcp",
 			"port":    ports(),
 		},
 		map[string]interface{}{
@@ -500,13 +500,25 @@ func realIPv6SniffRules() []interface{} {
 	}
 }
 
-// healRealIPv6Sniff puts the current rules ahead of the general sniff, in a
+// isRussianIPv6Reject recognises the first of realIPv6Rules. The other reject
+// that names addresses, Secure DNS over QUIC, is UDP.
+func isRussianIPv6Reject(m map[string]interface{}) bool {
+	action, _ := m["action"].(string)
+	network, _ := m["network"].(string)
+	_, scoped := m["ip_cidr"]
+	return action == "reject" && network == "tcp" && scoped
+}
+
+// healRealIPv6Rules puts the current rules ahead of the general sniff, in a
 // config written before they existed or with an older list of ranges.
-func healRealIPv6Sniff(rules []interface{}) []interface{} {
+func healRealIPv6Rules(rules []interface{}) []interface{} {
 	kept := make([]interface{}, 0, len(rules)+2)
 	first := -1
 	for _, r := range rules {
 		if m, ok := r.(map[string]interface{}); ok {
+			if isRussianIPv6Reject(m) {
+				continue
+			}
 			if action, _ := m["action"].(string); action == "sniff" {
 				if _, scoped := m["ip_cidr"]; scoped {
 					continue
@@ -523,7 +535,7 @@ func healRealIPv6Sniff(rules []interface{}) []interface{} {
 	}
 	out := make([]interface{}, 0, len(kept)+2)
 	out = append(out, kept[:first]...)
-	out = append(out, realIPv6SniffRules()...)
+	out = append(out, realIPv6Rules()...)
 	return append(out, kept[first:]...)
 }
 
@@ -554,7 +566,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 					}
 				}
 			}
-			route["rules"] = healRealIPv6Sniff(rules)
+			route["rules"] = healRealIPv6Rules(rules)
 		}
 	}
 	// Always enforce canonical FakeIP DNS (IPv4 fake addresses, IPv6 only for
@@ -739,7 +751,7 @@ func ensureICMPDirectRule(cfg map[string]interface{}, enable bool) {
 			break
 		}
 		action, _ := m["action"].(string)
-		if action == "sniff" || action == "hijack-dns" {
+		if action == "sniff" || action == "hijack-dns" || isRussianIPv6Reject(m) {
 			insertAt = i + 1
 			continue
 		}

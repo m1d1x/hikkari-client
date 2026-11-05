@@ -2,9 +2,9 @@ package configfile
 
 import (
 	"encoding/json"
+	"net/netip"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -427,11 +427,11 @@ func TestAutoTunnelRulesComeBeforeTheAppsAndOnlyWhenDeclared(t *testing.T) {
 	}
 }
 
-// A browser with Secure DNS connects to real IPv6 addresses our exits cannot
-// reach. The rule that sends those flows by name runs right after the one that
-// keeps Russian addresses as they are, in a new config, in an old one healed on
-// rebuild, and through a routing compile.
-func TestRealIPv6GoesByNameExceptRussian(t *testing.T) {
+// A browser with Secure DNS connects to real IPv6 addresses that neither the
+// machine nor the exit may reach. Russian ones are refused before any sniff, the
+// rest go by name, in a new config, in an old one healed on rebuild, and through
+// every recompile.
+func TestRealIPv6RulesRunFirst(t *testing.T) {
 	check := func(t *testing.T, cfg map[string]interface{}) {
 		t.Helper()
 		route, _ := cfg["route"].(map[string]interface{})
@@ -442,20 +442,22 @@ func TestRealIPv6GoesByNameExceptRussian(t *testing.T) {
 		russian, _ := rules[0].(map[string]interface{})
 		byName, _ := rules[1].(map[string]interface{})
 		general, _ := rules[2].(map[string]interface{})
-		if _, on := russian["override_destination"]; on || russian["action"] != "sniff" {
+		if !isRussianIPv6Reject(russian) || russian["network"] != "tcp" {
 			t.Fatalf("first rule: %v", russian)
 		}
 		ranges, _ := russian["ip_cidr"].([]interface{})
+		yandex := netip.MustParseAddr("2a02:6b8::2:242")
 		found := false
 		for _, r := range ranges {
 			cidr, _ := r.(string)
-			if !strings.Contains(cidr, ":") {
-				t.Fatalf("an IPv4 range among the Russian ones: %s", cidr)
+			prefix := netip.MustParsePrefix(cidr)
+			if !prefix.Addr().Is6() {
+				t.Fatalf("an IPv4 range among the refused ones: %s", cidr)
 			}
-			found = found || cidr == "2a02:6b8::/32"
+			found = found || prefix.Contains(yandex)
 		}
 		if !found {
-			t.Fatalf("no Yandex range in %v", ranges)
+			t.Fatalf("Yandex is not among %d refused ranges", len(ranges))
 		}
 		if on, _ := byName["override_destination"].(bool); !on {
 			t.Fatalf("second rule: %v", byName)
@@ -463,26 +465,43 @@ func TestRealIPv6GoesByNameExceptRussian(t *testing.T) {
 		if general["action"] != "sniff" || general["ip_cidr"] != nil {
 			t.Fatalf("third rule: %v", general)
 		}
-		overrides := 0
+		refusals, overrides := 0, 0
 		for _, r := range rules {
 			m, _ := r.(map[string]interface{})
+			if isRussianIPv6Reject(m) {
+				refusals++
+			}
 			if on, _ := m["override_destination"].(bool); on {
 				overrides++
 			}
 		}
-		if overrides != 1 {
-			t.Fatalf("%d rules override", overrides)
+		if refusals != 1 || overrides != 1 {
+			t.Fatalf("%d refusals, %d overrides", refusals, overrides)
 		}
 	}
 	fresh := DefaultConfig()
 	check(t, fresh)
 	ApplyRouting(fresh, RoutingState{Enabled: true, Mode: ModeBypass}, SelectorTag)
 	check(t, fresh)
+	ensureICMPDirectRule(fresh, true)
+	check(t, fresh)
+	ApplyRouting(fresh, RoutingState{Enabled: true, Mode: ModeBypass}, SelectorTag)
+	check(t, fresh)
 
 	old := freshCfg()
 	route := old["route"].(map[string]interface{})
-	route["rules"] = healRealIPv6Sniff(route["rules"].([]interface{}))
+	route["rules"] = healRealIPv6Rules(route["rules"].([]interface{}))
 	check(t, old)
-	route["rules"] = healRealIPv6Sniff(route["rules"].([]interface{}))
+	route["rules"] = healRealIPv6Rules(route["rules"].([]interface{}))
 	check(t, old)
+
+	// A config written by 1.0.41 sniffs the Russian ranges instead of refusing.
+	stale := freshCfg()
+	route = stale["route"].(map[string]interface{})
+	route["rules"] = append([]interface{}{
+		map[string]interface{}{"action": "sniff", "ip_cidr": []interface{}{"2a02:6b8::/32"}},
+		map[string]interface{}{"action": "sniff", "ip_cidr": []interface{}{"2000::/3"}, "override_destination": true},
+	}, route["rules"].([]interface{})...)
+	route["rules"] = healRealIPv6Rules(route["rules"].([]interface{}))
+	check(t, stale)
 }

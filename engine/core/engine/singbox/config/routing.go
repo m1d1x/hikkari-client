@@ -73,7 +73,7 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 			preserved = append(preserved, r)
 			continue
 		}
-		if action, _ := m["action"].(string); action == "sniff" || action == "hijack-dns" {
+		if action, _ := m["action"].(string); action == "sniff" || action == "hijack-dns" || isRussianIPv6Reject(m) {
 			preserved = append(preserved, m)
 			continue
 		}
