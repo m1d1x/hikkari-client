@@ -269,11 +269,15 @@ jobs:
           for i in $(seq 1 60); do curl -sf "http://127.0.0.1:$port/stable/macos/latest.json" >/dev/null && break; sleep 0.25; done
 
           [[ "$(call "$(cat start.json)" | field 'd.get("running", False)')" == True ]]
+          # check_update only asks for a check: an error from the daemon's own
+          # earlier check (made before the channel was up) is not this one's.
+          asked=$(date +%s)
           st=$(call '{"op":"check_update"}')
           for i in $(seq 1 240); do
             s=$(echo "$st" | field 'd["update"]["state"]')
             [[ "$s" == ready ]] && break
-            [[ "$s" == error || "$s" == unavailable ]] && { echo "update state $s"; exit 1; }
+            checked=$(echo "$st" | field 'd["update"].get("checkedAt", 0)')
+            [[ ( "$s" == error || "$s" == unavailable ) && "$checked" -ge "$asked" ]] && { echo "update state $s"; exit 1; }
             sleep 0.5; st=$(call '{"op":"status"}')
           done
           [[ "$(echo "$st" | field 'd["update"]["version"]')" == "$to" ]] || { echo "$to was not staged"; exit 1; }

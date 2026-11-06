@@ -459,9 +459,13 @@ jobs:
           # check → stage → apply with reconnect → the core waits → trial → the
           # GUI's start, the one that brings it up → confirm.
           function Update-To([string]$version, [string]$previous) {
+            # check_update only asks for a check and answers with the state
+            # as it is: an error from the service's own earlier check (made
+            # while the channel was still being published) is not this one's.
+            $asked = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
             $st = Invoke-Hikkari '{"op":"check_update"}'
             for ($i = 0; $i -lt 120 -and $st.update.state -ne "ready"; $i++) {
-              if ($st.update.state -eq "error" -or $st.update.state -eq "unavailable") { throw "update state $($st.update.state): $($st.update.error)" }
+              if (($st.update.state -eq "error" -or $st.update.state -eq "unavailable") -and $st.update.checkedAt -ge $asked) { throw "update state $($st.update.state): $($st.update.error)" }
               Start-Sleep -Milliseconds 500
               $st = Invoke-Hikkari '{"op":"status"}'
             }
