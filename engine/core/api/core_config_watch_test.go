@@ -80,10 +80,26 @@ func initSupervised(t *testing.T) (*Core, *superviseEngine) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Shutdown() })
+	// The Core's own supervisor asks once at once, on the state from before the
+	// test sets one. Let that first check pass, or it races the test's own
+	// calls on a state it would act on (an extra reconnect, an extra start).
+	deadline := time.Now().Add(5 * time.Second)
+	for f.askedCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the supervisor never asked about the core")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if _, err := c.AddProfileFromURI("p-first"); err != nil {
 		t.Fatal(err)
 	}
 	return c, f
+}
+
+func (s *superviseEngine) askedCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.asked
 }
 
 func (s *superviseEngine) startCount() int {

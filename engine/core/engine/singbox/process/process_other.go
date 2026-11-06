@@ -2,7 +2,10 @@
 
 package vpn
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // ProcessManager on platforms without a native backend (Windows has one,
 // macOS has one) is an intentional stub. The mobile builds will swap this
@@ -27,3 +30,8 @@ func (m *ProcessManager) ReadyWhen(func() bool) *ProcessManager { return m }
 func (m *ProcessManager) Stop() error    { return nil }
 func (m *ProcessManager) Restart() error { return m.Start() }
 func (m *ProcessManager) Pid() int       { return 0 }
+
+// Reload has no core to reload here.
+func (m *ProcessManager) Reload(string, time.Duration) (ReloadResult, error) {
+	return ReloadResult{}, ErrReloadUnsupported
+}
