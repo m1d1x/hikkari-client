@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/svcclient"
 	"NekkoVPN/core/svcproto"
 )
@@ -102,5 +103,28 @@ func (c *Core) RestartToUpdate() error {
 		return fmt.Errorf("запуск лаунчера: %w", err)
 	}
 	c.logger.Logf("update: handed over to %s %v", launcher, args)
+	return cmd.Process.Release()
+}
+
+// RelaunchApp has the launcher start the installed release once this process
+// has exited: the installation was replaced under it (UpdateState.Replaced).
+// The caller exits right after this returns.
+func (c *Core) RelaunchApp() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	root := filepath.Dir(filepath.Dir(exe)) // <root>\app\nekkobox.exe
+	launcher := filepath.Join(root, "hikkari.exe")
+	if _, err := os.Stat(launcher); err != nil {
+		return fmt.Errorf("лаунчер не найден: %s", launcher)
+	}
+	args := []string{"--wait-pid", strconv.Itoa(os.Getpid())}
+	cmd := exec.Command(launcher, args...)
+	cmd.Dir = root
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("запуск лаунчера: %w", err)
+	}
+	c.logger.Logf("app: release %s replaced by the installation, handed over to %s %v", appversion.Own(), launcher, args)
 	return cmd.Process.Release()
 }

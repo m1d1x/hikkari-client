@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/autotunnel"
 	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/downdetector"
@@ -137,6 +138,11 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		return err
 	}
 	c.logger = logging.New(filepath.Join(baseDir, "nekko-vpn.log"))
+	// Read before anything can swap the installation under this process.
+	if own := appversion.Own(); own != "" {
+		logging.AppVersion = own
+		c.logger.Logf("app: release %s", own)
+	}
 	c.routeSubscriptionAroundTunnel()
 	backend, err := factory(baseDir, c.logger)
 	if err != nil {

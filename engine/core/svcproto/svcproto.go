@@ -82,6 +82,11 @@ const (
 	OpAutoTunnel = "autotunnel"
 )
 
+// CodeAppReplaced: the GUI runs a release other than the installed one (an
+// update or a rollback replaced the installation under it). Nothing was
+// changed; the GUI reopens itself from the installation.
+const CodeAppReplaced = "app_replaced"
+
 type Request struct {
 	Op string `json:"op"`
 	// Engine, for OpStart: which core Config is for. Empty is sing-box, so
@@ -97,6 +102,12 @@ type Request struct {
 	// answers with it: it cannot compute it, since it sees Config only after the
 	// server addresses are pinned.
 	ConfigHash string `json:"configHash,omitempty"`
+	// AppVersion, for OpStart: the release the GUI was started from
+	// (core/appversion), empty for a development build or a GUI from before
+	// it was sent. The service compares it with the installation's VERSION
+	// and refuses a start from another release (CodeAppReplaced): a config
+	// of another release may name fields the installed core does not know.
+	AppVersion string `json:"appVersion,omitempty"`
 	// Restarting, for OpStop: a start follows at once, so the wish to be up
 	// stays. If that start fails the GUI keeps trying (Response.Wanted).
 	Restarting bool `json:"restarting,omitempty"`
@@ -117,6 +128,9 @@ type Request struct {
 type Response struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+	// Code names a refusal the GUI acts on (Code* below); empty for any
+	// other error.
+	Code string `json:"code,omitempty"`
 	// Status fields.
 	Running bool `json:"running,omitempty"`
 	Pid     int  `json:"pid,omitempty"`
@@ -275,6 +289,11 @@ type UpdateState struct {
 	Error     string `json:"error,omitempty"`
 	// CheckedAt is the last completed check, unix seconds.
 	CheckedAt int64 `json:"checkedAt,omitempty"`
+	// Replaced is the GUI engine's own finding, never the service's: the
+	// process runs a release other than Installed — an update or a rollback
+	// replaced the installation under it. The GUI reopens itself
+	// (Core.RelaunchApp).
+	Replaced bool `json:"replaced,omitempty"`
 }
 
 // WriteMessage writes v as one JSON line.

@@ -392,11 +392,20 @@ Delivered by HikkariService; elsewhere `UpdateStatus` is always
 | `UpdateStatus`    | —    | `UpdateState` |
 | `CheckUpdate`     | —    | `null`        |
 | `RestartToUpdate` | —    | `null`        |
+| `RelaunchApp`     | —    | `null`        |
 
 `CheckUpdate` asks the service to poll the channel now (ignored within a few
 minutes of the last check). `RestartToUpdate` hands over to the launcher; the
 UI must exit right after it returns — the launcher waits for this process,
 has the service swap the staged version in and starts the new one.
+
+`RelaunchApp` is for `replaced: true`: the installation holds another release
+than this process (an update or a rollback swapped it under the running UI),
+and the service refuses this process's starts (`app_replaced`), since its
+config may name fields the installed core does not know. It arranges for the
+installed release to open once this process is gone (macOS: `open` of the
+installed bundle; Windows: `hikkari.exe --wait-pid`); the UI must exit right
+after it returns, without stopping the core, so the new process connects again.
 
 `UpdateState`:
 
@@ -409,7 +418,8 @@ has the service swap the staged version in and starts the new one.
   "bytesDone":  0,         // while downloading
   "bytesTotal": 0,
   "error":      "",        // last failure; retried on schedule
-  "checkedAt":  1761800000 // unix seconds of the last completed check
+  "checkedAt":  1761800000, // unix seconds of the last completed check
+  "replaced":   false      // set by the engine: this process is not "installed"
 }
 ```
 

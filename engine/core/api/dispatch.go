@@ -437,6 +437,8 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return nil, c.CheckUpdate()
 	case "RestartToUpdate":
 		return nil, c.RestartToUpdate()
+	case "RelaunchApp":
+		return nil, c.RelaunchApp()
 
 	// ----- app discovery -----
 	case "ListApps":

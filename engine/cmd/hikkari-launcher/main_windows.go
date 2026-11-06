@@ -10,6 +10,8 @@
 //	hikkari.exe --apply-update --wait-pid N [--reconnect]
 //	                                                the GUI's «Перезапустить»: wait for it
 //	                                                to exit, swap the update in, launch
+//	hikkari.exe --wait-pid N                        a GUI whose installation was replaced
+//	                                                under it: wait for it to exit, launch
 //
 // Every launch first asks the service to recover (finish an interrupted
 // swap, count a start of a version on trial, roll back one that used up its
@@ -63,10 +65,10 @@ func main() {
 		}
 		return
 	}
+	if waitPid > 0 {
+		waitForExit(waitPid, 30*time.Second)
+	}
 	if apply {
-		if waitPid > 0 {
-			waitForExit(waitPid, 30*time.Second)
-		}
 		resp, err := svcclient.Call(svcproto.Request{Op: svcproto.OpApplyUpdate, Reconnect: reconnect}, 10*time.Minute)
 		if err != nil {
 			// The GUI shows the service's update state; launching the

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"NekkoVPN/core/applist"
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/downdetector"
 	"NekkoVPN/core/engine"
@@ -238,8 +239,12 @@ func (c *Core) CollectDiagnostics(maxLines int) string {
 	if c == nil || c.logger == nil {
 		return ""
 	}
-	if st := c.UpdateStatus(); st.Installed != "" {
-		logging.AppVersion = st.Installed
+	// The release this process runs; the installed one only stands in for
+	// a build that does not know its own.
+	if appversion.Own() == "" {
+		if st := c.UpdateStatus(); st.Installed != "" {
+			logging.AppVersion = st.Installed
+		}
 	}
 	return c.logger.CollectDiagnostics(maxLines)
 }

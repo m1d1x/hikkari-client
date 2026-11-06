@@ -34,7 +34,25 @@ func Call(req svcproto.Request, timeout time.Duration) (svcproto.Response, error
 		return svcproto.Response{}, fmt.Errorf("служба hikkari: ответ: %w", err)
 	}
 	if !resp.OK {
+		if resp.Code != "" {
+			return resp, &Refusal{Code: resp.Code, Message: resp.Error}
+		}
 		return resp, errors.New(resp.Error)
 	}
 	return resp, nil
+}
+
+// Refusal is a service error with a code the caller acts on
+// (svcproto.Response.Code).
+type Refusal struct {
+	Code    string
+	Message string
+}
+
+func (r *Refusal) Error() string { return r.Message }
+
+// IsRefusal says err is the service's refusal with code.
+func IsRefusal(err error, code string) bool {
+	var r *Refusal
+	return errors.As(err, &r) && r.Code == code
 }

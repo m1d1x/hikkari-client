@@ -46,15 +46,17 @@ const (
 	Bundle  = "/Applications/hikkari.app"
 	CoreDir = "/var/db/hikkari"
 
-	serviceBin = Bundle + "/Contents/MacOS/HikkariService"
-	updaterBin = Bundle + "/Contents/MacOS/hikkari-updater"
-	coreBin    = Bundle + "/Contents/Resources/sing-box"
-	xrayBin    = Bundle + "/Contents/Resources/xray"
+	serviceBin  = Bundle + "/Contents/MacOS/HikkariService"
+	updaterBin  = Bundle + "/Contents/MacOS/hikkari-updater"
+	coreBin     = Bundle + "/Contents/Resources/sing-box"
+	xrayBin     = Bundle + "/Contents/Resources/xray"
+	versionFile = Bundle + "/Contents/Resources/VERSION"
 
-	// A new version swapped in and not confirmed this long after is rolled
-	// back by the daemon: the GUI confirms ~20 s after it starts, and the
-	// swap opens it right away.
-	trialDeadline = 90 * time.Second
+	// A new version whose GUI has not reported in this long after the swap
+	// is rolled back by the daemon (service.updates.watchTrial). The swap
+	// opens the GUI right away, but the first launch of a swapped bundle
+	// waits for Gatekeeper to read it, which took 86 s on one tester's Mac.
+	trialDeadline = 5 * time.Minute
 )
 
 // Legacy: before the service, the GUI installed its own LaunchDaemon that
@@ -96,6 +98,7 @@ func Run() error {
 		// the sanitiser allows none, and the daemon's own dir is the safe one.
 		CoreWorkDir: CoreDir,
 		XrayBin:     xrayBin,
+		VersionFile: versionFile,
 		SystemDNS:   systemDNS{dir: dnsState, net: netdoctorDNS{}, mu: dnsMu},
 		Updater:     updaterBin,
 		UpdaterArgs: []string{"--root", filepath.Dir(Bundle), "--layout", "macos"},

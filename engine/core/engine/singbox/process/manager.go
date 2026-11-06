@@ -9,19 +9,30 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 )
 
-// CoreBinary is the core shipped beside the running program, for a probe that
-// starts its own copy next to the tunnel. The base directory holds user data
-// only: on Windows the GUI and sing-box.exe both live in app\.
+// CoreBinary is the core shipped with the running program, for a check or a
+// probe that starts its own copy next to the tunnel. The base directory holds
+// user data only: on Windows the GUI and sing-box.exe both live in app\; on
+// macOS the GUI is in hikkari.app/Contents/MacOS and the core in
+// Contents/Resources.
 func CoreBinary() string {
 	exe, err := os.Executable()
 	if err != nil {
 		return BinaryName
 	}
-	return filepath.Join(filepath.Dir(exe), BinaryName)
+	return coreBinaryFor(exe, runtime.GOOS)
+}
+
+func coreBinaryFor(exe, goos string) string {
+	dir := filepath.Dir(exe)
+	if goos == "darwin" {
+		return filepath.Join(filepath.Dir(dir), "Resources", BinaryName)
+	}
+	return filepath.Join(dir, BinaryName)
 }
 
 // LineLogger is the slice of the logger we need — kept tiny so this package

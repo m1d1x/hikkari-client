@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/svcclient"
 	"NekkoVPN/core/svcproto"
@@ -124,7 +125,7 @@ func (m *ServiceManager) Start() error {
 	if h := m.configHash.Load(); h != nil {
 		hash = *h
 	}
-	request := svcproto.Request{Op: svcproto.OpStart, Config: raw, ConfigHash: hash}
+	request := svcproto.Request{Op: svcproto.OpStart, Config: raw, ConfigHash: hash, AppVersion: appversion.Own()}
 	resp, err := m.call(request, 30*time.Second)
 	for deadline := time.Now().Add(serviceReturnWithin); errors.Is(err, svcclient.ErrNoService) && m.following.Load() && time.Now().Before(deadline); {
 		time.Sleep(time.Second)

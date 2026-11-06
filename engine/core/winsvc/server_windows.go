@@ -47,6 +47,7 @@ func NewServer(root string) (*service.Server, error) {
 		// is stopped before that.
 		CoreBin:     filepath.Join(appDir, vpn.BinaryName),
 		CoreWorkDir: appDir,
+		VersionFile: filepath.Join(appDir, "VERSION"),
 		// The updater lives outside app\: Windows will not rename a
 		// directory holding a running executable.
 		Updater:     filepath.Join(root, "hikkari-updater.exe"),

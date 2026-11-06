@@ -94,6 +94,10 @@ abstract class NekkoboxCore {
   /// Hands over to the launcher; the app must exit right after this returns.
   Future<void> restartToUpdate() => _callAsync('RestartToUpdate');
 
+  /// Arranges for the installed release to open once this process exits
+  /// ([UpdateStatus.replaced]); the app must exit right after this returns.
+  Future<void> relaunchApp() => _callAsync('RelaunchApp');
+
   // ----- network doctor (see engine core/netdoctor) -----
 
   /// Read-only check: system proxy verdict and the direct-path selection.

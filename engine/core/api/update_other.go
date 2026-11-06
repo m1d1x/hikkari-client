@@ -21,3 +21,7 @@ func (c *Core) startUpdates() {}
 func (c *Core) RestartToUpdate() error {
 	return errors.New("обновления на этой платформе пока не поддерживаются")
 }
+
+func (c *Core) RelaunchApp() error {
+	return errors.New("перезапуск приложения на этой платформе не поддерживается")
+}

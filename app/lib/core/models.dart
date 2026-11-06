@@ -561,6 +561,11 @@ class UpdateStatus {
   final int bytesTotal;
   final String error;
 
+  /// This process runs a release other than [installed]: an update or a
+  /// rollback replaced the installation under it. The app reopens itself
+  /// ([AppState] → `RelaunchApp`). Set by the engine, not the service.
+  final bool replaced;
+
   const UpdateStatus({
     required this.state,
     this.installed = '',
@@ -569,6 +574,7 @@ class UpdateStatus {
     this.bytesDone = 0,
     this.bytesTotal = 0,
     this.error = '',
+    this.replaced = false,
   });
 
   static const unavailable = UpdateStatus(state: 'unavailable');
@@ -590,5 +596,6 @@ class UpdateStatus {
     bytesDone: (j['bytesDone'] as num?)?.toInt() ?? 0,
     bytesTotal: (j['bytesTotal'] as num?)?.toInt() ?? 0,
     error: j['error'] as String? ?? '',
+    replaced: j['replaced'] as bool? ?? false,
   );
 }

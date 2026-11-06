@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/svcclient"
 	"NekkoVPN/core/svcproto"
 )
@@ -36,7 +37,7 @@ func (h *serviceHost) Start(ctx context.Context) error {
 	}
 	// Generous: the service stops the other core and redirects system DNS
 	// before spawning this one.
-	if _, err := svcclient.Call(svcproto.Request{Op: svcproto.OpStart, Engine: svcproto.EngineXray, Config: raw}, 30*time.Second); err != nil {
+	if _, err := svcclient.Call(svcproto.Request{Op: svcproto.OpStart, Engine: svcproto.EngineXray, Config: raw, AppVersion: appversion.Own()}, 30*time.Second); err != nil {
 		return err
 	}
 	deadline := time.Now().Add(20 * time.Second)

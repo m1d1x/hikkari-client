@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/svcclient"
 	"NekkoVPN/core/svcproto"
 )
@@ -73,8 +74,26 @@ func (c *Core) RestartToUpdate() error {
 		return fmt.Errorf("обновление: %w", err)
 	}
 	c.logger.Logf("update: applied %s -> %s, reopening %s", resp.From, resp.To, bundle)
-	// A detached shell outlives this process: wait for it to exit, then
-	// open the bundle — which is the new version by now.
+	// The bundle is the new version by now.
+	return reopenAfterExit(bundle)
+}
+
+// installedBundle is where the installation lives (macsvc.Bundle). A process
+// whose bundle was swapped out finds its own path moved with it, so it opens
+// this one, not its own.
+const installedBundle = "/Applications/hikkari.app"
+
+// RelaunchApp reopens the installed release once this process has exited: the
+// installation was replaced under it (UpdateState.Replaced). The caller exits
+// right after this returns.
+func (c *Core) RelaunchApp() error {
+	c.logger.Logf("app: release %s replaced by the installation, reopening %s", appversion.Own(), installedBundle)
+	return reopenAfterExit(installedBundle)
+}
+
+// reopenAfterExit has a detached shell, which outlives this process, wait
+// for it to exit and open bundle.
+func reopenAfterExit(bundle string) error {
 	script := `while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec /usr/bin/open "$2"`
 	cmd := exec.Command("/bin/sh", "-c", script, "sh", strconv.Itoa(os.Getpid()), bundle)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

@@ -18,6 +18,7 @@
 package service
 
 import (
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/autotunnel"
 	"NekkoVPN/core/fsutil"
 	"context"
@@ -28,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,6 +72,10 @@ type Config struct {
 	// Listen opens the control endpoint; Endpoint names it in the log.
 	Listen   func() (net.Listener, error)
 	Endpoint string
+
+	// VersionFile is the installation's VERSION (core/appversion): the
+	// release a start from the GUI must come from. Empty: not checked.
+	VersionFile string
 
 	// OnVersion is told the installed version after an update or rollback
 	// (Windows: "Apps & features"). Optional.
@@ -291,8 +297,13 @@ func (s *Server) handle(conn net.Conn) {
 	if !resp.OK {
 		return
 	}
+	rolledBack := req.Op == svcproto.OpRollbackUpdate ||
+		req.Op == svcproto.OpRecoverUpdate && resp.Recovery == "rolled_back"
 	switch {
-	case req.Op == svcproto.OpApplyUpdate && s.cfg.RestartAfterApply:
+	case req.Op == svcproto.OpApplyUpdate && s.cfg.RestartAfterApply,
+		rolledBack && s.cfg.RestartAfterApply:
+		// The swap, either way, replaced this binary: the system starts the
+		// one the installation now holds.
 		s.requestRestart()
 	case req.Op == svcproto.OpStop && !req.Restarting,
 		req.Op == svcproto.OpConfirmUpdate, req.Op == svcproto.OpRollbackUpdate:
@@ -376,6 +387,13 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 		}
 		if s.cores[engine] == nil {
 			return fail(fmt.Errorf("движок %q не поставляется в этой установке", engine))
+		}
+		if installed := s.installedRelease(); req.AppVersion != "" && installed != "" && req.AppVersion != installed {
+			// The stored config and the core stay as they are: the GUI of
+			// the installed release sends its own once it is reopened.
+			resp := fail(fmt.Errorf("приложение %s, а установлена %s: приложение перезапускается", req.AppVersion, installed))
+			resp.Code = svcproto.CodeAppReplaced
+			return resp
 		}
 		if err := s.writeConfig(engine, req.Config, req.ConfigHash); err != nil {
 			// A newer GUI may need a newer sanitiser, and this service may be
@@ -489,6 +507,63 @@ func (s *Server) resetNetwork(force bool, fail func(error) svcproto.Response) sv
 	resp := s.status()
 	resp.NetworkReset = &res
 	return resp
+}
+
+// configOfNewerRelease names the release whose service received the stored
+// config for engine when it is newer than the installed one: its rules may
+// name fields the installed core does not know. Empty when it is not newer or
+// either is unknown. An older config is fine: the core reads the configs of
+// the releases before it. Callers hold mu.
+func (s *Server) configOfNewerRelease(engine string) (newer, installed string) {
+	installed = s.installedRelease()
+	raw, err := os.ReadFile(s.configVersionPath(engine))
+	if err != nil || installed == "" {
+		return "", installed
+	}
+	if v := strings.TrimSpace(string(raw)); releaseNewer(v, installed) {
+		return v, installed
+	}
+	return "", installed
+}
+
+// releaseNewer: a and b are both MAJOR.MINOR.PATCH and a is the later one.
+func releaseNewer(a, b string) bool {
+	pa, okA := parseRelease(a)
+	pb, okB := parseRelease(b)
+	if !okA || !okB {
+		return false
+	}
+	for i := range pa {
+		if pa[i] != pb[i] {
+			return pa[i] > pb[i]
+		}
+	}
+	return false
+}
+
+func parseRelease(v string) ([3]int, bool) {
+	var r [3]int
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return r, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return r, false
+		}
+		r[i] = n
+	}
+	return r, true
+}
+
+// installedRelease is the release the installation holds now; empty when it
+// is not known.
+func (s *Server) installedRelease() string {
+	if s.cfg.VersionFile == "" {
+		return ""
+	}
+	return appversion.Read(s.cfg.VersionFile)
 }
 
 func (s *Server) onVersion(v string) {
@@ -840,6 +915,10 @@ func (s *Server) resume() {
 		return
 	}
 	s.endAwaitingConfig()
+	if newer, installed := s.configOfNewerRelease(engine); newer != "" {
+		s.log.Logf("service: %s stays down: its config is from %s, newer than the installed %s", engine, newer, installed)
+		return
+	}
 	s.log.Logf("service: resuming %s (it was up before the restart)", engine)
 	if err := s.runCore(engine); err != nil {
 		s.log.Logf("service: resume failed: %v", err)

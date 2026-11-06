@@ -5,6 +5,7 @@ package api
 import (
 	"time"
 
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/svcclient"
 	"NekkoVPN/core/svcproto"
 )
@@ -17,7 +18,16 @@ func (c *Core) UpdateStatus() svcproto.UpdateState {
 	if err != nil || resp.Update == nil {
 		return svcproto.UpdateState{State: svcproto.UpdateUnavailable}
 	}
-	return *resp.Update
+	st := *resp.Update
+	st.Replaced = replacedUnder(appversion.Own(), st.Installed)
+	return st
+}
+
+// replacedUnder: this process (own) is not the installed release. Unknown
+// on either side is not a replacement: a development build, or a service
+// that has not read the installation yet.
+func replacedUnder(own, installed string) bool {
+	return own != "" && installed != "" && own != installed
 }
 
 // CheckUpdate asks the service to poll the channel now. The service ignores

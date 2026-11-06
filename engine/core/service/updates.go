@@ -45,14 +45,20 @@ type updates struct {
 	st svcproto.UpdateState
 
 	kick chan struct{}
+
+	// guiArrived is closed when a GUI of the version on trial has reported in
+	// (recover_update answered on_trial): watchTrial hands over to it.
+	guiArrived     chan struct{}
+	guiArrivedOnce sync.Once
 }
 
 func newUpdates(srv *Server) *updates {
 	return &updates{
-		srv:  srv,
-		exe:  srv.cfg.Updater,
-		st:   svcproto.UpdateState{State: svcproto.UpdateIdle},
-		kick: make(chan struct{}, 1),
+		srv:        srv,
+		exe:        srv.cfg.Updater,
+		st:         svcproto.UpdateState{State: svcproto.UpdateIdle},
+		kick:       make(chan struct{}, 1),
+		guiArrived: make(chan struct{}),
 	}
 }
 
@@ -295,6 +301,9 @@ func (u *updates) recover() (result, from, to string, err error) {
 	if err == nil && result != "nothing" {
 		u.srv.log.Logf("updates: recover %s (%s -> %s)", result, from, to)
 	}
+	if err == nil && result == "on_trial" {
+		u.guiArrivedOnce.Do(func() { close(u.guiArrived) })
+	}
 	if result == "rolled_back" {
 		u.srv.onVersion(from)
 		u.set(func(st *svcproto.UpdateState) {
@@ -341,7 +350,11 @@ func (u *updates) rollback() (from, to string, err error) {
 // withCoreDown stops the core around f and starts it again afterwards if it
 // is wanted: it was running, start is set, or it stayed down for a config that
 // will now not come. Restarting reuses the stored config for the last engine,
-// with whatever binary the installation now holds.
+// with whatever binary the installation now holds — unless a newer release
+// wrote that config: a rollback with no copy to restore (the swap was made by
+// a service from before keepConfigForRollback) leaves the newer release's
+// config, which the older core may refuse field by field. The core then stays
+// wanted and down, and the GUI of the installed release starts it.
 func (u *updates) withCoreDown(start bool, f func() error) error {
 	s := u.srv
 	s.mu.Lock()
@@ -353,6 +366,13 @@ func (u *updates) withCoreDown(start bool, f func() error) error {
 	err := f()
 	s.endAwaitingConfig()
 	if running != "" || start || s.wanted() {
+		if newer, installed := s.configOfNewerRelease(s.engine); newer != "" {
+			if !s.wanted() {
+				_ = os.WriteFile(s.runMarker(), []byte(s.engine), 0o644)
+			}
+			s.log.Logf("updates: the stored %s config is from %s, newer than the installed %s: the core waits for the app's config", s.engine, newer, installed)
+			return err
+		}
 		if _, statErr := os.Stat(s.configPath(s.engine)); statErr == nil {
 			if startErr := s.runCore(s.engine); startErr != nil {
 				s.log.Logf("updates: core did not come back: %v", startErr)
@@ -363,13 +383,22 @@ func (u *updates) withCoreDown(start bool, f func() error) error {
 }
 
 // watchTrial rolls back a version that was swapped in moments before this
-// service started and is still unconfirmed at Config.TrialDeadline after the
-// swap. On macOS the swap restarts the service and opens the new GUI right
-// away; a GUI that runs confirms within seconds, so a version still on trial
-// at the deadline never came up at all — the case no start counter can see,
-// since nothing of the new version ran to count. A trial older than the
-// deadline (the machine rebooted mid-trial, the GUI is simply not open) is
-// left to the ordinary counting at the next GUI start.
+// service started when no GUI of it has reported in by Config.TrialDeadline
+// after the swap. On macOS the swap restarts the service and opens the new
+// GUI; a new version whose GUI never gets as far as recover_update never came
+// up at all — the case no start counter can see, since nothing of the new
+// version ran to count.
+//
+// A GUI that did report in owns the trial from there: it confirms once it has
+// stayed up (api.trialWindow), and one that dies first is counted against the
+// version at the next start. The deadline is not a confirmation deadline: the
+// first launch of a freshly swapped bundle can take most of a minute and more
+// (Gatekeeper reads it whole), and rolling back a version that came up only
+// to be slow leaves the new GUI on the old core (tester-004, 06.11: 86 s to
+// the first request, 90 s deadline, a rollback with 0 failed starts).
+//
+// A trial older than the deadline (the machine rebooted mid-trial, the GUI is
+// simply not open) is left to the ordinary counting at the next GUI start.
 func (u *updates) watchTrial(ctx context.Context) {
 	deadline := u.srv.cfg.TrialDeadline
 	if deadline <= 0 {
@@ -383,14 +412,22 @@ func (u *updates) watchTrial(ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		return
+	case <-u.guiArrived:
+		u.srv.log.Logf("updates: the version on trial has its GUI up, the GUI confirms it")
+		return
 	case <-time.After(time.Until(applied.Add(deadline))):
 	}
 	if u.pendingSince().IsZero() {
 		return
 	}
-	u.srv.log.Logf("updates: the version on trial was never confirmed, rolling back")
+	u.srv.log.Logf("updates: no GUI of the version on trial came up within %s, rolling back", deadline)
 	if _, _, err := u.rollback(); err != nil {
 		u.srv.log.Logf("updates: rollback: %v", err)
+		return
+	}
+	if u.srv.cfg.RestartAfterApply {
+		// The rollback replaced this binary too.
+		u.srv.requestRestart()
 	}
 }
 

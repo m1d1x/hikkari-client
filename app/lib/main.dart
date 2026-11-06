@@ -128,6 +128,7 @@ class _BootGateState extends State<_BootGate>
         routingPreview: kRoutingDryRun,
         engineId: engineId,
       )..start();
+      state.addListener(() => _exitIfReplaced(state));
       setState(() {
         _core = core;
         _state = state;
@@ -135,6 +136,21 @@ class _BootGateState extends State<_BootGate>
     } catch (e) {
       setState(() => _bootError = '$e');
     }
+  }
+
+  bool _exiting = false;
+
+  /// The installed release opens once this process is gone
+  /// ([AppState.mustExit]). The window closes the same way as for an
+  /// update's «Перезапустить»: the core's wanted state stays for the new
+  /// process.
+  Future<void> _exitIfReplaced(AppState state) async {
+    if (!state.mustExit || _exiting) return;
+    _exiting = true;
+    try {
+      await windowManager.destroy();
+    } catch (_) {}
+    exit(0);
   }
 
   /// Base directory for the engine — everything it reads and writes

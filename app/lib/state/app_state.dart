@@ -361,6 +361,7 @@ class AppState extends ChangeNotifier {
   Future<void> _refreshUpdate() async {
     try {
       final next = await _core.updateStatus();
+      if (next.replaced) await _relaunch(next);
       if (next.state != _update.state ||
           next.version != _update.version ||
           next.mandatory != _update.mandatory ||
@@ -370,6 +371,27 @@ class AppState extends ChangeNotifier {
       }
     } catch (e) {
       _elog('updateStatus failed: $e');
+    }
+  }
+
+  bool _relaunchArranged = false;
+
+  /// The installation now holds another release than this process: its
+  /// core may not read the config this release writes (tester-004, 06.11:
+  /// a rollback left 1.0.51 running beside 1.0.40's core, and every start
+  /// failed). The service refuses such starts; the app reopens itself as
+  /// the installed release, which connects again if the core is wanted.
+  bool get mustExit => _relaunchArranged;
+
+  Future<void> _relaunch(UpdateStatus st) async {
+    if (_relaunchArranged || _dryRun) return;
+    _elog('app replaced by installed ${st.installed}: relaunching');
+    try {
+      await _core.relaunchApp();
+      _relaunchArranged = true;
+      notifyListeners();
+    } catch (e) {
+      _elog('relaunchApp failed: $e');
     }
   }
 
