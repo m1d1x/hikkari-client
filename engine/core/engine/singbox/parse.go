@@ -566,12 +566,6 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 	if err != nil {
 		return Draft{}, err
 	}
-	for key := range iface {
-		if err := legacy.ValidateAWGField(key); err != nil {
-			return Draft{}, err
-		}
-	}
-
 	privateKey := iface["PrivateKey"]
 	if privateKey == "" {
 		return Draft{}, fmt.Errorf("amnezia: в конфиге нет PrivateKey")
@@ -620,6 +614,9 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 	if ka := peer["PersistentKeepalive"]; ka != "" {
 		if n, err := strconv.Atoi(ka); err == nil {
 			peerCfg["persistent_keepalive_interval"] = n
+		} else if spec, err := legacy.NormalizeAWGRange(ka); err == nil && spec != "" {
+			// AmneziaWG 3.x takes a "min-max" range here too.
+			peerCfg["persistent_keepalive_interval"] = spec
 		}
 	}
 
@@ -638,9 +635,22 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 		cfg["dns"] = dns
 	}
 
-	// AmneziaWG obfuscation params — presence of Jc marks this as "awg"
-	// rather than plain WireGuard.
-	if jc := getIniField(iface, "Jc"); jc != "" {
+	// AmneziaWG 3.x params. A value the core would not take is refused rather
+	// than dropped: without it the server does not answer.
+	awg3 := map[string]interface{}{}
+	for _, f := range legacy.AWG3Fields {
+		v, ok, err := f.ParseAWG3(getIniField(iface, f.Ini))
+		if err != nil {
+			return Draft{}, err
+		}
+		if ok {
+			awg3[f.Key] = v
+		}
+	}
+
+	// AmneziaWG obfuscation params — presence of Jc or of any 3.x param marks
+	// this as "awg" rather than plain WireGuard.
+	if jc := getIniField(iface, "Jc"); jc != "" || len(awg3) > 0 {
 		cfg["type"] = "awg"
 		if n, err := strconv.Atoi(jc); err == nil {
 			cfg["jc"] = n
@@ -666,6 +676,9 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 			}
 		}
 		applyAwgMasquerade(cfg, iface)
+		for k, v := range awg3 {
+			cfg[k] = v
+		}
 	}
 
 	label := host
@@ -1177,14 +1190,6 @@ func parseAmneziaContainerAWG(item map[string]interface{}, rootHost string) (Dra
 		}
 	}
 
-	for _, source := range []map[string]interface{}{item, sub, lastConfigMap} {
-		for key := range source {
-			if err := legacy.ValidateAWGField(key); err != nil {
-				return Draft{}, err
-			}
-		}
-	}
-
 	if iniText == "" {
 		privKey := getMapStringFromSources([]map[string]interface{}{lastConfigMap, sub, item}, "PrivateKey", "private_key", "privkey")
 		pubKey := getMapStringFromSources([]map[string]interface{}{lastConfigMap, sub, item}, "PublicKey", "public_key", "pubkey")
@@ -1232,6 +1237,23 @@ func extractAWGParams(sources ...map[string]interface{}) map[string]string {
 			val := getAnyString(src, k, strings.ToLower(k))
 			if val != "" && res[k] == "" {
 				res[k] = val
+			}
+		}
+		// AmneziaWG 3.x, under its .conf name, lower case or the profile's
+		// snake_case name; a switch may come as a JSON boolean.
+		for _, f := range legacy.AWG3Fields {
+			if res[f.Ini] != "" {
+				continue
+			}
+			for _, name := range []string{f.Ini, strings.ToLower(f.Ini), f.Key} {
+				if on, ok := src[name].(bool); ok {
+					res[f.Ini] = map[bool]string{true: "1", false: "0"}[on]
+					break
+				}
+				if val := getAnyString(src, name); val != "" {
+					res[f.Ini] = val
+					break
+				}
 			}
 		}
 	}

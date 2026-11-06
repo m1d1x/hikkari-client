@@ -40,11 +40,6 @@ func ExportURI(p profile.Profile) (string, error) {
 	case "tuic":
 		return exportTUIC(p)
 	case "wireguard", "awg":
-		for key := range p.Config {
-			if err := ValidateAWGField(key); err != nil {
-				return "", err
-			}
-		}
 		return exportWireGuard(p)
 	}
 	return "", fmt.Errorf("экспорт ссылки не поддерживается для типа %q", typ)
@@ -214,6 +209,13 @@ func exportWireGuard(p profile.Profile) (string, error) {
 			b.WriteString(strings.ToUpper(k[:1]) + k[1:] + " = " + v + "\n")
 		}
 	}
+	// AmneziaWG 3.x: a server with header protection or the 3.x timers does not
+	// answer a client that lacks them, so each one the profile holds goes out.
+	for _, f := range AWG3Fields {
+		if v := f.exportAWG3(c); v != "" {
+			b.WriteString(f.Ini + " = " + v + "\n")
+		}
+	}
 
 	b.WriteString("\n[Peer]\n")
 	b.WriteString("PublicKey = " + pub + "\n")
@@ -232,8 +234,9 @@ func exportWireGuard(p profile.Profile) (string, error) {
 		b.WriteString("AllowedIPs = 0.0.0.0/0\n")
 	}
 	b.WriteString("Endpoint = " + net.JoinHostPort(host, strconv.Itoa(port)) + "\n")
-	if ka := cfgInt(peer, "persistent_keepalive_interval"); ka != 0 {
-		b.WriteString("PersistentKeepalive = " + strconv.Itoa(ka) + "\n")
+	// A number, or under AmneziaWG 3.x a "min-max" range.
+	if ka := rangeText(peer["persistent_keepalive_interval"]); ka != "" && ka != "0" {
+		b.WriteString("PersistentKeepalive = " + ka + "\n")
 	}
 	return b.String(), nil
 }
