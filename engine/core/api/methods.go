@@ -404,16 +404,18 @@ func (c *Core) DeleteProfile(name string) (resultErr error) {
 		return fmt.Errorf("профиль %q не найден", name)
 	}
 	wasRunning := c.IsRunning()
+	last := false
+	if pf, err := c.profiles.Read(); err == nil && len(pf.Profiles) <= 1 {
+		last = true
+	}
 	if wasRunning {
 		finish := c.traceCoreTransition("profile-delete", "")
 		defer func() { finish(resultErr) }()
 		// Deleting the last profile ends the wish to be up: nothing can start.
-		stop := func() error { return c.stopForRestart("profile-delete") }
-		if pf, err := c.profiles.Read(); err == nil && len(pf.Profiles) <= 1 {
-			stop = c.backend.Stop
-		}
-		if err := stop(); err != nil {
-			return err
+		if last {
+			if err := c.backend.Stop(); err != nil {
+				return err
+			}
 		}
 	}
 	if err := c.profiles.Delete(name); err != nil {
@@ -428,10 +430,18 @@ func (c *Core) DeleteProfile(name string) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	if wasRunning && len(pf.Profiles) > 0 {
-		return c.startVPN()
+	if !wasRunning || last || len(pf.Profiles) == 0 {
+		return nil
 	}
-	return nil
+	// The other profiles keep their connections when the core drops this
+	// one in place; otherwise it restarts without it.
+	if c.reloadInPlace(c.ctx, "profile-delete") {
+		return nil
+	}
+	if err := c.stopForRestart("profile-delete"); err != nil {
+		return err
+	}
+	return c.startVPN()
 }
 
 // SwitchProfile marks the named profile active and propagates the change:

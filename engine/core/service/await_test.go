@@ -18,7 +18,7 @@ func updateServer(t *testing.T, cfg Config) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	core := filepath.Join(dir, "core")
-	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+	if err := os.WriteFile(core, []byte(fakeCoreScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	updater := filepath.Join(dir, "updater")

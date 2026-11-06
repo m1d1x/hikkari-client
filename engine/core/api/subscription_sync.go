@@ -171,7 +171,10 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 	if err := c.backend.Configure(next); err != nil {
 		return rollback(err, false)
 	}
-	if running {
+	// A running core takes the new profiles in place when it can: the tunnel
+	// and its connections stay. Otherwise it restarts, as it always did.
+	hot := running && len(after.Profiles) > 0 && c.reloadInPlace(ctx, "profiles-runtime-change")
+	if running && !hot {
 		// With no profiles left nothing can start, so the wish to be up ends.
 		stop := func() error { return c.stopForRestart("profiles-runtime-change") }
 		if len(after.Profiles) == 0 {
@@ -190,6 +193,16 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 	// Publish only after successful runtime application: UI readers must never
 	// observe a candidate that is about to be rolled back after Start fails.
 	if err := pending.Commit(); err != nil {
+		if hot {
+			// The core runs the candidate: put the previous profiles back in
+			// place the same way, or by a restart if that is declined.
+			if configureErr := c.backend.Configure(old); configureErr != nil {
+				return errors.Join(err, configureErr)
+			}
+			if c.reloadInPlace(ctx, "profiles-runtime-change/rollback") {
+				return err
+			}
+		}
 		var stopErr error
 		if running && len(after.Profiles) > 0 {
 			stopErr = c.stopForRestart("profiles-runtime-change/rollback")

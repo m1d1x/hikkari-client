@@ -54,7 +54,13 @@ const SingBoxDNS = "172.19.0.2"
 
 // Ops.
 const (
-	OpStart  = "start"
+	OpStart = "start"
+	// OpReload applies a new sing-box config to the running core without a
+	// restart (core patch 0009): Config, ConfigHash and AppVersion as for
+	// OpStart. Response.Reload says whether it was applied. Anything but an
+	// applied reload leaves the core, the stored config and its hash exactly
+	// as before, and the GUI restarts the core with OpStop + OpStart.
+	OpReload = "reload"
 	OpStop   = "stop"
 	OpStatus = "status"
 
@@ -156,6 +162,9 @@ type Response struct {
 	// a config stored without one.
 	ConfigHash string `json:"configHash,omitempty"`
 
+	// Reload is the outcome of OpReload.
+	Reload *ReloadOutcome `json:"reload,omitempty"`
+
 	Update *UpdateState `json:"update,omitempty"`
 	// SyncsBinaries: this service keeps the binaries outside the replaced
 	// tree up to date itself (Windows: hikkari.exe, HikkariService.exe,
@@ -177,6 +186,18 @@ type Response struct {
 	NetworkReset  *NetworkReset  `json:"networkReset,omitempty"`
 	NetworkScan   *NetworkScan   `json:"networkScan,omitempty"`
 	NetworkRepair *NetworkRepair `json:"networkRepair,omitempty"`
+}
+
+// ReloadOutcome is what the core did with an OpReload. Declined names what
+// needs a restart (a changed inbound, DNS, rule...); the lists are outbound
+// and group tags.
+type ReloadOutcome struct {
+	Applied  bool     `json:"applied"`
+	Declined string   `json:"declined,omitempty"`
+	Added    []string `json:"added,omitempty"`
+	Removed  []string `json:"removed,omitempty"`
+	Replaced []string `json:"replaced,omitempty"`
+	Groups   []string `json:"groups,omitempty"`
 }
 
 // NetworkRepair is the outcome of OpRepairNetwork.

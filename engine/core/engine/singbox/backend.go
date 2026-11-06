@@ -39,8 +39,9 @@ type Backend struct {
 	active      string      // selector member the last Configure chose
 	check       configChecker
 	compiled    *compiled
-	rejected    map[string]error // profile name -> why the running core was started without it
-	fingerprint string           // of what the last Configure wrote, before admit and the pins
+	rejected    map[string]error  // profile name -> why the running core was started without it
+	fingerprint string            // of what the last Configure wrote, before admit and the pins
+	pins        map[string]string // server host -> IPv4 the running core dials (see pinServers)
 }
 
 // selectActiveTimeout bounds the wait for a freshly started core's Clash API.
@@ -139,21 +140,11 @@ func (b *Backend) Start(ctx context.Context) error {
 		return err
 	}
 	vpn.FlushDNS()
-	results, err := b.config.PinServerIPs(func(host string) ([]net.IP, error) {
+	b.pinServers(true, func(host string) ([]net.IP, error) {
 		lookup, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		return net.DefaultResolver.LookupIP(lookup, "ip4", host)
 	})
-	if err != nil {
-		b.log.Logf("sing-box: pin server IPs: %v", err)
-	}
-	for _, r := range results {
-		if r.Err != nil {
-			b.log.Logf("sing-box: server %s (%s) not pinned: %v", r.Host, r.Tag, r.Err)
-		} else {
-			b.log.Logf("sing-box: server %s (%s) pinned to %s", r.Host, r.Tag, r.IP)
-		}
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

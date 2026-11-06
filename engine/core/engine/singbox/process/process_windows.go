@@ -4,6 +4,7 @@ package vpn
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,6 +58,9 @@ type ProcessManager struct {
 	mu   sync.Mutex
 	cmd  *exec.Cmd
 	done <-chan struct{}
+	// control is the running core's hot reload channel (control.go), nil
+	// when the binary has none.
+	control *control
 	// job is held for the lifetime of this manager (and therefore of the
 	// host process). When the last handle closes — i.e. our process exits —
 	// every process assigned to the job is terminated by the kernel.
@@ -150,10 +154,15 @@ func (m *ProcessManager) Start() error {
 	unblockBinary(m.binPath)
 	flushDNS()
 
-	cmd := exec.Command(m.binPath, "run", "-c", m.configPath)
+	args, withControl := controlCommand(m.binPath, m.configPath)
+	cmd := exec.Command(m.binPath, args...)
 	cmd.Dir = m.workDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 
+	var stdin io.WriteCloser
+	if withControl {
+		stdin, _ = cmd.StdinPipe()
+	}
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 
@@ -178,6 +187,11 @@ func (m *ProcessManager) Start() error {
 		}
 	}
 
+	m.control = nil
+	if stdin != nil {
+		m.control = newControl(stdin)
+		stdout = m.control.filter(stdout, m.log)
+	}
 	done, tail := m.supervise(cmd, stdout, stderr, "engine.stdout", "engine.stderr")
 	m.done = done
 	return m.awaitStart(done, tail)
@@ -217,6 +231,7 @@ func (m *ProcessManager) Stop() error {
 		m.log.Logf("vpn.Stop: killing sing-box pid=%d", m.cmd.Process.Pid)
 		_ = m.cmd.Process.Kill()
 		m.cmd = nil
+		m.control = nil
 	}
 	m.killStrays()
 	flushDNS()

@@ -50,7 +50,7 @@ func (d *fakeDNS) count() int {
 func TestServiceRunsOneEngineAtATime(t *testing.T) {
 	dir := t.TempDir()
 	core := filepath.Join(dir, "core")
-	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+	if err := os.WriteFile(core, []byte(fakeCoreScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dns := &fakeDNS{}
@@ -217,7 +217,7 @@ func TestFailedSingBoxStartGivesTheResolverBack(t *testing.T) {
 func TestSingBoxRunsWithoutSystemDNS(t *testing.T) {
 	dir := t.TempDir()
 	core := filepath.Join(dir, "core")
-	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+	if err := os.WriteFile(core, []byte(fakeCoreScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	s, err := NewServer(Config{CoreDir: dir, CoreBin: core, CoreWorkDir: dir, CoreReady: fakeCoreUp})
@@ -264,7 +264,7 @@ func TestNextStartRestoresTheResolverAfterACrash(t *testing.T) {
 func TestDeadCoreGivesTheResolverBack(t *testing.T) {
 	dir := t.TempDir()
 	core := filepath.Join(dir, "core")
-	if err := os.WriteFile(core, []byte("#!/bin/sh\nexec sleep 60\n"), 0o755); err != nil {
+	if err := os.WriteFile(core, []byte(fakeCoreScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	dns := &fakeDNS{}
@@ -302,6 +302,10 @@ func TestDeadCoreGivesTheResolverBack(t *testing.T) {
 
 // The fake cores below stand for a running core: they never open an API.
 func fakeCoreUp() bool { return true }
+
+// fakeCoreScript runs until killed and, like a real core, answers `run --help`
+// at once (the start asks it whether the core has the hot reload channel).
+const fakeCoreScript = "#!/bin/sh\n[ \"$2\" = \"--help\" ] && exit 0\nexec sleep 60\n"
 
 // A core that gives up on its config exits at once. The start must say so, in
 // the core's words, not report a running core (tester-002, 04.11).

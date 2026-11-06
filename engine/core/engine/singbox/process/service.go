@@ -170,3 +170,34 @@ func (m *ServiceManager) Restart() error {
 	m.log.Logf("vpn.Restart (service): end, err=%v", err)
 	return err
 }
+
+// Reload hands the current config to the service to apply in place
+// (svcproto.OpReload). A service from before it answers with an error, which
+// the caller treats like a declined reload: it restarts the core.
+func (m *ServiceManager) Reload() (svcproto.ReloadOutcome, error) {
+	raw, err := os.ReadFile(m.configPath)
+	if err != nil {
+		return svcproto.ReloadOutcome{}, fmt.Errorf("конфиг sing-box не найден: %s", m.configPath)
+	}
+	if !json.Valid(raw) {
+		return svcproto.ReloadOutcome{}, fmt.Errorf("конфиг sing-box повреждён: %s", m.configPath)
+	}
+	hash := ""
+	if h := m.configHash.Load(); h != nil {
+		hash = *h
+	}
+	resp, err := m.call(svcproto.Request{Op: svcproto.OpReload, Config: raw, ConfigHash: hash, AppVersion: appversion.Own()}, 30*time.Second)
+	if err != nil {
+		m.log.Logf("vpn.Reload (service): %v", err)
+		return svcproto.ReloadOutcome{}, err
+	}
+	if resp.Reload == nil {
+		return svcproto.ReloadOutcome{Declined: "service without hot reload"}, nil
+	}
+	if resp.Reload.Applied {
+		m.log.Logf("vpn.Reload (service): applied in place, added=%d removed=%d replaced=%d", len(resp.Reload.Added), len(resp.Reload.Removed), len(resp.Reload.Replaced))
+	} else {
+		m.log.Logf("vpn.Reload (service): declined: %s", resp.Reload.Declined)
+	}
+	return *resp.Reload, nil
+}

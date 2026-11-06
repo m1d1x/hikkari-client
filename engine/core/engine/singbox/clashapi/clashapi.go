@@ -16,9 +16,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -189,4 +191,34 @@ func (c *Client) getJSON(path string, out interface{}) error {
 		return fmt.Errorf("clashapi: %s: decode: %w", path, err)
 	}
 	return nil
+}
+
+// LookupIPv4 resolves host through the running core's DNS (GET /dns/query).
+// A query from the API carries no inbound, so it skips the tunnel's fake-ip
+// rule and lands on dns-direct: the real address, as the core itself would
+// resolve an outbound's server.
+func (c *Client) LookupIPv4(host string) ([]net.IP, error) {
+	var out struct {
+		Status int `json:"Status"`
+		Answer []struct {
+			Type int    `json:"type"`
+			Data string `json:"data"`
+		} `json:"Answer"`
+	}
+	if err := c.getJSON("/dns/query?type=A&name="+url.QueryEscape(host), &out); err != nil {
+		return nil, err
+	}
+	var ips []net.IP
+	for _, answer := range out.Answer {
+		if answer.Type != 1 { // A
+			continue
+		}
+		if ip := net.ParseIP(strings.TrimSpace(answer.Data)); ip != nil {
+			ips = append(ips, ip)
+		}
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("clashapi: no A record for %s (rcode %d)", host, out.Status)
+	}
+	return ips, nil
 }

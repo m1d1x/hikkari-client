@@ -4,6 +4,7 @@ package vpn
 
 import (
 	"fmt"
+	"io"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -28,6 +29,9 @@ type ProcessManager struct {
 	mu   sync.Mutex
 	cmd  *exec.Cmd
 	done <-chan struct{}
+	// control is the running core's hot reload channel (control.go), nil
+	// when the binary has none.
+	control *control
 }
 
 func NewProcessManager(binPath, configPath, workDir string, log LineLogger) *ProcessManager {
@@ -48,8 +52,13 @@ func (m *ProcessManager) Start() error {
 	}
 	flushDNS()
 
-	cmd := exec.Command(m.binPath, "run", "-c", m.configPath)
+	args, withControl := controlCommand(m.binPath, m.configPath)
+	cmd := exec.Command(m.binPath, args...)
 	cmd.Dir = m.workDir
+	var stdin io.WriteCloser
+	if withControl {
+		stdin, _ = cmd.StdinPipe()
+	}
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 	if err := cmd.Start(); err != nil {
@@ -58,6 +67,11 @@ func (m *ProcessManager) Start() error {
 	}
 	m.cmd = cmd
 	m.log.Logf("vpn.Start: sing-box started, pid=%d", cmd.Process.Pid)
+	m.control = nil
+	if stdin != nil {
+		m.control = newControl(stdin)
+		stdout = m.control.filter(stdout, m.log)
+	}
 	done, tail := m.supervise(cmd, stdout, stderr, "singbox.out", "singbox.err")
 	m.done = done
 	return m.awaitStart(done, tail)
@@ -81,6 +95,7 @@ func (m *ProcessManager) Stop() error {
 		}
 	}
 	m.cmd = nil
+	m.control = nil
 	flushDNS()
 	m.log.Logf("vpn.Stop: done")
 	return nil

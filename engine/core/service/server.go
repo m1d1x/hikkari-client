@@ -388,11 +388,7 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 		if s.cores[engine] == nil {
 			return fail(fmt.Errorf("движок %q не поставляется в этой установке", engine))
 		}
-		if installed := s.installedRelease(); req.AppVersion != "" && installed != "" && req.AppVersion != installed {
-			// The stored config and the core stay as they are: the GUI of
-			// the installed release sends its own once it is reopened.
-			resp := fail(fmt.Errorf("приложение %s, а установлена %s: приложение перезапускается", req.AppVersion, installed))
-			resp.Code = svcproto.CodeAppReplaced
+		if resp, refused := s.refuseOtherRelease(req, fail); refused {
 			return resp
 		}
 		if err := s.writeConfig(engine, req.Config, req.ConfigHash); err != nil {
@@ -410,6 +406,17 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 			s.log.Logf("service: %s is up on the config this release sent (hash=%s, service %s)", engine, shortHash(req.ConfigHash), Version)
 		}
 		return s.status()
+	case svcproto.OpReload:
+		if resp, refused := s.refuseOtherRelease(req, fail); refused {
+			return resp
+		}
+		outcome, err := s.reload(req)
+		if err != nil {
+			return fail(err)
+		}
+		resp := s.status()
+		resp.Reload = &outcome
+		return resp
 	case svcproto.OpResetNetwork:
 		if s.cfg.NetworkStack == nil {
 			return fail(errors.New("сброс сетевого стека не поддерживается на этой системе"))
@@ -559,6 +566,19 @@ func parseRelease(v string) ([3]int, bool) {
 
 // installedRelease is the release the installation holds now; empty when it
 // is not known.
+// refuseOtherRelease turns away a config from a GUI of another release
+// (CodeAppReplaced). The stored config and the core stay as they are: the GUI
+// of the installed release sends its own once it is reopened.
+func (s *Server) refuseOtherRelease(req svcproto.Request, fail func(error) svcproto.Response) (svcproto.Response, bool) {
+	installed := s.installedRelease()
+	if req.AppVersion == "" || installed == "" || req.AppVersion == installed {
+		return svcproto.Response{}, false
+	}
+	resp := fail(fmt.Errorf("приложение %s, а установлена %s: приложение перезапускается", req.AppVersion, installed))
+	resp.Code = svcproto.CodeAppReplaced
+	return resp, true
+}
+
 func (s *Server) installedRelease() string {
 	if s.cfg.VersionFile == "" {
 		return ""

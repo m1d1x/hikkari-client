@@ -110,6 +110,24 @@ type CoreSupervision interface {
 	StopForRestart() error
 }
 
+// HotReloader is optional: the backend can apply what it was last configured
+// with to the running core in place, without stopping it, so the tunnel and the
+// connections it carries survive. Anything the core cannot change in place is
+// declined (ReloadOutcome.Declined) and the caller restarts the core instead.
+// An error means the same: nothing was applied.
+type HotReloader interface {
+	Reload(ctx context.Context) (ReloadOutcome, error)
+}
+
+// ReloadOutcome is what an in-place reload did, as tag counts.
+type ReloadOutcome struct {
+	Applied  bool
+	Declined string
+	Added    int
+	Removed  int
+	Replaced int
+}
+
 // TesterGated is optional: the engine has things it does only on a tester's
 // install, while they earn their place: counting the TCP flows that reach each
 // profile, and starting another attempt when a flow stays silent.
