@@ -94,7 +94,7 @@ func (c *Core) cancelRoutingTimer() {
 // transactionRouting is the single backend/configuration boundary for all
 // routing sources. persist runs only after the adapter accepted the policy.
 // A failed recovery is returned along with the original error, never hidden.
-func (c *Core) transactionRouting(previous, next routing.RoutingState, persist, restore func() error) error {
+func (c *Core) transactionRouting(reason string, previous, next routing.RoutingState, persist, restore func() error) (resultErr error) {
 	if c.routingPreview || reflect.DeepEqual(previous, next) {
 		if err := persist(); err != nil {
 			return errors.Join(err, restore())
@@ -103,6 +103,10 @@ func (c *Core) transactionRouting(previous, next routing.RoutingState, persist, 
 	}
 	wasRunning := c.backend.IsRunning()
 	restart := wasRunning && !routing.ActiveEqual(previous, next)
+	if restart {
+		finish := c.traceCoreTransition(reason, routingChangeSummary(previous, next))
+		defer func() { finish(resultErr) }()
+	}
 	startAttempted := false
 	rollback := func(cause error) error {
 		var recovery []error
@@ -110,7 +114,7 @@ func (c *Core) transactionRouting(previous, next routing.RoutingState, persist, 
 		// before reinstalling the previous configuration.
 		stopped := true
 		if startAttempted && c.backend.IsRunning() {
-			if err := c.stopForRestart(); err != nil {
+			if err := c.stopForRestart(reason + "/rollback"); err != nil {
 				recovery = append(recovery, fmt.Errorf("остановка неудачной конфигурации: %w", err))
 				stopped = false
 			}
@@ -134,7 +138,7 @@ func (c *Core) transactionRouting(previous, next routing.RoutingState, persist, 
 		return rollback(err)
 	}
 	if restart {
-		if err := c.stopForRestart(); err != nil {
+		if err := c.stopForRestart(reason); err != nil {
 			return rollback(err)
 		}
 		startAttempted = true
@@ -218,7 +222,7 @@ func (c *Core) flushRoutingLocked() error {
 		return err
 	}
 	c.publishRouting("applying", nil, manual, next, false)
-	err = c.transactionRouting(batch.effective, next,
+	err = c.transactionRouting("manual-routing", batch.effective, next,
 		func() error { return c.routing.WriteRouting(manual) },
 		func() error { return c.routing.WriteRouting(batch.manual) })
 	app.pending = nil
@@ -263,7 +267,7 @@ func (c *Core) commitPresetState(ctx context.Context, old, next presets.State, p
 	c.cancelRoutingTimer()
 	app.revision++
 	c.publishRouting("applying", nil, manual, effective, false)
-	err = c.transactionRouting(previous, effective, func() error {
+	err = c.transactionRouting("preset-routing", previous, effective, func() error {
 		if err := c.routing.WriteRouting(manual); err != nil {
 			return err
 		}

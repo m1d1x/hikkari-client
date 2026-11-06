@@ -105,6 +105,13 @@ func TestRoutingBatchHasOneRestartAndNoUncommittedDiskWrites(t *testing.T) {
 	if starts != 2 || len(domains) != 3 {
 		t.Fatalf("starts=%d domains=%v", starts, domains)
 	}
+	log := c.logger.Tail()
+	for _, want := range []string{"reason=manual-routing running=true", "changed=bypass.domains:0->3", "api.(*Core).changeManualRouting.func1", "[lifecycle] end"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("debounced restart missing %q:\n%s", want, log)
+		}
+	}
+
 	persisted, _ = c.routing.ReadRouting()
 	if len(persisted.Bypass.Domains) != 3 {
 		t.Fatal("committed state not saved")

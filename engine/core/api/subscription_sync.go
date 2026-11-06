@@ -128,7 +128,7 @@ func sameProfileRuntime(a, b *profile.File) bool {
 
 // commitProfiles is the sole sync transaction boundary. Metadata-only commits
 // never touch the adapter; all runtime/persistence failures restore the snapshot.
-func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) error {
+func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) (resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -156,6 +156,10 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 	}
 	defer pending.Discard()
 	running := c.backend.IsRunning()
+	if running {
+		finish := c.traceCoreTransition("profiles-runtime-change", profileChangeSummary(before, after))
+		defer func() { finish(resultErr) }()
+	}
 	rollback := func(cause error, restart bool) error {
 		configureErr := c.backend.Configure(old)
 		var startErr error
@@ -169,7 +173,7 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 	}
 	if running {
 		// With no profiles left nothing can start, so the wish to be up ends.
-		stop := c.stopForRestart
+		stop := func() error { return c.stopForRestart("profiles-runtime-change") }
 		if len(after.Profiles) == 0 {
 			stop = c.backend.Stop
 		}
@@ -178,7 +182,7 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 		}
 		if len(after.Profiles) > 0 {
 			if err := c.backend.Start(ctx); err != nil {
-				stopErr := c.stopForRestart()
+				stopErr := c.stopForRestart("profiles-runtime-change/rollback")
 				return rollback(errors.Join(err, stopErr), stopErr == nil)
 			}
 		}
@@ -188,7 +192,7 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 	if err := pending.Commit(); err != nil {
 		var stopErr error
 		if running && len(after.Profiles) > 0 {
-			stopErr = c.stopForRestart()
+			stopErr = c.stopForRestart("profiles-runtime-change/rollback")
 		}
 		return rollback(errors.Join(err, stopErr), running && stopErr == nil)
 	}

@@ -399,7 +399,7 @@ func (c *Core) superviseCoreOnce(ctx context.Context, core engine.CoreSupervisio
 			return true
 		}
 		c.logger.Logf("core config differs from this release: reconnecting")
-		if err := c.restartVPNLocked(); err != nil {
+		if err := c.restartVPNLocked("release-config-mismatch"); err != nil {
 			c.logger.Logf("reconnect on the new config: %v", err)
 		}
 	case !state.Wanted:

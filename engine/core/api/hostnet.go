@@ -66,7 +66,7 @@ func (c *Core) watchNetwork(ctx context.Context) {
 			c.logger.Logf("[netdoctor] network changed with %s, reconnecting", c.host.LogLine())
 		}
 		c.forgetHostLocked()
-		if err := c.restartVPN(); err != nil && c.logger != nil {
+		if err := c.restartVPN("physical-network-change"); err != nil && c.logger != nil {
 			c.logger.Logf("[netdoctor] reconnect after network change failed: %v", err)
 		}
 	})
@@ -307,7 +307,7 @@ func (c *Core) NetworkRepair() (netdoctor.RepairResult, error) {
 	c.forgetHostLocked()
 	if c.backend.IsRunning() {
 		reconnect := netdoctor.Action{Name: "reconnect"}
-		if err := c.restartVPN(); err != nil {
+		if err := c.restartVPN("network-repair"); err != nil {
 			reconnect.Detail = err.Error()
 		} else {
 			reconnect.Done = true

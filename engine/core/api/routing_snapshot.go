@@ -180,7 +180,7 @@ func (c *Core) applyRoutingAndPresetsTransaction(
 		return errors.Join(errs...)
 	}
 
-	err = c.transactionRouting(previous, nextEffective, persist, restore)
+	err = c.transactionRouting("routing-snapshot", previous, nextEffective, persist, restore)
 	if app != nil {
 		app.pending = nil
 	}

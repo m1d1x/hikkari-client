@@ -146,11 +146,11 @@ func (c *Core) StopVPN() error {
 func (c *Core) RestartVPN() error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
-	return c.restartVPNLocked()
+	return c.restartVPNLocked("api-restart")
 }
 
 // restartVPNLocked: callers hold operationMu.
-func (c *Core) restartVPNLocked() error {
+func (c *Core) restartVPNLocked(reason string) error {
 	wasRunning := c.backend.IsRunning()
 	pendingRestart := c.routingApp.pending != nil && wasRunning && !routing.ActiveEqual(c.routingApp.pending.effective, c.RoutingStatus().Effective)
 	if err := c.flushRoutingLocked(); err != nil {
@@ -159,17 +159,19 @@ func (c *Core) restartVPNLocked() error {
 	if pendingRestart {
 		return nil
 	}
-	return c.restartVPN()
+	return c.restartVPN(reason)
 }
 
-func (c *Core) restartVPN() error {
+func (c *Core) restartVPN(reason string) (resultErr error) {
+	finish := c.traceCoreTransition(reason, "")
+	defer func() { finish(resultErr) }()
 	if c.routingPreview {
 		return fmt.Errorf("режим предпросмотра не перезапускает VPN")
 	}
 	if err := c.requireProfiles(); err != nil {
 		return err
 	}
-	if err := c.stopForRestart(); err != nil {
+	if err := c.stopForRestart(reason); err != nil {
 		return err
 	}
 	return c.startVPN()
@@ -177,7 +179,9 @@ func (c *Core) restartVPN() error {
 
 // stopForRestart stops the core with a start to follow: if that start fails the
 // core stays wanted and superviseCore keeps trying. A user's stop is backend.Stop.
-func (c *Core) stopForRestart() error {
+func (c *Core) stopForRestart(reason string) (resultErr error) {
+	finish := c.traceCoreTransition(reason+"/stop", "")
+	defer func() { finish(resultErr) }()
 	if core, ok := c.backend.(engine.CoreSupervision); ok {
 		return core.StopForRestart()
 	}
@@ -383,7 +387,7 @@ func (c *Core) RenameProfile(name, label string) error {
 // file stays tidy. Triggers a config rebuild so the deleted profile drops
 // out of the selector group; restarts the engine if it was running (sing-
 // box doesn't hot-remove outbounds either).
-func (c *Core) DeleteProfile(name string) error {
+func (c *Core) DeleteProfile(name string) (resultErr error) {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
 	// Check existence before stopping a running connection or changing files.
@@ -396,8 +400,10 @@ func (c *Core) DeleteProfile(name string) error {
 	}
 	wasRunning := c.IsRunning()
 	if wasRunning {
+		finish := c.traceCoreTransition("profile-delete", "")
+		defer func() { finish(resultErr) }()
 		// Deleting the last profile ends the wish to be up: nothing can start.
-		stop := c.stopForRestart
+		stop := func() error { return c.stopForRestart("profile-delete") }
 		if pf, err := c.profiles.Read(); err == nil && len(pf.Profiles) <= 1 {
 			stop = c.backend.Stop
 		}
@@ -446,7 +452,7 @@ func (c *Core) SwitchProfile(name string) error {
 		c.probeAfterSwitch(err)
 		return err
 	}
-	return c.restartVPN()
+	return c.restartVPN("profile-switch-fallback")
 }
 
 // logConnect puts what the user just did on one line: which profile, which
@@ -632,7 +638,7 @@ func (c *Core) SetAutoMode(on bool) error {
 		return err
 	}
 	if c.backend.IsRunning() {
-		return c.restartVPN()
+		return c.restartVPN("auto-mode-change")
 	}
 	return nil
 }
