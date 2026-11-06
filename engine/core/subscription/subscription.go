@@ -367,8 +367,10 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 	}
 	req.Header.Set("User-Agent", agent)
 	// What this client can dial beyond what every client can: the hub holds
-	// back what a released client's core would refuse.
-	req.Header.Set("Hikkari-Features", "amneziawg")
+	// back what a released client's core would refuse. amneziawg-3.1: the
+	// profile format carries AmneziaWG 3.1's parameters (profile/legacy/awg3.go),
+	// which 1.0.52 refused and older clients dropped.
+	req.Header.Set("Hikkari-Features", "amneziawg, amneziawg-3.1")
 	if Network != nil && ownHub(req.URL) {
 		if n := Network(); n != "" {
 			req.Header.Set(networkHeader, n)
