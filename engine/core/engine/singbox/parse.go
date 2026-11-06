@@ -566,6 +566,11 @@ func parseAmneziaWGIni(text string) (Draft, error) {
 	if err != nil {
 		return Draft{}, err
 	}
+	for key := range iface {
+		if err := legacy.ValidateAWGField(key); err != nil {
+			return Draft{}, err
+		}
+	}
 
 	privateKey := iface["PrivateKey"]
 	if privateKey == "" {
@@ -1168,6 +1173,14 @@ func parseAmneziaContainerAWG(item map[string]interface{}, rootHost string) (Dra
 		} else if sub != nil {
 			if cfgStr := getMapString(sub, "config"); cfgStr != "" && strings.Contains(cfgStr, "[Interface]") {
 				iniText = cfgStr
+			}
+		}
+	}
+
+	for _, source := range []map[string]interface{}{item, sub, lastConfigMap} {
+		for key := range source {
+			if err := legacy.ValidateAWGField(key); err != nil {
+				return Draft{}, err
 			}
 		}
 	}

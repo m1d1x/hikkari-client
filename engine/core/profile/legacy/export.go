@@ -40,6 +40,11 @@ func ExportURI(p profile.Profile) (string, error) {
 	case "tuic":
 		return exportTUIC(p)
 	case "wireguard", "awg":
+		for key := range p.Config {
+			if err := ValidateAWGField(key); err != nil {
+				return "", err
+			}
+		}
 		return exportWireGuard(p)
 	}
 	return "", fmt.Errorf("экспорт ссылки не поддерживается для типа %q", typ)
