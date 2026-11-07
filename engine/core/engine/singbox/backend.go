@@ -248,6 +248,12 @@ var udpProfileTypes = map[string]bool{"hysteria": true, "hysteria2": true, "tuic
 
 func wantsFlowRetry(kind string, cfg map[string]interface{}) bool {
 	kindOf, _ := cfg["type"].(string)
+	if kindOf == "naive" {
+		quic, _ := cfg["quic"].(bool)
+		if quic {
+			return false
+		}
+	}
 	return kind == profile.KindOutbound && !udpProfileTypes[kindOf]
 }
 

@@ -151,6 +151,14 @@ jobs:
           Write-Host "Binaries ready in archive/:"
           Get-ChildItem -Path "archive"
 
+      - name: Naive profile and Cronet smoke test
+        shell: pwsh
+        working-directory: engine
+        run: |
+          $env:HIKKARI_TEST_CORE = (Resolve-Path "../archive/sing-box.exe").Path
+          go test ./core/engine/singbox ./core/engine/singbox/diagnostics -run Naive -count=1 -v
+          if ($LASTEXITCODE -ne 0) { throw "Naive smoke test failed" }
+
       - name: Build Go Engine (nekkobox.dll)
         shell: pwsh
         run: |

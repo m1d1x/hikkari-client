@@ -732,7 +732,7 @@ type stack struct{ security, transport, flow, obfs string }
 func (s stack) pretty(protocol string) string {
 	parts := []string{prettyName(protocol, map[string]string{
 		"wireguard": "WireGuard", "awg": "AmneziaWG", "hysteria2": "Hysteria2", "hy2": "Hysteria2",
-		"shadowsocks": "Shadowsocks", "vless": "VLESS", "trojan": "Trojan", "vmess": "VMess", "tuic": "TUIC",
+		"shadowsocks": "Shadowsocks", "vless": "VLESS", "trojan": "Trojan", "vmess": "VMess", "tuic": "TUIC", "naive": "Naive",
 	})}
 	if strings.EqualFold(s.security, "reality") {
 		parts = append(parts, "Reality")

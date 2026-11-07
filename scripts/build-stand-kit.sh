@@ -45,6 +45,9 @@ bash "$REPO/scripts/apply-core-capacity-patch.sh" "$WORK/sbx"
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags "$TAGS" \
 		-ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$CORE_VERSION' -checklinkname=0 -s -w -buildid=" \
 		-o "$WORK/sing-box" ./cmd/sing-box
+	CRONET_DIR=$(go list -m -f '{{.Dir}}' github.com/sagernet/cronet-go/lib/linux_amd64)
+	test -f "$CRONET_DIR/libcronet.so"
+	cp "$CRONET_DIR/libcronet.so" "$WORK/libcronet.so"
 )
 (
 	cd "$REPO/engine"
@@ -57,12 +60,12 @@ CORE_LABEL="sing-box-lx $SING_BOX_LX_TAG-capacity.1"
 entry() {
 	local f="$1" sum size
 	sum="$(sha256sum "$f" | cut -d' ' -f1)"
-	size="$(stat -c %s "$f")"
+	size="$(wc -c < "$f" | tr -d '[:space:]')"
 	cp "$f" "$OUT/blobs/$sum"
 	printf '{"sha256":"%s","size":%s}' "$sum" "$size"
 }
 
-printf '{"version":"%s","core":"%s","files":{"sing-box":%s,"census-parse":%s}}\n' \
-	"$VERSION" "$CORE_LABEL" "$(entry "$WORK/sing-box")" "$(entry "$WORK/census-parse")" \
+printf '{"version":"%s","core":"%s","files":{"sing-box":%s,"census-parse":%s,"libcronet.so":%s}}\n' \
+	"$VERSION" "$CORE_LABEL" "$(entry "$WORK/sing-box")" "$(entry "$WORK/census-parse")" "$(entry "$WORK/libcronet.so")" \
 	> "$OUT/stand/linux-amd64.json"
 cat "$OUT/stand/linux-amd64.json"

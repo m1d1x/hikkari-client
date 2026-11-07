@@ -5,6 +5,7 @@
 package legacy
 
 import (
+	"NekkoVPN/core/naive"
 	"NekkoVPN/core/profile"
 	"encoding/base64"
 	"encoding/hex"
@@ -27,6 +28,12 @@ func ExportURI(p profile.Profile) (string, error) {
 	}
 	typ, _ := p.Config["type"].(string)
 	switch strings.ToLower(typ) {
+	case "naive":
+		l, err := naive.FromOutbound(p.Config, p.Label)
+		if err != nil {
+			return "", err
+		}
+		return l.URI(), nil
 	case "hysteria2":
 		return exportHysteria2(p)
 	case "vless":
