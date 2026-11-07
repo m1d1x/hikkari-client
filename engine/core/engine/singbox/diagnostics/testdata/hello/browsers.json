@@ -1,5 +1,39 @@
 [
   {
+    "file": "browser-chrome-157-a",
+    "browser": "Google Chrome for Testing 157.0.8103.38 (Stable channel), --headless=new, macOS 26 arm64, 2026-11-07",
+    "fp": "chrome_155",
+    "stable": true,
+    "known_stale": ["extensions"]
+  },
+  {
+    "file": "browser-chrome-157-b",
+    "browser": "Google Chrome for Testing 157.0.8103.38 (Stable channel), --headless=new, second run, 2026-11-07",
+    "fp": "chrome_155",
+    "stable": true,
+    "known_stale": ["extensions"]
+  },
+  {
+    "file": "browser-firefox-159-a",
+    "browser": "Firefox 159.0.1 (release), --headless, macOS 26 arm64, 2026-11-07",
+    "fp": "firefox",
+    "stable": true,
+    "known_stale": ["groups", "extensions", "ciphers"]
+  },
+  {
+    "file": "browser-firefox-159-b",
+    "browser": "Firefox 159.0.1 (release), --headless, second run, 2026-11-07",
+    "fp": "firefox",
+    "stable": true,
+    "known_stale": ["groups", "extensions", "ciphers"]
+  },
+  {
+    "file": "browser-chrome-157-shell",
+    "browser": "chrome-headless-shell 157.0.8103.38: not what users run, its hello is Chromium 152's",
+    "fp": "chrome_155",
+    "stable": false
+  },
+  {
     "file": "browser-chromium-152-pane-a",
     "browser": "Chromium 152.0.7977.167, Claude desktop browser pane (Electron), macOS 26, 2026-11-07",
     "fp": "chrome_155",
