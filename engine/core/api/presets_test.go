@@ -18,7 +18,7 @@ import (
 
 func TestServicePresetUpdatesReachRunningBackendAndPreserveManualRules(t *testing.T) {
 	var version atomic.Int64
-	version.Store(3)
+	version.Store(30)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, `{"schemaVersion":1,"version":%d,"services":[{"id":"test","name":"Test","icon":"steam","domains":["service%d.example"],"ips":[],"processes":{},"defaultModes":[]}]}`, version.Load(), version.Load())
 	}))
@@ -46,10 +46,10 @@ func TestServicePresetUpdatesReachRunningBackendAndPreserveManualRules(t *testin
 	starts := f.starts
 	got := f.configuration.Routing.Bypass.Domains
 	f.mu.Unlock()
-	if !reflect.DeepEqual(got, []string{"manual.example", "service3.example"}) {
+	if !reflect.DeepEqual(got, []string{"manual.example", "service30.example"}) {
 		t.Fatal("group not applied", got)
 	}
-	version.Store(4)
+	version.Store(31)
 	if err := c.RefreshRoutingPresets(); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestServicePresetUpdatesReachRunningBackendAndPreserveManualRules(t *testin
 	got = f.configuration.Routing.Bypass.Domains
 	after := f.starts
 	f.mu.Unlock()
-	if !reflect.DeepEqual(got, []string{"manual.example", "service4.example"}) || after != starts+1 {
+	if !reflect.DeepEqual(got, []string{"manual.example", "service31.example"}) || after != starts+1 {
 		t.Fatal("live update did not replace group and restart backend", got, after, starts)
 	}
 	manual, _ := c.Routing()
