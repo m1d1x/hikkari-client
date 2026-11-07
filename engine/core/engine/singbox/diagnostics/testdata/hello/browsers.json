@@ -1,0 +1,14 @@
+[
+  {
+    "file": "browser-chromium-152-pane-a",
+    "browser": "Chromium 152.0.7977.167, Claude desktop browser pane (Electron), macOS 26, 2026-11-07",
+    "fp": "chrome_155",
+    "stable": false
+  },
+  {
+    "file": "browser-chromium-152-pane-b",
+    "browser": "Chromium 152.0.7977.167, Claude desktop browser pane (Electron), macOS 26, 2026-11-07, second connection",
+    "fp": "chrome_155",
+    "stable": false
+  }
+]

@@ -249,8 +249,11 @@ func loadLine(ctx context.Context, binary string, t loadTarget, iface string, pl
 }
 
 // loadKnobs are the config knobs of an outbound the relay search varies
-// (hikkari-client plans/2026-11-04-relay-search-method.md): fp, sni, port, flow
-// and alpn, as " key=value" in that order, each only when the outbound sets it.
+// (hikkari-client plans/2026-11-04-relay-search-method.md): fp, sni, port, flow,
+// alpn, then XHTTP's mode and Reality's key_share, as " key=value" in that
+// order, each only when the outbound sets it. mode and key_share never leave
+// the config for the wire as such (plan knob-truth 2.1, D2 and D6), so the
+// hub can hold them to what it handed out only from here.
 // The server name is a cover domain, which the log keeps; the port is not an
 // address. A value with anything but plain characters is left out, so the
 // line stays one token per knob.
@@ -294,6 +297,16 @@ func loadKnobs(ob map[string]interface{}) string {
 			}
 		}
 		add("alpn", strings.Join(parts, "/"))
+	}
+	if tr, _ := ob["transport"].(map[string]interface{}); tr != nil {
+		if typ, _ := tr["type"].(string); typ == "xhttp" {
+			mode, _ := tr["mode"].(string)
+			add("mode", mode)
+		}
+	}
+	if r, _ := tls["reality"].(map[string]interface{}); r != nil {
+		ks, _ := r["key_share"].(string)
+		add("key_share", ks)
 	}
 	return b.String()
 }

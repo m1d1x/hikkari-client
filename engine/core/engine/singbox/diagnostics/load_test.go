@@ -151,6 +151,18 @@ func TestLoadLineNamesTheKnobs(t *testing.T) {
 	if !strings.HasPrefix(line, "p-a proto=vless-reality fp=firefox sni=www.samsung.com port=8443 ") {
 		t.Fatal(line)
 	}
+	ob["tls"].(map[string]interface{})["reality"].(map[string]interface{})["key_share"] = "classical"
+	if got := loadKnobs(ob); !strings.HasSuffix(got, " alpn=h2/http/1.1 key_share=classical") {
+		t.Fatalf("reality key_share: %q", got)
+	}
+	xhttp := map[string]interface{}{
+		"type": "vless", "server_port": float64(443),
+		"tls":       map[string]interface{}{"enabled": true, "server_name": "x.example", "utls": map[string]interface{}{"enabled": true, "fingerprint": "chrome"}},
+		"transport": map[string]interface{}{"type": "xhttp", "host": "x.example", "path": "/p", "mode": "stream-up"},
+	}
+	if got, want := loadKnobs(xhttp), " fp=chrome sni=x.example port=443 flow=none mode=stream-up"; got != want {
+		t.Fatalf("xhttp knobs %q, want %q", got, want)
+	}
 	if got := loadKnobs(map[string]interface{}{"type": "hysteria2", "tls": map[string]interface{}{"server_name": "a b"}}); got != "" {
 		t.Fatalf("hysteria with a bad name: %q", got)
 	}
@@ -326,6 +338,18 @@ func TestLoadOnAMobileNetworkAsksASmallBurstAndNotOften(t *testing.T) {
 	r.mu.Unlock()
 	if got := r.loadNow("/nonexistent/sing-box", ifaces); !strings.HasPrefix(got[0], "started") {
 		t.Fatalf("after the limit: %v", got)
+	}
+	// The round reads loadSelfNet, which the cleanup puts back: let it end first.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		r.mu.Lock()
+		busy := r.loadBusy
+		r.mu.Unlock()
+		if !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the third round did not end")
+		}
 	}
 }
 
