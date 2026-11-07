@@ -33,8 +33,10 @@ func addrDead(ctx context.Context, t loadTarget, local net.IP) (tcp int, dead bo
 	kind, _ := t.Outbound["type"].(string)
 	tlsCfg, _ := t.Outbound["tls"].(map[string]interface{})
 	on, _ := tlsCfg["enabled"].(bool)
-	quic, _ := t.Outbound["quic"].(bool)
-	if udpOutbounds[kind] || (kind == "naive" && quic) || !on {
+	// A Go TLS hello cannot gate a Chromium transport: DPI may reject one
+	// while admitting the other. Naive's own dl/burst/after is authoritative.
+	// Its H3 mode has no TCP handshake to probe in the first place.
+	if udpOutbounds[kind] || kind == "naive" || !on {
 		return 0, false
 	}
 	host, _ := t.Outbound["server"].(string)

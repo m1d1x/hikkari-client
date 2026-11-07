@@ -27,7 +27,7 @@ import (
 )
 
 func TestNaiveDiagnosticsClassifyQUIC(t *testing.T) {
-	raw := []byte(`{"outbounds":[{"tag":"p-h2","type":"naive","server":"127.0.0.1","server_port":443,"quic":false},{"tag":"p-h3","type":"naive","server":"127.0.0.1","server_port":443,"quic":true,"tls":{"enabled":true}}]}`)
+	raw := []byte(`{"outbounds":[{"tag":"p-h2","type":"naive","server":"127.0.0.1","server_port":443,"quic":false,"tls":{"enabled":true}},{"tag":"p-h3","type":"naive","server":"127.0.0.1","server_port":443,"quic":true,"tls":{"enabled":true}}]}`)
 	targets, err := reachTargets(raw)
 	if err != nil || len(targets) != 2 || targets[0].UDP || !targets[1].UDP {
 		t.Fatalf("reach: %+v %v", targets, err)
@@ -38,8 +38,10 @@ func TestNaiveDiagnosticsClassifyQUIC(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, dead := addrDead(ctx, load[1], net.ParseIP("127.0.0.1")); dead || ctx.Err() != nil {
-		t.Fatal("H3 must not be gated by a TCP probe")
+	for _, target := range load {
+		if _, dead := addrDead(ctx, target, net.ParseIP("127.0.0.1")); dead || ctx.Err() != nil {
+			t.Fatal("a Go TLS probe must not gate Chromium H2 or QUIC H3")
+		}
 	}
 }
 
