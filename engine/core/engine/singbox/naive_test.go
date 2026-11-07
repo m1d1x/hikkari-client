@@ -75,7 +75,7 @@ func TestNaiveProfileLifecycle(t *testing.T) {
 }
 
 func TestNaiveDefaultPortAndSubscription(t *testing.T) {
-	uri := "naive+https://user:secret@proxy.example"
+	uri := "naive+https://user:secret@proxy.example?hikkari-node=n%3Anvn1"
 	d, err := ParseURI(uri)
 	if err != nil || d.Config["server_port"] != 443 || d.Label != "proxy.example" {
 		t.Fatalf("default: %#v %v", d, err)

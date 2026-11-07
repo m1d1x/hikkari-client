@@ -48,7 +48,7 @@ func Parse(u *url.URL) (Link, error) {
 		return l, fmt.Errorf("naive: неверные параметры ссылки")
 	}
 	for key, values := range q {
-		if key != "sni" || len(values) != 1 {
+		if (key != "sni" && key != "hikkari-node") || len(values) != 1 {
 			return l, fmt.Errorf("naive: неподдерживаемые параметры ссылки")
 		}
 	}
