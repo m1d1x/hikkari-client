@@ -83,7 +83,9 @@ jobs:
           bash scripts/apply-core-capacity-patch.sh sbx
           cd sbx
           git submodule update --init --depth 1 submodules/gvisor submodules/sing-tun submodules/utls submodules/wireguard-go
-          TAGS=$(make -s -f Makefile.lx lx-print-tags)
+          # Cronet's macOS prebuilts are static .a archives. with_purego
+          # disables their linkage and requires a dylib we do not ship.
+          TAGS=$(make -s -f Makefile.lx lx-print-tags | tr ',' '\n' | sed '/^with_purego$/d' | paste -sd, -)
           # 1.14.3-lx.21-hk.1: upstream, lx tag and our tag all in it.
           VERSION_SB="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG#*-}-capacity.1"
           for arch in arm64 amd64; do
@@ -95,6 +97,12 @@ jobs:
           mkdir -p archive
           lipo -create sing-box-arm64 sing-box-amd64 -output archive/sing-box
           lipo -info archive/sing-box
+
+      - name: Naive profile and Cronet smoke test
+        env:
+          HIKKARI_TEST_CORE: ${{ github.workspace }}/archive/sing-box
+        working-directory: engine
+        run: go test ./core/engine/singbox ./core/engine/singbox/diagnostics -run Naive -count=1 -v
 
       # The pinned Xray transport (checksummed) that embed_engine.sh bundles.
       - name: Fetch pinned Xray (universal)

@@ -43,6 +43,8 @@ final class ImportLink extends DeepLink {
     'hysteria2://',
     'vmess://',
     'tuic://',
+    'naive+https://',
+    'naive+quic://',
     'vpn://',
   ];
 

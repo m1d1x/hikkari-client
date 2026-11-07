@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"NekkoVPN/core/naive"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -53,6 +54,13 @@ func expandSingBoxConfig(input string) (string, bool) {
 }
 
 func singBoxOutboundLink(o map[string]interface{}) (string, error) {
+	if field(o, "type") == "naive" {
+		l, err := naive.FromOutbound(o, field(o, "tag"))
+		if err != nil {
+			return "", err
+		}
+		return l.URI(), nil
+	}
 	q := url.Values{}
 	tls := nested(o, "tls")
 	if flag(tls, "enabled") {

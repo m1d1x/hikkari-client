@@ -57,6 +57,7 @@ func reachTargets(config []byte) ([]reachTarget, error) {
 			Type       string `json:"type"`
 			Server     string `json:"server"`
 			ServerPort int    `json:"server_port"`
+			QUIC       bool   `json:"quic"`
 			TLS        struct {
 				Reality struct {
 					Enabled bool `json:"enabled"`
@@ -84,7 +85,7 @@ func reachTargets(config []byte) ([]reachTarget, error) {
 			if o.Transport.Type != "" {
 				proto += "-" + o.Transport.Type
 			}
-			out = append(out, reachTarget{Tag: o.Tag, Type: o.Type, Proto: proto, Host: o.Server, Port: o.ServerPort, UDP: udpOutbounds[o.Type]})
+			out = append(out, reachTarget{Tag: o.Tag, Type: o.Type, Proto: proto, Host: o.Server, Port: o.ServerPort, UDP: udpOutbounds[o.Type] || (o.Type == "naive" && o.QUIC)})
 		}
 	}
 	for _, e := range cfg.Endpoints {
