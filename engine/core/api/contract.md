@@ -97,6 +97,17 @@ Status machine:
 - `ok` — core up, egress IP differs from ISP baseline.
 - `broken` — core up, egress IP == ISP IP (tunnel leaked).
 
+### Current traffic
+
+`TrafficCounters` (no arguments) returns `{uploadBytes, downloadBytes}`: cumulative
+payload bytes processed by the engine, including completed connections and traffic
+routed direct by user rules. Unsupported adapters return null; a stopped or
+unreachable core returns an error. This reads local counters and makes no external
+request. The settings sheet computes rates using monotonic elapsed time, polls
+only while connected and visible, and clears the baseline on failures, backgrounding
+or counter resets. The sing-box read has a 500 ms timeout. These rates are actual
+traffic, **not available bandwidth**.
+
 ### Logging
 
 | method               | args                  | data     |
@@ -172,7 +183,8 @@ Valid `category` values: `"domains"`, `"ips"`, `"processes"`, `"folders"` (path 
 {
   "name":     "main",          // stable id
   "label":    "Основной",      // human-readable
-  "active":   true,            // currently selected
+  "active":   true,            // manually selected
+  "autoEligible": true,         // verified Hikkari source; never inferred from display metadata
   "endpoint": "1.2.3.4:51820", // "host:port" or ""
   "protocol": "AmneziaWG",     // pretty name ("AmneziaWG", "WireGuard", "—")
   "subscription": {             // omitted for individually imported profiles
@@ -227,6 +239,21 @@ normalized to seconds in the metadata (see [provider documentation](https://docs
 hikkari's product freshness target is 5 minutes independently of that hint;
 server throttling/backoff still takes priority. The UI computes remaining days
 from expiry and remaining traffic as max(0, total - upload - download).
+
+`AutoMode` returns whether automatic selection is enabled. `SetAutoMode` takes
+`{"on":true|false}`. Enabling requires a saved HTTPS subscription source on
+hikkari.net or its subdomains. Its opaque ID is pinned in `autoSubscriptionId`:
+the selected profile's Hikkari subscription wins; otherwise the first available
+Hikkari source is used. Other subscriptions and standalone profiles never enter
+the auto candidate set. Old global flags narrow to one verified source, or become
+manual when none is available. Provider titles and website metadata grant no access.
+`ProfileInfo.autoEligible` exposes this decision without revealing source credentials.
+
+`SwitchProfile` exits auto mode transactionally before selecting the requested
+profile, including a click on the previously selected profile. A failed application
+keeps the previous selection and auto flag. Turning auto off keeps the currently
+routed profile when the adapter can report it. In auto mode, the UI highlights
+`CarryingProfile`, rather than the stored manual selection.
 
 `SwitchProfile` passes an opaque profile ID to the adapter. It uses live
 selection when supported, otherwise restarts the engine. Routing policy

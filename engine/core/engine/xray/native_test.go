@@ -47,6 +47,38 @@ func TestNativeVPNConfig(t *testing.T) {
 	}
 }
 
+func TestNativeAutoScopeDoesNotMatchUnrelatedTransports(t *testing.T) {
+	ps, err := Decode("vless://11111111-2222-3333-4444-555555555555@127.0.0.1:443#Native")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps[0].Name = "ours"
+	other := ps[0]
+	other.Name = "foreign"
+	c := engine.Configuration{Profiles: append(ps, other), ActiveProfile: "foreign", AutoSelect: true, AutoProfiles: []string{"ours"}, Routing: routing.DefaultRoutingState()}
+	cfg, err := CompileVPN(c, map[string]int{"ours": 19001, "foreign": 19002})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eligible := 0
+	for _, raw := range cfg["outbounds"].([]interface{}) {
+		tag := raw.(object)["tag"].(string)
+		if strings.HasPrefix(tag, "transport-auto-") {
+			eligible++
+			if tag != "transport-auto-0" {
+				t.Fatalf("foreign transport is eligible: %s", tag)
+			}
+		}
+	}
+	if eligible != 1 {
+		t.Fatalf("wrong auto transport count: %d", eligible)
+	}
+	c.AutoProfiles = []string{}
+	if _, err := CompileVPN(c, map[string]int{"ours": 19001, "foreign": 19002}); err == nil {
+		t.Fatal("empty scope fell back to foreign profiles")
+	}
+}
+
 // This host uses the real production compiler and Xray binary. Only native
 // TUN creation is replaced with a local SOCKS ingress under the same tag.
 // No privileged commands, external engine or system DNS changes are allowed.

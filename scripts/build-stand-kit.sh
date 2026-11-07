@@ -36,11 +36,12 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 git clone -q --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/m1d1x/sing-box-lx "$WORK/sbx"
+bash "$REPO/scripts/apply-core-capacity-patch.sh" "$WORK/sbx"
 (
 	cd "$WORK/sbx"
 	git submodule update -q --init --depth 1 submodules/gvisor submodules/sing-tun submodules/utls submodules/wireguard-go
 	TAGS=$(make -s -f Makefile.lx lx-print-tags)
-	CORE_VERSION="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG#*-}"
+	CORE_VERSION="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG#*-}-capacity.1"
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags "$TAGS" \
 		-ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$CORE_VERSION' -checklinkname=0 -s -w -buildid=" \
 		-o "$WORK/sing-box" ./cmd/sing-box
@@ -51,7 +52,7 @@ git clone -q --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/m1d1x/sing
 		-o "$WORK/census-parse" ./cmd/census-parse
 )
 
-CORE_LABEL="sing-box-lx $SING_BOX_LX_TAG"
+CORE_LABEL="sing-box-lx $SING_BOX_LX_TAG-capacity.1"
 
 entry() {
 	local f="$1" sum size

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"NekkoVPN/core/capacity"
 	"NekkoVPN/core/engine/singbox"
 	"NekkoVPN/core/subscription"
 )
@@ -21,13 +22,14 @@ import (
 // Entry is what the census keeps of a profile. It is built field by field from
 // the ones named here: a new secret in the config cannot reach it by accident.
 type Entry struct {
-	Label     string `json:"label"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Protocol  string `json:"protocol"`
-	Transport string `json:"transport"`
-	Security  string `json:"security"`
-	SNI       string `json:"sni,omitempty"`
+	CapacityKey string `json:"capacityKey,omitempty"`
+	Label       string `json:"label"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Protocol    string `json:"protocol"`
+	Transport   string `json:"transport"`
+	Security    string `json:"security"`
+	SNI         string `json:"sni,omitempty"`
 	// Config is the whole outbound, secrets included, only with --with-config:
 	// ops hands it straight to the hub, which seals it for census proto.
 	Config map[string]interface{} `json:"config,omitempty"`
@@ -86,18 +88,25 @@ func run(ctx context.Context, in io.Reader, out io.Writer, withConfig bool) erro
 	if subURL == "" {
 		return errors.New("no subscription URL on stdin")
 	}
-	imported, err := subscription.Fetch(ctx, subURL, "", singbox.ParseURI)
+	imported, err := subscription.Fetch(ctx, subURL, "", func(link string) (struct {
+		Draft singbox.Draft
+		Key   string
+	}, error) { d, err := singbox.ParseURI(link); return struct {
+		Draft singbox.Draft
+		Key   string
+	}{d, capacity.Key(link)}, err })
 	if err != nil {
 		return errors.New(strings.ReplaceAll(err.Error(), subURL, "[subscription]"))
 	}
 	entries := make([]Entry, 0, len(imported.Items))
 	for _, d := range imported.Items {
-		e, err := entryOf(d)
+		e, err := entryOf(d.Draft)
 		if err != nil {
 			continue // AmneziaWG-style drafts without one address are not a TCP entry
 		}
 		if withConfig {
-			e.Config = d.Config
+			e.Config = d.Draft.Config
+			e.CapacityKey = d.Key
 		}
 		entries = append(entries, e)
 	}

@@ -10,6 +10,7 @@ import 'network_doctor_dialog.dart';
 import 'route_section.dart';
 import 'service_presets.dart';
 import 'update_banner.dart';
+import 'settings_traffic.dart';
 
 /// Fallback client version displayed in settings when [UpdateStatus.installed]
 /// is not populated yet.
@@ -212,6 +213,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
               ),
               const SizedBox(height: 14),
               _InfoRow(label: 'статус', value: statusLabel, loading: false),
+              if (status == 'ok' && state.isRunning) const SettingsTraffic(),
               const SizedBox(height: 8),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,

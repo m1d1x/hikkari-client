@@ -6,7 +6,9 @@
 package profile
 
 import (
+	"NekkoVPN/core/capacity"
 	"NekkoVPN/core/fsutil"
+	"NekkoVPN/core/subscription"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Kind tells SwitchProfile which sing-box section to write the active profile
@@ -109,16 +112,17 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 // File is the on-disk shape of profiles.json.
 type File struct {
 	Active string `json:"active"`
-	// Auto, when true, makes the config emit a `urltest` outbound that
-	// wraps every profile and continuously picks the fastest live one.
-	// route.final then targets the urltest instead of the manual selector.
-	Auto          bool           `json:"auto,omitempty"`
-	Profiles      []Profile      `json:"profiles"`
-	Subscriptions []Subscription `json:"subscriptions,omitempty"`
+	// Auto enables failover within AutoSubscriptionID, a verified Hikkari source.
+	Auto               bool           `json:"auto,omitempty"`
+	AutoSubscriptionID string         `json:"autoSubscriptionId,omitempty"`
+	Profiles           []Profile      `json:"profiles"`
+	Subscriptions      []Subscription `json:"subscriptions,omitempty"`
 }
 
 // Info is the lightweight projection the UI renders.
 type Info struct {
+	Capacity     *capacity.Metric  `json:"capacity,omitempty"`
+	AutoEligible bool              `json:"autoEligible"`
 	Name         string            `json:"name"`
 	Label        string            `json:"label"`
 	Active       bool              `json:"active"`
@@ -151,6 +155,19 @@ func (s *Store) Read() (*File, error) {
 	var pf File
 	if err := json.Unmarshal(raw, &pf); err != nil {
 		return nil, fmt.Errorf("profiles.json parse: %w", err)
+	}
+	// Migrate old global auto flags to one verified source. If none remains,
+	// restore manual mode rather than routing through an unrelated provider.
+	if pf.Auto {
+		source := pf.AutoSource()
+		if source == "" {
+			pf.Auto = false
+		} else {
+			pf.AutoSubscriptionID = source
+		}
+		if len(pf.AutoProfiles()) == 0 {
+			pf.Auto = false
+		}
 	}
 	return &pf, nil
 }
@@ -227,9 +244,17 @@ func (s *Store) List() ([]Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	eligible := map[string]bool{}
+	for _, source := range pf.Subscriptions {
+		if subscription.IsHikkariURL(source.URL) {
+			eligible[source.ID] = true
+		}
+	}
 	out := make([]Info, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
 		out = append(out, Info{
+			AutoEligible: p.Subscription != nil && eligible[p.Subscription.ID],
+			Capacity:     pf.CapacityFor(p, time.Now()),
 			Name:         p.Name,
 			Label:        displayLabel(p),
 			Active:       p.Name == pf.Active,

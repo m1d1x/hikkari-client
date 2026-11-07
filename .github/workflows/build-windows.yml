@@ -42,6 +42,7 @@ jobs:
       - name: Clone sing-box-lx
         run: |
           git clone --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/m1d1x/sing-box-lx sbx
+          bash scripts/apply-core-capacity-patch.sh sbx
           cd sbx
           git submodule update --init --depth 1 submodules/gvisor submodules/sing-tun submodules/utls submodules/wireguard-go
 
@@ -56,7 +57,7 @@ jobs:
           cd sbx
           TAGS=$(make -s -f Makefile.lx lx-print-tags)
           # 1.14.3-lx.21-hk.1: upstream, lx tag and our tag all in it.
-          VERSION="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG#*-}"
+          VERSION="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG#*-}-capacity.1"
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags "$TAGS" \
             -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$VERSION' -checklinkname=0 -s -w -buildid=" \
             -o ../sing-box.exe ./cmd/sing-box

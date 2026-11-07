@@ -4,6 +4,7 @@ import (
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/routing"
 	"fmt"
+	"slices"
 )
 
 const tunTag = "hikkari-tun"
@@ -14,6 +15,33 @@ func CompileVPN(c engine.Configuration, ports map[string]int) (object, error) {
 	cfg, err := Compile(c.Profiles, ports)
 	if err != nil {
 		return nil, err
+	}
+	// Give eligible outbounds their own prefix: Xray selectors are prefix based.
+	autoTags := []string{}
+	rename := map[string]string{}
+	for i, p := range c.Profiles {
+		if c.AutoProfiles == nil || slices.Contains(c.AutoProfiles, p.Name) {
+			old, next := fmt.Sprintf("transport-%d", i), fmt.Sprintf("transport-auto-%d", i)
+			rename[old] = next
+			autoTags = append(autoTags, next)
+		}
+	}
+	if c.AutoSelect {
+		if len(autoTags) == 0 {
+			return nil, fmt.Errorf("нет доступных серверов подписки hikkari для авто")
+		}
+		for _, raw := range cfg["outbounds"].([]interface{}) {
+			out := raw.(object)
+			if next := rename[out["tag"].(string)]; next != "" {
+				out["tag"] = next
+			}
+		}
+		for _, raw := range cfg["routing"].(object)["rules"].([]interface{}) {
+			rule := raw.(object)
+			if old, ok := rule["outboundTag"].(string); ok && rename[old] != "" {
+				rule["outboundTag"] = rename[old]
+			}
+		}
 	}
 	inbounds := cfg["inbounds"].([]interface{})
 	cfg["inbounds"] = append(inbounds, object{
@@ -40,10 +68,13 @@ func CompileVPN(c engine.Configuration, ports map[string]int) (object, error) {
 	if selected == "reject" && len(c.Profiles) > 0 {
 		selected = "transport-0"
 	}
+	if c.AutoSelect && rename[selected] != "" {
+		selected = rename[selected]
+	}
 	destination := object{"outboundTag": selected}
 	if c.AutoSelect && len(c.Profiles) > 0 {
-		cfg["observatory"] = object{"subjectSelector": []string{"transport-"}, "probeURL": "https://cp.cloudflare.com/generate_204", "probeInterval": "30s", "enableConcurrency": true}
-		nativeRoute["balancers"] = []interface{}{object{"tag": "auto", "selector": []string{"transport-"}, "strategy": object{"type": "leastPing"}, "fallbackTag": "reject"}}
+		cfg["observatory"] = object{"subjectSelector": []string{"transport-auto-"}, "probeURL": "https://cp.cloudflare.com/generate_204", "probeInterval": "30s", "enableConcurrency": true}
+		nativeRoute["balancers"] = []interface{}{object{"tag": "auto", "selector": []string{"transport-auto-"}, "strategy": object{"type": "leastPing"}, "fallbackTag": "reject"}}
 		destination = object{"balancerTag": "auto"}
 	}
 	add := func(match object, target object) {

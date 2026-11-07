@@ -235,6 +235,9 @@ class AppState extends ChangeNotifier {
   }
 
   String? get lastError => _lastError;
+  Future<TrafficCounters?> trafficCounters() async =>
+      _dryRun ? null : _core.trafficCounters();
+
   bool get isRunning => _health?.running ?? false;
 
   /// Explicitly clears the last operation error.
@@ -832,6 +835,7 @@ class AppState extends ChangeNotifier {
                   ),
         ];
         _profiles = _dryProfiles;
+        _autoMode = false;
         _uptime.putIfAbsent(name, () => _seedDryUptime());
       });
       return;
@@ -842,6 +846,7 @@ class AppState extends ChangeNotifier {
         _connectedSince = DateTime.now();
       } finally {
         _profiles = await _core.profiles();
+        _autoMode = await _core.autoMode();
         _health = await _core.health();
       }
     });
@@ -908,6 +913,7 @@ class AppState extends ChangeNotifier {
     await _withBusy(() async {
       await _core.setAutoMode(on);
       _autoMode = await _core.autoMode();
+      _profiles = await _core.profiles();
       _health = await _core.health();
     });
   }

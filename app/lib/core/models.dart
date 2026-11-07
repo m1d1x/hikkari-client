@@ -182,6 +182,8 @@ class ServerCleanliness {
 }
 
 class ProfileInfo {
+  final bool autoEligible;
+  final RelayCapacity? capacity;
   final String name;
   final String label;
   final bool active;
@@ -202,9 +204,15 @@ class ProfileInfo {
     required this.endpoint,
     required this.protocol,
     this.subscription,
+    this.autoEligible = false,
+    this.capacity,
   });
 
   factory ProfileInfo.fromJson(Map<String, dynamic> j) => ProfileInfo(
+    autoEligible: j['autoEligible'] as bool? ?? false,
+    capacity: j['capacity'] is Map<String, dynamic>
+        ? RelayCapacity.fromJson(j['capacity'] as Map<String, dynamic>)
+        : null,
     name: j['name'] as String? ?? '',
     label: j['label'] as String? ?? '',
     active: j['active'] as bool? ?? false,
@@ -598,4 +606,51 @@ class UpdateStatus {
     error: j['error'] as String? ?? '',
     replaced: j['replaced'] as bool? ?? false,
   );
+}
+
+class TrafficCounters {
+  final int uploadBytes;
+  final int downloadBytes;
+  const TrafficCounters({
+    required this.uploadBytes,
+    required this.downloadBytes,
+  });
+  factory TrafficCounters.fromJson(Map<String, dynamic> j) => TrafficCounters(
+    uploadBytes: (j['uploadBytes'] as num).toInt(),
+    downloadBytes: (j['downloadBytes'] as num).toInt(),
+  );
+}
+
+class RelayCapacity {
+  final double mbps;
+  final bool limited;
+  final int measuredAt;
+  final int expiresAt;
+  final int points;
+  const RelayCapacity({
+    required this.mbps,
+    required this.limited,
+    required this.measuredAt,
+    required this.expiresAt,
+    required this.points,
+  });
+  factory RelayCapacity.fromJson(Map<String, dynamic> j) => RelayCapacity(
+    mbps: (j['mbps'] as num?)?.toDouble() ?? 0,
+    limited: j['limited'] as bool? ?? true,
+    measuredAt: (j['measuredAt'] as num?)?.toInt() ?? 0,
+    expiresAt: (j['expiresAt'] as num?)?.toInt() ?? 0,
+    points: (j['points'] as num?)?.toInt() ?? 0,
+  );
+  bool get fresh =>
+      mbps.isFinite &&
+      mbps > 0 &&
+      points > 0 &&
+      expiresAt > DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  String get label => fresh
+      ? '↓ ${limited ? "≥ " : ""}${mbps.toStringAsFixed(mbps < 10 ? 1 : 0).replaceAll(".", ",")} Мбит/с'
+      : '↓ —';
+  String get description =>
+      'Замер наших пробников в РФ · $points точек · '
+      '${((DateTime.now().millisecondsSinceEpoch ~/ 1000 - measuredAt) / 60).clamp(0, 9999).floor()} мин назад'
+      '${limited ? " · нижняя граница: предел не установлен" : ""}. Скорость вашего подключения может отличаться.';
 }

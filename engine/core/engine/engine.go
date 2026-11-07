@@ -40,8 +40,12 @@ type Configuration struct {
 	Profiles      []profile.Profile
 	ActiveProfile string
 	AutoSelect    bool
-	Routing       routing.RoutingState
-	Host          HostNetwork
+	// AutoProfiles limits automatic selection to these opaque profile IDs.
+	// Nil preserves the adapter-level default; application configurations set it explicitly.
+	AutoProfiles   []string
+	AutoPreference []string
+	Routing        routing.RoutingState
+	Host           HostNetwork
 }
 
 // HostNetwork adapts the core's direct (bypass) path to the machine. The
@@ -196,4 +200,20 @@ func ValidateConfiguration(c Configuration, caps Capabilities) error {
 // known only to the adapter that originally wrote them.
 type LegacyServiceScopes interface {
 	ServiceScopes([]profile.Profile) map[string]string
+}
+
+// TrafficCounters are cumulative payload bytes processed by the engine,
+// including traffic routed direct by user rules. They are not link capacity.
+type TrafficCounters struct {
+	UploadBytes   uint64 `json:"uploadBytes"`
+	DownloadBytes uint64 `json:"downloadBytes"`
+}
+type TrafficObserver interface {
+	TrafficCounters() (TrafficCounters, error)
+}
+
+// AutoPreferenceUpdater receives advisory ranking separately from configuration,
+// so new hub measurements cannot restart a healthy tunnel.
+type AutoPreferenceUpdater interface {
+	SetAutoPreference(profileIDs []string, expiresAt int64) error
 }

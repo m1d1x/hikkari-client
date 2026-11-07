@@ -7,6 +7,8 @@ import 'sparkline.dart';
 
 class ProfileSummaryCard extends StatelessWidget {
   final String title;
+  final String? capacityLabel;
+  final String? capacityHint;
   final List<PingSample> samples;
   final bool selected;
   final VoidCallback? onTap;
@@ -43,6 +45,8 @@ class ProfileSummaryCard extends StatelessWidget {
   const ProfileSummaryCard({
     super.key,
     required this.title,
+    this.capacityLabel,
+    this.capacityHint,
     required this.samples,
     required this.selected,
     this.onTap,
@@ -116,6 +120,28 @@ class ProfileSummaryCard extends StatelessWidget {
                   samples: samples,
                   lineColor: lineColor,
                 ),
+                if (capacityLabel != null)
+                  Padding(
+                    padding: EdgeInsets.only(
+                      left: padding.resolve(TextDirection.ltr).left,
+                      right: 14,
+                      bottom: 7,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Tooltip(
+                        message: capacityHint ?? '',
+                        child: Text(
+                          capacityLabel!,
+                          style: TextStyle(
+                            color: t.textMuted,
+                            fontFamily: t.monoFamily,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 if (footer != null)
                   AnimatedSize(
                     duration: const Duration(milliseconds: 180),

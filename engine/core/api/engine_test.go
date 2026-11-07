@@ -148,6 +148,7 @@ func TestApplicationUsesOnlyEngineContract(t *testing.T) {
 	if err := c.AddRule("bypass", "domains", "example.test"); err != nil {
 		t.Fatal(err)
 	}
+	officialTestProfiles(t, c, first, second)
 	if err := c.SetAutoMode(true); err != nil {
 		t.Fatal(err)
 	}

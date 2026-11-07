@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"NekkoVPN/core/amnezia"
+	"NekkoVPN/core/capacity"
 )
 
 // fetchAmneziaConfig is replaced in tests: production goes to Amnezia's gateway.
@@ -26,14 +27,15 @@ var fetchAmneziaConfig = amnezia.Default.FetchConfig
 // Metadata is the provider-level information attached to all server links in
 // one HTTP subscription response.
 type Metadata struct {
-	Title                 string `json:"title,omitempty"`
-	UploadBytes           int64  `json:"uploadBytes,omitempty"`
-	DownloadBytes         int64  `json:"downloadBytes,omitempty"`
-	TotalBytes            int64  `json:"totalBytes,omitempty"`
-	ExpiresAt             int64  `json:"expiresAt,omitempty"`
-	UpdateIntervalSeconds int64  `json:"updateIntervalSeconds,omitempty"`
-	WebPageURL            string `json:"webPageUrl,omitempty"`
-	SupportURL            string `json:"supportUrl,omitempty"`
+	Capacity              []capacity.Metric `json:"capacity,omitempty"`
+	Title                 string            `json:"title,omitempty"`
+	UploadBytes           int64             `json:"uploadBytes,omitempty"`
+	DownloadBytes         int64             `json:"downloadBytes,omitempty"`
+	TotalBytes            int64             `json:"totalBytes,omitempty"`
+	ExpiresAt             int64             `json:"expiresAt,omitempty"`
+	UpdateIntervalSeconds int64             `json:"updateIntervalSeconds,omitempty"`
+	WebPageURL            string            `json:"webPageUrl,omitempty"`
+	SupportURL            string            `json:"supportUrl,omitempty"`
 }
 
 type Imported[T any] struct {
@@ -321,6 +323,12 @@ var Network func() string
 // internal/subscription, networkOf).
 const networkHeader = "Hikkari-Network"
 
+// IsHikkariURL identifies a source controlled by Hikkari, not response metadata.
+func IsHikkariURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.User == nil && ownHub(u)
+}
+
 // ownHub reports whether a subscription is served by our hub.
 func ownHub(u *url.URL) bool {
 	h := strings.ToLower(u.Hostname())
@@ -426,6 +434,9 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 	meta := metadataFromHeaders(resp.Header)
 	if meta == nil {
 		meta = &Metadata{}
+	}
+	if IsHikkariURL(subURL) {
+		meta.Capacity = capacity.Decode(resp.Header.Get(capacity.Header))
 	}
 	return Imported[T]{Items: items, Metadata: meta, SourceURL: subURL}, nil
 }

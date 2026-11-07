@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"NekkoVPN/core/capacity"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -11,15 +12,16 @@ import (
 // Subscription is authoritative source state. It is never projected to the UI:
 // URL usually contains a bearer credential. Servers carry only public metadata.
 type Subscription struct {
-	ID          string           `json:"id"`
-	Revision    uint64           `json:"revision,omitempty"`
-	URL         string           `json:"url"`
-	Info        SubscriptionInfo `json:"info"`
-	LastAttempt int64            `json:"lastAttempt,omitempty"`
-	LastSuccess int64            `json:"lastSuccess,omitempty"`
-	NextAttempt int64            `json:"nextAttempt,omitempty"`
-	Failures    int              `json:"failures,omitempty"`
-	Hidden      []ServerIdentity `json:"hidden,omitempty"`
+	Capacity    []capacity.Metric `json:"capacity,omitempty"`
+	ID          string            `json:"id"`
+	Revision    uint64            `json:"revision,omitempty"`
+	URL         string            `json:"url"`
+	Info        SubscriptionInfo  `json:"info"`
+	LastAttempt int64             `json:"lastAttempt,omitempty"`
+	LastSuccess int64             `json:"lastSuccess,omitempty"`
+	NextAttempt int64             `json:"nextAttempt,omitempty"`
+	Failures    int               `json:"failures,omitempty"`
+	Hidden      []ServerIdentity  `json:"hidden,omitempty"`
 }
 
 type ServerIdentity struct {

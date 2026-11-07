@@ -35,7 +35,7 @@ class _ProfileTileState extends State<ProfileTile> {
   Future<void> _switchProfile() async {
     final s = context.read<AppState>();
     if (s.busy) return;
-    if (widget.profile.active) return;
+    if (widget.profile.active && !s.autoMode) return;
     await s.switchProfile(widget.profile.name);
     if (!mounted) return;
     final error = context.read<AppState>().lastError;
@@ -66,6 +66,9 @@ class _ProfileTileState extends State<ProfileTile> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final s = context.watch<AppState>();
+    final selected = s.autoMode
+        ? s.autoProfileName == widget.profile.name
+        : widget.profile.active;
     final hist = s.uptime[widget.profile.name] ?? const <PingSample>[];
     final countryCode = s.countryCodeFor(widget.profile.name);
     final countryLoading = s.isCountryLoading(widget.profile.name);
@@ -78,6 +81,12 @@ class _ProfileTileState extends State<ProfileTile> {
           ServicePingSheet.show(context, widget.profile.label),
       child: ProfileSummaryCard(
         title: widget.profile.displayLabel,
+        capacityLabel: widget.profile.autoEligible
+            ? (widget.profile.capacity?.label ?? '↓ —')
+            : null,
+        capacityHint:
+            widget.profile.capacity?.description ??
+            'Пока нет свежего замера наших пробников',
         leading: (countryCode == null && !countryLoading)
             ? null
             : ProfileFlagBadge(
@@ -85,8 +94,8 @@ class _ProfileTileState extends State<ProfileTile> {
                 loading: countryLoading,
               ),
         samples: hist,
-        selected: widget.profile.active,
-        forceChecking: widget.profile.active && s.isWarmingUp,
+        selected: selected,
+        forceChecking: selected && s.isWarmingUp,
         onTap: s.busy ? null : _switchProfile,
         // ms и стрелочка — единая зона нажатия на разворачивание подробнос-
         // тей (а не только сама стрелочка, чтобы было проще попасть пальцем).
@@ -120,13 +129,7 @@ class _ProfileTileState extends State<ProfileTile> {
             pct < 0 ? '—' : '$pct%  ·  ${rtt < 0 ? "—" : "$rtt ms"}',
           ),
           if (widget.profile.shownEndpoint.isNotEmpty)
-            _kv(
-              context,
-              t,
-              'сервер',
-              widget.profile.shownEndpoint,
-              mono: true,
-            ),
+            _kv(context, t, 'сервер', widget.profile.shownEndpoint, mono: true),
           _kv(
             context,
             t,

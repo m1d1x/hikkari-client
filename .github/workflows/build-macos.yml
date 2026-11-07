@@ -80,11 +80,12 @@ jobs:
       - name: Build sing-box-lx hikkari (universal)
         run: |
           git clone --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/m1d1x/sing-box-lx sbx
+          bash scripts/apply-core-capacity-patch.sh sbx
           cd sbx
           git submodule update --init --depth 1 submodules/gvisor submodules/sing-tun submodules/utls submodules/wireguard-go
           TAGS=$(make -s -f Makefile.lx lx-print-tags)
           # 1.14.3-lx.21-hk.1: upstream, lx tag and our tag all in it.
-          VERSION_SB="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG#*-}"
+          VERSION_SB="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG#*-}-capacity.1"
           for arch in arm64 amd64; do
             GOOS=darwin GOARCH=$arch CGO_ENABLED=1 go build -trimpath -tags "$TAGS" \
               -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$VERSION_SB' -checklinkname=0 -s -w -buildid=" \

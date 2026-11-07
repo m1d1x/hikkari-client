@@ -111,7 +111,7 @@ class _ProfilesSheetState extends State<ProfilesSheet>
     // Inside each tier we sub-sort by recent rtt so the fastest survives
     // at the top.
     (int, int) qualityKey(ProfileInfo p) {
-      if (p.active) return (0, 0);
+      if (s.autoMode ? p.name == s.autoProfileName : p.active) return (0, 0);
       final hist = s.uptime[p.name] ?? const <PingSample>[];
       if (hist.length < 3) return (2, 0);
       final r = UptimeStats.recentAvgRtt(hist);
@@ -123,6 +123,10 @@ class _ProfilesSheetState extends State<ProfilesSheet>
       final ka = qualityKey(a);
       final kb = qualityKey(b);
       if (ka.$1 != kb.$1) return ka.$1.compareTo(kb.$1);
+      final ac = a.capacity, bc = b.capacity;
+      final am = ac?.fresh ?? false, bm = bc?.fresh ?? false;
+      if (am != bm) return am ? -1 : 1;
+      if (am && bm && ac!.mbps != bc!.mbps) return bc.mbps.compareTo(ac.mbps);
       return ka.$2.compareTo(kb.$2);
     });
     final List<Object> entries = [];
@@ -356,53 +360,67 @@ class _ProfilesSheetState extends State<ProfilesSheet>
     );
   }
 
-  // Tiny "auto" chip: when on, sing-box runs a urltest group and routes
-  // through the lowest-latency live profile, auto-flipping when something
-  // breaks. Engine reloads on toggle so changes take effect immediately.
+  // Auto mode owns routing until a manual profile selection disables it.
   Widget _autoChip(NekkoTokens t, AppState s) {
     final on = s.autoMode;
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(t.radius),
-      child: InkWell(
-        onTap: s.busy ? null : () => s.setAutoMode(!on),
+    final eligible = s.profiles.any((p) => p.autoEligible);
+    return Tooltip(
+      message: on
+          ? 'Выбор сервера вручную выключит авто'
+          : eligible
+          ? 'Автовыбор внутри подписки hikkari'
+          : 'Доступно с подпиской hikkari',
+      child: Material(
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(t.radius),
-        mouseCursor: SystemMouseCursors.click,
-        hoverColor: t.primary.withValues(alpha: 0.10),
-        // Включённое состояние = как активный профиль: тёмная primary-
-        // заливка, primary-аутлайн, иконка и текст в primary. Иначе по
-        // одной только смене иконки было не считать, что режим активен.
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          height: 34,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: on ? const Color(0xFF1A1014) : Colors.transparent,
-            border: Border.all(
-              color: on ? t.primary.withValues(alpha: 0.32) : t.borderStrong,
+        child: InkWell(
+          onTap: s.busy || (!on && !eligible) ? null : () => s.setAutoMode(!on),
+          borderRadius: BorderRadius.circular(t.radius),
+          mouseCursor: SystemMouseCursors.click,
+          hoverColor: t.primary.withValues(alpha: 0.10),
+          // Включённое состояние = как активный профиль: тёмная primary-
+          // заливка, primary-аутлайн, иконка и текст в primary. Иначе по
+          // одной только смене иконки было не считать, что режим активен.
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            height: 34,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: on ? const Color(0xFF1A1014) : Colors.transparent,
+              border: Border.all(
+                color: on ? t.primary.withValues(alpha: 0.32) : t.borderStrong,
+              ),
+              borderRadius: BorderRadius.circular(t.radius),
             ),
-            borderRadius: BorderRadius.circular(t.radius),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                on ? Icons.bolt : Icons.bolt_outlined,
-                size: 16,
-                color: on ? t.primary : t.text,
-              ),
-              const SizedBox(width: 1),
-              Text(
-                'auto',
-                style: TextStyle(
-                  color: on ? t.primary : t.text,
-                  fontSize: NekkoTokens.sizeLabel,
-                  fontWeight: FontWeight.w600,
-                  fontFamily: t.monoFamily,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  on ? Icons.bolt : Icons.bolt_outlined,
+                  size: 16,
+                  color: on
+                      ? t.primary
+                      : eligible
+                      ? t.text
+                      : t.textMuted,
                 ),
-              ),
-            ],
+                const SizedBox(width: 1),
+                Text(
+                  'авто',
+                  style: TextStyle(
+                    color: on
+                        ? t.primary
+                        : eligible
+                        ? t.text
+                        : t.textMuted,
+                    fontSize: NekkoTokens.sizeLabel,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: t.monoFamily,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

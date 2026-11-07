@@ -255,9 +255,10 @@ func DefaultConfig() map[string]interface{} {
 // upstream-package dependencies — the api layer marshals this on the way
 // down.
 type ProfileSpec struct {
-	Tag    string
-	Kind   string
-	Config map[string]interface{}
+	ExcludeFromAuto bool
+	Tag             string
+	Kind            string
+	Config          map[string]interface{}
 }
 
 const (
@@ -319,9 +320,13 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 	tunnelResolvers := make([]interface{}, 0)
 	outboundBlocks := make([]interface{}, 0, len(specs))
 	profileTags := make([]interface{}, 0, len(specs))
+	autoTags := make([]interface{}, 0, len(specs))
 	hasOutbound := false
 	for _, p := range specs {
 		profileTags = append(profileTags, p.Tag)
+		if !p.ExcludeFromAuto {
+			autoTags = append(autoTags, p.Tag)
+		}
 		if p.Kind == kindOutbound {
 			healOutboundConfig(p.Config)
 			if autoMode {
@@ -376,7 +381,10 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 		}
 		preserved = append(preserved, selector)
 		if autoMode {
-			preserved = append(preserved, autoOutbound(profileTags))
+			if len(autoTags) == 0 {
+				return fmt.Errorf("нет доступных серверов подписки hikkari для авто")
+			}
+			preserved = append(preserved, autoOutbound(autoTags))
 		}
 	}
 	cfg["outbounds"] = preserved

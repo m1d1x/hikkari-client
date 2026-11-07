@@ -109,7 +109,7 @@ func ensureSubscription(pf *profile.File, sourceURL string, drafts []profile.Pro
 
 // Runtime equality ignores presentation/provider metadata and list order.
 func sameProfileRuntime(a, b *profile.File) bool {
-	if a.Active != b.Active || a.Auto != b.Auto || len(a.Profiles) != len(b.Profiles) {
+	if a.Active != b.Active || a.Auto != b.Auto || !reflect.DeepEqual(a.AutoProfiles(), b.AutoProfiles()) || len(a.Profiles) != len(b.Profiles) {
 		return false
 	}
 	specs := func(pf *profile.File) map[string]interface{} {
@@ -144,7 +144,7 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 		return err
 	}
 	configuration := func(pf *profile.File) engine.Configuration {
-		return engine.Configuration{Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, Routing: policy}
+		return engine.Configuration{Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, AutoProfiles: pf.AutoProfiles(), AutoPreference: pf.AutoPreference(), Routing: policy}
 	}
 	next, old := configuration(after), configuration(before)
 	if err := engine.ValidateConfiguration(next, c.backend.Info().Capabilities); err != nil {
@@ -345,6 +345,10 @@ func (c *Core) applySubscriptionResponse(ctx context.Context, requested profile.
 	source.Revision++
 	if fetchErr == nil {
 		source.Info = subscriptionInfo(source.ID, imported.Metadata)
+		source.Capacity = nil
+		if subscription.IsHikkariURL(source.URL) && imported.Metadata != nil {
+			source.Capacity = imported.Metadata.Capacity
+		}
 		_, fetchErr = profile.ReconcileSubscription(after, source, subscriptionDrafts(imported.Items))
 	}
 	if fetchErr == nil {

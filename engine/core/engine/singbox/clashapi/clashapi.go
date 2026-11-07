@@ -13,6 +13,7 @@ package clashapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -179,7 +180,15 @@ func (c *Client) Connections() ([]Connection, error) {
 }
 
 func (c *Client) getJSON(path string, out interface{}) error {
-	resp, err := c.HTTP.Get(c.BaseURL + path)
+	return c.getJSONContext(context.Background(), path, out)
+}
+
+func (c *Client) getJSONContext(ctx context.Context, path string, out interface{}) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return err
 	}
@@ -221,4 +230,43 @@ func (c *Client) LookupIPv4(host string) ([]net.IP, error) {
 		return nil, fmt.Errorf("clashapi: no A record for %s (rcode %d)", host, out.Status)
 	}
 	return ips, nil
+}
+
+// Totals includes completed connections, unlike summing the open connection list.
+func (c *Client) Totals() (upload, download uint64, err error) {
+	var out struct {
+		Upload   uint64 `json:"uploadTotal"`
+		Download uint64 `json:"downloadTotal"`
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err = c.getJSONContext(ctx, "/connections", &out)
+	return out.Upload, out.Download, err
+}
+
+// SetPreference is optional on older cores. They keep their normal failover.
+func (c *Client) SetPreference(tags []string, expiresAt int64) (bool, error) {
+	raw, _ := json.Marshal(struct {
+		Outbounds []string `json:"outbounds"`
+		ExpiresAt int64    `json:"expiresAt"`
+	}{tags, expiresAt})
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+"/proxies/auto/hikkari-preference", bytes.NewReader(raw))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 || resp.StatusCode == 405 {
+		return false, nil
+	}
+	if resp.StatusCode != 204 {
+		return true, fmt.Errorf("local capacity advice: HTTP %d", resp.StatusCode)
+	}
+	return true, nil
 }

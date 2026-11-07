@@ -50,6 +50,9 @@ func (c *Core) watchRoute(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		current := c.resolveCarryingProfile()
+		if current != "" {
+			c.updateAutoPreference()
+		}
 		c.routedMu.Lock()
 		previous := c.routed
 		c.routed = current
@@ -95,4 +98,19 @@ func (a uptimeObserverAdapter) Received(profileID string) (map[string]uint64, er
 
 func (a uptimeObserverAdapter) OwnProbe(profileID string) (bool, int, bool) {
 	return a.LastDelay(profileID)
+}
+
+func (c *Core) updateAutoPreference() {
+	updater, ok := c.backend.(engine.AutoPreferenceUpdater)
+	if !ok {
+		return
+	}
+	snapshot, err := c.profiles.Read()
+	if err != nil || !snapshot.Auto {
+		return
+	}
+	// No external request: this only passes cached hub advice to the local core.
+	if err := updater.SetAutoPreference(snapshot.AutoPreference(), snapshot.AutoPreferenceExpires()); err != nil {
+		c.logger.Logf("[route] capacity advice not applied: %v", err)
+	}
 }

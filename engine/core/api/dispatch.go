@@ -28,7 +28,7 @@ var polledMethods = map[string]bool{
 	"Routing": true, "ServerCleanliness": true, "ListApps": true,
 	"RoutingPresets": true, "RoutingStatus": true,
 	"Profiles": true, "AutoMode": true, "CarryingProfile": true, "UptimeHistory": true, "ServiceUptimeHistory": true,
-	"UpdateStatus": true,
+	"UpdateStatus": true, "TrafficCounters": true,
 	// LogUI writes its own [ui] line; tracing it would print it twice.
 	"LogUI": true,
 }
@@ -310,6 +310,8 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return c.ExportProfileURI(a.Name)
 	case "ProfileCountries":
 		return c.ProfileCountries()
+	case "TrafficCounters":
+		return c.TrafficCounters()
 	case "AutoMode":
 		return c.AutoMode()
 	case "SetAutoMode":

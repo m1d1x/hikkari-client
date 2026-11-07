@@ -70,6 +70,7 @@ func TestDeleteLastProfileAndImportAgain(t *testing.T) {
 	if err := c.SwitchProfile(name); err != nil {
 		t.Fatal(err)
 	}
+	officialTestProfiles(t, c, name)
 	if err := c.SetAutoMode(true); err != nil {
 		t.Fatal(err)
 	}

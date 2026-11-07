@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"NekkoVPN/core/engine"
@@ -29,19 +30,22 @@ func profileTag(id string) string { return "p-" + id }
 var legacyTags = map[string]bool{"awg-ep": true, "proxy-out": true}
 
 type Backend struct {
-	config      *configfile.Store
-	process     vpn.Manager
-	control     *clashapi.Client
-	diagnostics *diag.Runner
-	log         engine.Logger
-	stoppedAt   time.Time
-	tester      func() bool // see SetTesterGate
-	active      string      // selector member the last Configure chose
-	check       configChecker
-	compiled    *compiled
-	rejected    map[string]error  // profile name -> why the running core was started without it
-	fingerprint string            // of what the last Configure wrote, before admit and the pins
-	pins        map[string]string // server host -> IPv4 the running core dials (see pinServers)
+	preferenceMu          sync.Mutex
+	preferenceSent        string
+	preferenceUnsupported bool
+	config                *configfile.Store
+	process               vpn.Manager
+	control               *clashapi.Client
+	diagnostics           *diag.Runner
+	log                   engine.Logger
+	stoppedAt             time.Time
+	tester                func() bool // see SetTesterGate
+	active                string      // selector member the last Configure chose
+	check                 configChecker
+	compiled              *compiled
+	rejected              map[string]error  // profile name -> why the running core was started without it
+	fingerprint           string            // of what the last Configure wrote, before admit and the pins
+	pins                  map[string]string // server host -> IPv4 the running core dials (see pinServers)
 }
 
 // selectActiveTimeout bounds the wait for a freshly started core's Clash API.
@@ -95,7 +99,7 @@ func (b *Backend) Configure(c engine.Configuration) error {
 		if b.tester != nil && b.tester() && wantsFlowRetry(n.Kind, cfg) {
 			cfg["flow_retry_delay"] = flowRetryDelay
 		}
-		specs = append(specs, configfile.ProfileSpec{Tag: tag, Kind: n.Kind, Config: cfg})
+		specs = append(specs, configfile.ProfileSpec{Tag: tag, Kind: n.Kind, Config: cfg, ExcludeFromAuto: c.AutoProfiles != nil && !slices.Contains(c.AutoProfiles, p.Name)})
 		labels[tag], names[tag] = p.Label, p.Name
 		if p.Name == c.ActiveProfile {
 			active = tag
@@ -123,6 +127,10 @@ func (b *Backend) Configure(c engine.Configuration) error {
 	return nil
 }
 func (b *Backend) Start(ctx context.Context) error {
+	b.preferenceMu.Lock()
+	b.preferenceSent = ""
+	b.preferenceUnsupported = false
+	b.preferenceMu.Unlock()
 	if !b.stoppedAt.IsZero() {
 		remaining := 1500*time.Millisecond - time.Since(b.stoppedAt)
 		if remaining > 0 {
@@ -429,3 +437,34 @@ func (b *Backend) ServiceScopes(profiles []profile.Profile) map[string]string {
 // processRouting: sing-box matches process_name and process_path_regex on
 // every desktop OS it finds the owning process on — Linux included.
 const processRouting = runtime.GOOS == "darwin" || runtime.GOOS == "windows" || runtime.GOOS == "linux"
+
+func (b *Backend) TrafficCounters() (engine.TrafficCounters, error) {
+	up, down, err := b.control.Totals()
+	return engine.TrafficCounters{UploadBytes: up, DownloadBytes: down}, err
+}
+
+func (b *Backend) SetAutoPreference(ids []string, expiresAt int64) error {
+	tags := make([]string, 0, len(ids))
+	for _, id := range ids {
+		tags = append(tags, profileTag(id))
+	}
+	if len(tags) == 0 {
+		expiresAt = 0
+	}
+	raw, _ := json.Marshal(struct {
+		Tags  []string
+		Until int64
+	}{tags, expiresAt})
+	b.preferenceMu.Lock()
+	defer b.preferenceMu.Unlock()
+	if b.preferenceUnsupported || b.preferenceSent == string(raw) {
+		return nil
+	}
+	supported, err := b.control.SetPreference(tags, expiresAt)
+	if err != nil {
+		return err
+	}
+	b.preferenceUnsupported = !supported
+	b.preferenceSent = string(raw)
+	return nil
+}

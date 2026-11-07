@@ -62,7 +62,7 @@ func (c *Core) ValidateConfiguration() error {
 		return err
 	}
 	return engine.ValidateConfiguration(engine.Configuration{
-		Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, Routing: effective,
+		Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, AutoProfiles: pf.AutoProfiles(), AutoPreference: pf.AutoPreference(), Routing: effective,
 	}, c.backend.Info().Capabilities)
 }
 
@@ -474,6 +474,27 @@ func (c *Core) DeleteProfile(name string) (resultErr error) {
 func (c *Core) SwitchProfile(name string) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
+	before, err := c.profiles.Read()
+	if err != nil {
+		return err
+	}
+	if before.Auto {
+		after, err := cloneProfiles(before)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, p := range after.Profiles {
+			if p.Name == name {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("профиль не найден: %s", name)
+		}
+		after.Active, after.Auto, after.AutoSubscriptionID = name, false, ""
+		return c.commitProfiles(c.subscriptionContext(), before, after)
+	}
 	if err := c.profiles.SetActive(name); err != nil {
 		return err
 	}
@@ -562,6 +583,10 @@ func (c *Core) AddProfileFromURI(uri string) (string, error) {
 			}
 			source := &after.Subscriptions[index]
 			source.Info = subscriptionInfo(source.ID, imported.Metadata)
+			source.Capacity = nil
+			if subscription.IsHikkariURL(source.URL) && imported.Metadata != nil {
+				source.Capacity = imported.Metadata.Capacity
+			}
 			source.LastAttempt = time.Now().Unix()
 			source.LastSuccess = source.LastAttempt
 			source.NextAttempt = source.LastSuccess + int64(subscriptionPollInterval/time.Second)
@@ -657,28 +682,38 @@ func (c *Core) rebuildConfig() error {
 	return c.configureRouting(effective)
 }
 
-// AutoMode reports whether auto-fastest selection is enabled.
+// AutoMode reports whether Hikkari subscription failover is enabled.
 func (c *Core) AutoMode() (bool, error) { return c.profiles.AutoMode() }
 
-// SetAutoMode flips auto-fastest mode and propagates: writes the flag to
-// profiles.json, rebuilds config.json (selector ± urltest, route.final
-// adjusts), restarts the engine if running so sing-box picks it up.
+// SetAutoMode grants the engine selection within one verified Hikkari source.
+// Runtime and persistence use the same rollback transaction as subscription sync.
 func (c *Core) SetAutoMode(on bool) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
 	if on && !c.backend.Info().Capabilities.AutoSelect {
 		return fmt.Errorf("движок не поддерживает автоматический выбор сервера")
 	}
-	if err := c.profiles.SetAutoMode(on); err != nil {
+	before, err := c.profiles.Read()
+	if err != nil {
 		return err
 	}
-	if err := c.rebuildConfig(); err != nil {
+	after, err := cloneProfiles(before)
+	if err != nil {
 		return err
 	}
-	if c.backend.IsRunning() {
-		return c.restartVPN("auto-mode-change")
+	after.Auto, after.AutoSubscriptionID = on, ""
+	if !on && before.Auto {
+		if routed := c.resolveCarryingProfile(); routed != "" {
+			after.Active = routed
+		}
 	}
-	return nil
+	if on {
+		after.AutoSubscriptionID = after.AutoSource()
+		if len(after.AutoProfiles()) == 0 {
+			return fmt.Errorf("авто доступно только для подписки hikkari; добавьте или обновите её")
+		}
+	}
+	return c.commitProfiles(c.subscriptionContext(), before, after)
 }
 
 // ============================================================

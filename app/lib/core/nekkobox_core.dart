@@ -92,6 +92,13 @@ abstract class NekkoboxCore {
   Future<void> validateConfiguration() =>
       _callAsync('ValidateConfiguration').then((_) {});
 
+  Future<TrafficCounters?> trafficCounters() async {
+    final data = await _callAsync('TrafficCounters');
+    return data == null
+        ? null
+        : TrafficCounters.fromJson(data as Map<String, dynamic>);
+  }
+
   // ----- updates (Windows; see contract.md) -----
 
   Future<UpdateStatus> updateStatus() async => UpdateStatus.fromJson(
