@@ -35,6 +35,7 @@ type Sample struct {
 type Source string
 
 const (
+	SrcProber Source = "prober" // UI projection only; never added to the local tracker.
 	SrcTunnel Source = "tunnel"
 	SrcTCP    Source = "tcp"
 	SrcICMP   Source = "icmp"

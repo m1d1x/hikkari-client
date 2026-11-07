@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ import (
 // the ones named here: a new secret in the config cannot reach it by accident.
 type Entry struct {
 	CapacityKey string `json:"capacityKey,omitempty"`
+	Node        string `json:"node,omitempty"`
 	Label       string `json:"label"`
 	Host        string `json:"host"`
 	Port        int    `json:"port"`
@@ -91,10 +93,15 @@ func run(ctx context.Context, in io.Reader, out io.Writer, withConfig bool) erro
 	imported, err := subscription.Fetch(ctx, subURL, "", func(link string) (struct {
 		Draft singbox.Draft
 		Key   string
-	}, error) { d, err := singbox.ParseURI(link); return struct {
-		Draft singbox.Draft
-		Key   string
-	}{d, capacity.Key(link)}, err })
+		Node  string
+	}, error) {
+		d, err := singbox.ParseURI(link)
+		return struct {
+			Draft singbox.Draft
+			Key   string
+			Node  string
+		}{d, capacity.Key(link), capacityNode(link)}, err
+	})
 	if err != nil {
 		return errors.New(strings.ReplaceAll(err.Error(), subURL, "[subscription]"))
 	}
@@ -107,6 +114,7 @@ func run(ctx context.Context, in io.Reader, out io.Writer, withConfig bool) erro
 		if withConfig {
 			e.Config = d.Draft.Config
 			e.CapacityKey = d.Key
+			e.Node = d.Node
 		}
 		entries = append(entries, e)
 	}
@@ -120,4 +128,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func capacityNode(link string) string {
+	parsed, err := url.Parse(link)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(parsed.Query().Get("hikkari-node"), "n:")
 }

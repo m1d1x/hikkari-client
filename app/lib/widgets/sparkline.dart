@@ -2,28 +2,30 @@ import 'package:flutter/material.dart';
 
 import '../core/models.dart';
 
-/// Apple-Health-style smooth area chart. Ported from the SVG path generator
-/// in `App.svelte#sparkPath`. Failed probes keep the last successful RTT on
-/// the time axis, so the sparkline keeps moving without noisy outage markers.
+/// Shared smooth line for latency and throughput. Missing and failed
+/// measurements leave gaps; a single real measurement is drawn as one dot.
 class Sparkline extends StatelessWidget {
   final List<PingSample> samples;
+  final List<double?>? values;
   final Color color;
   final int windowSize;
   final double padding;
 
   const Sparkline({
     super.key,
-    required this.samples,
+    this.samples = const [],
+    this.values,
     required this.color,
     this.windowSize = 60,
     this.padding = 3,
-  });
+  }) : assert(windowSize > 1);
 
   @override
   Widget build(BuildContext context) {
     return CustomPaint(
       painter: _SparklinePainter(
         samples: samples,
+        values: values,
         color: color,
         windowSize: windowSize,
         padding: padding,
@@ -35,12 +37,14 @@ class Sparkline extends StatelessWidget {
 
 class _SparklinePainter extends CustomPainter {
   final List<PingSample> samples;
+  final List<double?>? values;
   final Color color;
   final int windowSize;
   final double padding;
 
   _SparklinePainter({
     required this.samples,
+    required this.values,
     required this.color,
     required this.windowSize,
     required this.padding,
@@ -48,48 +52,53 @@ class _SparklinePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (samples.isEmpty) return;
-
-    final slice = samples.length > windowSize
-        ? samples.sublist(samples.length - windowSize)
-        : samples;
-    var hasRtt = false;
-    var lastRtt = 0;
-    final before = samples.length - slice.length;
-    for (var i = before - 1; i >= 0; i--) {
-      final s = samples[i];
-      if (s.ok) {
-        hasRtt = true;
-        lastRtt = s.rttMs;
-        break;
-      }
-    }
-    final rtts = slice.where((s) => s.ok).map((s) => s.rttMs).toList();
-    if (!hasRtt && rtts.isEmpty) return;
-    // Floor of 80ms so a fresh chart with no traffic doesn't look spiky.
-    var maxRtt = rtts.fold<int>(80, (a, rtt) => rtt > a ? rtt : a);
-    if (hasRtt && lastRtt > maxRtt) maxRtt = lastRtt;
-
+    final data =
+        values ?? samples.map((s) => s.ok ? s.rttMs.toDouble() : null).toList();
+    if (data.isEmpty || size.width < 2 || size.height <= padding * 2) return;
+    final slice = data.length > windowSize
+        ? data.sublist(data.length - windowSize)
+        : data;
+    final valid = slice
+        .whereType<double>()
+        .where((v) => v.isFinite && v > 0)
+        .toList();
+    if (valid.isEmpty) return;
+    final maxValue = valid.fold<double>(
+      values == null ? 80 : 1,
+      (a, b) => a > b ? a : b,
+    );
     const strokeInset = 1.0;
-    final chartW = size.width - strokeInset * 2;
-    final stepW = chartW / (windowSize - 1);
+    final stepW = (size.width - strokeInset * 2) / (windowSize - 1);
     final off = strokeInset + (windowSize - slice.length) * stepW;
     final usableH = size.height - padding * 2;
-
     final pts = <_Pt>[];
     for (var i = 0; i < slice.length; i++) {
-      final s = slice[i];
-      if (s.ok) {
-        hasRtt = true;
-        lastRtt = s.rttMs;
+      final value = slice[i];
+      if (value == null || !value.isFinite || value <= 0) {
+        _draw(canvas, pts);
+        pts.clear();
+        continue;
       }
-      if (!hasRtt) continue;
-      final x = off + i * stepW;
-      final y = (size.height - padding) - (lastRtt / maxRtt) * usableH;
-      pts.add(_Pt(x, y));
+      pts.add(
+        _Pt(
+          off + i * stepW,
+          (size.height - padding) - (value / maxValue) * usableH,
+        ),
+      );
     }
-    if (pts.isEmpty) return;
+    _draw(canvas, pts);
+  }
 
+  void _draw(Canvas canvas, List<_Pt> pts) {
+    if (pts.isEmpty) return;
+    if (pts.length == 1) {
+      canvas.drawCircle(
+        Offset(pts.first.x, pts.first.y),
+        1.4,
+        Paint()..color = color,
+      );
+      return;
+    }
     // Smooth path via quadratic midpoint curves — same trick as the
     // Svelte version (`Q p0 -> mid -> T p1`).
     final linePath = Path()..moveTo(pts.first.x, pts.first.y);
@@ -116,6 +125,7 @@ class _SparklinePainter extends CustomPainter {
   @override
   bool shouldRepaint(_SparklinePainter old) =>
       old.samples != samples ||
+      old.values != values ||
       old.color != color ||
       old.windowSize != windowSize;
 }

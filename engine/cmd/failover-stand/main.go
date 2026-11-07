@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"NekkoVPN/core/engine/singbox"
+	"NekkoVPN/core/engine/singbox/clashapi"
 	configfile "NekkoVPN/core/engine/singbox/config"
 )
 
@@ -1027,7 +1028,7 @@ func writeCert(dir string) {
 func main() {
 	core := flag.String("core", "", "path to the sing-box binary under test")
 	xray := flag.String("xray", "", "path to xray, for the XHTTP server (optional)")
-	only := flag.String("only", "", "comma-separated scenarios: blackhole,rst,udp,jitter,degrade,xhttp-blackhole,xhttp-rst,"+
+	only := flag.String("only", "", "comma-separated scenarios: capacity,blackhole,rst,udp,jitter,degrade,xhttp-blackhole,xhttp-rst,"+
 		"voice-blackhole,voice-rst,voice-udp,voice-all-down,voice-jitter")
 	out := flag.String("out", "", "write the results as JSON")
 	flag.Parse()
@@ -1079,6 +1080,7 @@ func main() {
 		log.Printf("  %+v", got[0])
 		results = append(results, got...)
 	}
+	each("capacity", vless, func(ctx context.Context, s *stand) result { return s.measureCapacityAdvice(ctx) })
 	each("blackhole", vless, func(ctx context.Context, s *stand) result {
 		return s.measureFailover(ctx, "blackhole, vless+tls", blackhole, 8*time.Second)
 	})
@@ -1127,4 +1129,38 @@ func main() {
 	if failed > 0 {
 		os.Exit(1)
 	}
+}
+
+func (s *stand) measureCapacityAdvice(ctx context.Context) result {
+	const title = "hub capacity advice, live core"
+	held := waitHeld(30 * time.Second)
+	if held == nil {
+		return result{title, false, "no initial selection"}
+	}
+	preferred := ""
+	for _, n := range s.nodes {
+		if n.name != *held {
+			preferred = n.name
+			break
+		}
+	}
+	live := openStream(ctx)
+	defer live.cancel()
+	time.Sleep(500 * time.Millisecond)
+	control := clashapi.New(clashAddr)
+	supported, err := control.SetPreference([]string{"p-" + preferred}, time.Now().Add(time.Minute).Unix())
+	if err != nil || !supported {
+		return result{title, false, fmt.Sprintf("advice API: %v supported=%v", err, supported)}
+	}
+	for until := time.Now().Add(5 * time.Second); time.Now().Before(until) && clashNow() != preferred; time.Sleep(100 * time.Millisecond) {
+	}
+	if clashNow() != preferred {
+		return result{title, false, "new connections ignored initial capacity preference"}
+	}
+	// Later hub rankings must not move a healthy selection or break the old stream.
+	_, err = control.SetPreference([]string{"p-" + *held}, time.Now().Add(time.Minute).Unix())
+	time.Sleep(500 * time.Millisecond)
+	alive, reason := live.alive()
+	return result{title, err == nil && clashNow() == preferred && alive,
+		fmt.Sprintf("initial %s -> preferred %s, later advice held=%v, established stream alive=%v %s", *held, preferred, clashNow() == preferred, alive, reason)}
 }

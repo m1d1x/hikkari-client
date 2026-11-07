@@ -81,12 +81,8 @@ class _ProfileTileState extends State<ProfileTile> {
           ServicePingSheet.show(context, widget.profile.label),
       child: ProfileSummaryCard(
         title: widget.profile.displayLabel,
-        capacityLabel: widget.profile.autoEligible
-            ? (widget.profile.capacity?.label ?? '↓ —')
-            : null,
-        capacityHint:
-            widget.profile.capacity?.description ??
-            'Пока нет свежего замера наших пробников',
+        capacity: widget.profile.capacity,
+        useProbeMetrics: widget.profile.autoEligible,
         leading: (countryCode == null && !countryLoading)
             ? null
             : ProfileFlagBadge(
@@ -122,12 +118,15 @@ class _ProfileTileState extends State<ProfileTile> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _kv(
-            context,
-            t,
-            'аптайм',
-            pct < 0 ? '—' : '$pct%  ·  ${rtt < 0 ? "—" : "$rtt ms"}',
-          ),
+          if (widget.profile.autoEligible)
+            _kv(context, t, 'замеры', 'пробники в РФ')
+          else
+            _kv(
+              context,
+              t,
+              'аптайм',
+              pct < 0 ? '—' : '$pct%  ·  ${rtt < 0 ? "—" : "$rtt ms"}',
+            ),
           if (widget.profile.shownEndpoint.isNotEmpty)
             _kv(context, t, 'сервер', widget.profile.shownEndpoint, mono: true),
           _kv(

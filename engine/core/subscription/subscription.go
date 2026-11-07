@@ -5,6 +5,7 @@ package subscription
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -378,7 +380,7 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 	// back what a released client's core would refuse. amneziawg-3.1: the
 	// profile format carries AmneziaWG 3.1's parameters (profile/legacy/awg3.go),
 	// which 1.0.52 refused and older clients dropped.
-	req.Header.Set("Hikkari-Features", "amneziawg, amneziawg-3.1")
+	req.Header.Set("Hikkari-Features", "amneziawg, amneziawg-3.1, relay-metrics-v2")
 	if Network != nil && ownHub(req.URL) {
 		if n := Network(); n != "" {
 			req.Header.Set(networkHeader, n)
@@ -418,6 +420,24 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 	if len(body) > maxSubscriptionBytes {
 		return Imported[T]{}, fmt.Errorf("подписка превышает 2 МиБ")
 	}
+	var relayMetrics []capacity.Metric
+	if IsHikkariURL(subURL) && strings.HasPrefix(resp.Header.Get("Content-Type"), "application/vnd.hikkari.subscription+json") {
+		source, _ := url.Parse(subURL)
+		body, err = openSubscription(path.Base(source.Path), body)
+		if err != nil {
+			return Imported[T]{}, fmt.Errorf("не удалось проверить зашифрованную подписку Hikkari")
+		}
+		var envelope struct {
+			Version int             `json:"version"`
+			Links   []string        `json:"links"`
+			Metrics json.RawMessage `json:"metrics"`
+		}
+		if json.Unmarshal(body, &envelope) != nil || envelope.Version != 2 || len(envelope.Links) > 256 {
+			return Imported[T]{}, fmt.Errorf("неверный формат подписки Hikkari")
+		}
+		body = []byte(strings.Join(envelope.Links, "\n"))
+		relayMetrics = capacity.Decode(string(envelope.Metrics))
+	}
 	// Do not follow URLs inside downloaded content: a subscription must
 	// contain server URIs, otherwise providers could form an infinite cycle.
 	imports, err := parseImportDetailedContext(ctx, string(body), false, deviceID, decode)
@@ -436,7 +456,10 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 		meta = &Metadata{}
 	}
 	if IsHikkariURL(subURL) {
-		meta.Capacity = capacity.Decode(resp.Header.Get(capacity.Header))
+		meta.Capacity = relayMetrics
+		if !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/vnd.hikkari.subscription+json") {
+			meta.Capacity = capacity.Decode(resp.Header.Get(capacity.Header))
+		}
 	}
 	return Imported[T]{Items: items, Metadata: meta, SourceURL: subURL}, nil
 }

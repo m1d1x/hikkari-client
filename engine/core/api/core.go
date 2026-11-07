@@ -35,6 +35,7 @@ import (
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/profile/legacy"
 	"NekkoVPN/core/routing"
+	"NekkoVPN/core/subscription"
 	"NekkoVPN/core/supportqueue"
 	"NekkoVPN/core/telemetry"
 	"NekkoVPN/core/testerlog"
@@ -553,6 +554,18 @@ func (c *Core) uptimeHosts() []uptime.HostEntry {
 	}
 	out := make([]uptime.HostEntry, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
+		if p.Subscription != nil && !c.presets.Snapshot().Tester {
+			owned := false
+			for _, source := range pf.Subscriptions {
+				if source.ID == p.Subscription.ID && subscription.IsHikkariURL(source.URL) {
+					owned = true
+					break
+				}
+			}
+			if owned {
+				continue
+			}
+		}
 		host, port := profile.PeerHostPort(p)
 		out = append(out, uptime.HostEntry{
 			Profile:   p.Name,

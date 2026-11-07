@@ -35,3 +35,19 @@ func TestTotalsHasShortDeadlineWhenCoreStalls(t *testing.T) {
 		t.Fatal("statistics blocked behind the normal core timeout")
 	}
 }
+
+func TestCapacityAdviceIsOptionalOnOlderCores(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNoContent} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "PUT" || r.URL.Path != "/proxies/auto/hikkari-preference" {
+				t.Errorf("unexpected capacity request: %s %s", r.Method, r.URL)
+			}
+			w.WriteHeader(status)
+		}))
+		supported, err := New(server.URL).SetPreference([]string{"p-owned"}, time.Now().Add(time.Minute).Unix())
+		server.Close()
+		if err != nil || supported != (status == http.StatusNoContent) {
+			t.Fatalf("HTTP %d: supported=%v err=%v", status, supported, err)
+		}
+	}
+}

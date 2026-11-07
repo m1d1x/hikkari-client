@@ -602,3 +602,13 @@ startup uses true: preset choices are in-memory and do not reconfigure a VPN.
 plus the selected service overlay. The complete wire format, deployment
 configuration, event contract and fallback semantics are documented in
 [ROUTING-PRESETS.md](../../../docs/ROUTING-PRESETS.md).
+
+### Profile observation source
+
+For profiles whose saved subscription URL belongs to Hikkari, `capacity` also
+carries `rttMs` and up to 48 half-hour `history` points `{ts,rttMs,mbps}` from
+operator-owned active RU probers. Zero/missing values are unavailable
+measurements, not fabricated successes. `measuredAt`/`expiresAt` bound validity.
+`UptimeHistory` projects these observations with `src: "prober"` for those
+profiles, even in tester mode; tester-local history remains in the diagnostic
+tracker. Third-party profile history is unchanged.
