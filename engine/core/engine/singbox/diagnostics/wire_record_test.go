@@ -2,8 +2,12 @@ package diag
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +71,14 @@ func TestRecordWireHellos(t *testing.T) {
 	if binary == "" || os.Getenv("HIKKARI_WIRE_RECORD") == "" {
 		t.Skip("HIKKARI_TEST_CORE and HIKKARI_WIRE_RECORD are not set")
 	}
+	ref := struct {
+		Core   string         `json:"core"`
+		Source string         `json:"source"`
+		Rows   []referenceRow `json:"rows"`
+	}{Core: coreRevision(context.Background(), binary), Source: "mirror:" + runtime.GOOS + "/" + runtime.GOARCH}
+	if ref.Core == "" {
+		t.Fatal("the core names no revision")
+	}
 	dir := filepath.Join("testdata", "hello")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -81,5 +93,38 @@ func TestRecordWireHellos(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, name+".bin"), msg, 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if fp, ok := referenceName(name); ok {
+			h, err := parseClientHello(msg)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			ref.Rows = append(ref.Rows, referenceRow{FP: fp, HK: h.hk(), JA4: h.ja4()})
+		}
 	}
+	sort.Slice(ref.Rows, func(i, j int) bool { return ref.Rows[i].FP < ref.Rows[j].FP })
+	out, _ := json.MarshalIndent(ref, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, "reference.json"), append(out, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("reference for core %s: %d rows; send it with: scripts/ops wire-ref-add --file %s",
+		ref.Core, len(ref.Rows), filepath.Join(dir, "reference.json"))
+}
+
+// referenceRow and the file around it are what the hub's
+// POST /api/v1/ops/wire/reference takes (hikkari-control internal/wirecheck).
+type referenceRow struct {
+	FP  string `json:"fp"`
+	HK  string `json:"hk"`
+	JA4 string `json:"ja4"`
+}
+
+// referenceName is the fingerprint a recording stands for in the hub's table:
+// a plain TLS hello per name, «go» for none. The other cases test the mirror,
+// not the core.
+func referenceName(name string) (string, bool) {
+	fp, ok := strings.CutPrefix(name, "tls-")
+	if !ok || strings.Contains(fp, "-") || fp == "randomized" {
+		return "", false
+	}
+	return fp, true
 }

@@ -1,0 +1,56 @@
+{
+  "core": "f350f1e6fea7",
+  "source": "mirror:darwin/arm64",
+  "rows": [
+    {
+      "fp": "360",
+      "hk": "h1a028e2f5c9a5dc21",
+      "ja4": "t12d2010s2_0bf03fa604e3_736b2a1ed4d3"
+    },
+    {
+      "fp": "android",
+      "hk": "h1b16c973fd5fb56a7",
+      "ja4": "t12d120700_d34a8e72043a_036209cd1ead"
+    },
+    {
+      "fp": "chrome",
+      "hk": "h1e431ec7444af069a",
+      "ja4": "t13d1516h2_8daaf6152771_d8a2da3f94cd"
+    },
+    {
+      "fp": "chrome_155",
+      "hk": "h1121e2b99d2744911",
+      "ja4": "t13d1517h2_8daaf6152771_cb7bf5808d99"
+    },
+    {
+      "fp": "edge",
+      "hk": "h186e519f72a3bd01a",
+      "ja4": "t13d1515h2_8daaf6152771_de4a06bb82e3"
+    },
+    {
+      "fp": "firefox",
+      "hk": "h1a7f29bb57cd8c350",
+      "ja4": "t13d1715h2_5b57614c22b0_a54fffd0eb61"
+    },
+    {
+      "fp": "go",
+      "hk": "h11c409d9ffa0e9507",
+      "ja4": "t13d131100_f57a46bbacb6_ab7e3b40a677"
+    },
+    {
+      "fp": "ios",
+      "hk": "h122df09a9d9832ecc",
+      "ja4": "t13d2613h2_2802a3db6c62_845d286b0d67"
+    },
+    {
+      "fp": "qq",
+      "hk": "h10afd45ddf31c8b3a",
+      "ja4": "t13d1516h2_8daaf6152771_e5627efa2ab1"
+    },
+    {
+      "fp": "safari",
+      "hk": "h1c4b9dfb6a023e46d",
+      "ja4": "t13d2013h2_a09f3c656075_7f0f34a4126d"
+    }
+  ]
+}

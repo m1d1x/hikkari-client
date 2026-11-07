@@ -28,7 +28,6 @@ var wireGolden = map[string]struct{ ja4, hk string }{
 	"tls-android":              {"t12d120700_d34a8e72043a_036209cd1ead", "h1b16c973fd5fb56a7"},
 	"tls-360":                  {"t12d2010s2_0bf03fa604e3_736b2a1ed4d3", "h1a028e2f5c9a5dc21"},
 	"tls-qq":                   {"t13d1516h2_8daaf6152771_e5627efa2ab1", "h10afd45ddf31c8b3a"},
-	"tls-randomized":           {"t13d1912h2_ba5ed832b514_8203606a0de5", "h181454723fadded91"},
 	"tls-go":                   {"t13d131100_f57a46bbacb6_ab7e3b40a677", "h11c409d9ffa0e9507"},
 	"reality-chrome":           {"t13d1516h2_8daaf6152771_d8a2da3f94cd", "h1e431ec7444af069a"},
 	"reality-chrome_155":       {"t13d1517h2_8daaf6152771_cb7bf5808d99", "h1121e2b99d2744911"},
@@ -50,7 +49,8 @@ func readHello(t *testing.T, name string) *clientHello {
 }
 
 func TestRecordedHellosKeepTheirFingerprints(t *testing.T) {
-	if len(wireGolden) != len(wireCases()) {
+	// randomized is drawn anew by every core process: no row stands for it.
+	if len(wireGolden) != len(wireCases())-1 {
 		t.Fatalf("%d golden rows for %d cases", len(wireGolden), len(wireCases()))
 	}
 	for name, want := range wireGolden {
@@ -74,11 +74,9 @@ func TestChromeMatchesItsPublicJA4(t *testing.T) {
 
 func TestHKIgnoresWhatChangesPerConnection(t *testing.T) {
 	a, b := readHello(t, "tls-chrome"), readHello(t, "tls-chrome-again")
-	if a.Len == b.Len {
-		t.Fatal("the two recordings are alike: the test proves nothing") // ECH GREASE length differs per connection
-	}
-	if order(a) == order(b) {
-		t.Fatal("Chrome did not shuffle: the test proves nothing")
+	// The ECH GREASE length and the extension order are drawn per connection.
+	if a.Len == b.Len && order(a) == order(b) {
+		t.Fatal("the two recordings are alike: the test proves nothing")
 	}
 	if a.hk() != b.hk() {
 		t.Fatal("hk follows the shuffle or the GREASE")
@@ -119,6 +117,7 @@ func TestHKSeesWhatJA4Misses(t *testing.T) {
 func TestEveryFingerprintSendsItsOwnHello(t *testing.T) {
 	seen := map[string]string{}
 	for _, name := range []string{"tls-chrome", "tls-chrome_155", "tls-firefox", "tls-edge", "tls-safari", "tls-ios", "tls-android", "tls-360", "tls-qq", "tls-randomized", "tls-go"} {
+		// randomized is in: whatever it drew, it must not be a named one.
 		hk := readHello(t, name).hk()
 		if other, dup := seen[hk]; dup {
 			t.Errorf("%s sends the hello of %s", name, other)
@@ -138,7 +137,7 @@ func TestNoFingerprintIsGosHello(t *testing.T) {
 }
 
 func TestFieldsNameNoSecret(t *testing.T) {
-	for name := range wireGolden {
+	for name := range wireCases() {
 		f := readHello(t, name).fields()
 		if strings.Contains(f, wireSNI) {
 			t.Fatalf("%s: the line carries the server name: %s", name, f)
