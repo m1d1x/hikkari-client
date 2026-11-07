@@ -165,7 +165,9 @@ func (r *Runner) prepareLoad(ifaces []physIface) ([]loadTarget, string) {
 func (r *Runner) runLoad(ctx context.Context, binary string, targets []loadTarget, iface physIface) {
 	plan := defaultLoadPlan
 	plan.Local = iface.IP
-	mobile := onMobile(iface.Name, loadSelfNet(iface.IP, r.stunList()))
+	network := loadSelfNet(iface.IP, r.stunList())
+	mobile := onMobile(iface.Name, network)
+	round := newWireRound(ctx, binary, network)
 	r.mu.Lock()
 	r.loadMobile = mobile
 	r.mu.Unlock()
@@ -176,6 +178,9 @@ func (r *Runner) runLoad(ctx context.Context, binary string, targets []loadTarge
 		if ctx.Err() != nil {
 			return
 		}
+		// The hello first: it needs no network and says what the counts below
+		// were measured with (wire.go).
+		r.log.Logf("[diag:wire] %s", wireLine(ctx, binary, t, round))
 		r.log.Logf("[diag:load] %s", loadLine(ctx, binary, t, iface.Name, plan))
 	}
 }

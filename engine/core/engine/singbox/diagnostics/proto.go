@@ -83,14 +83,17 @@ func parseProtoTargets(params json.RawMessage) ([]protoTarget, error) {
 	return req.Targets, nil
 }
 
-// protoConfig is the whole config of one try.
+// protoConfig is the whole config of one try. An empty iface leaves the
+// outbound unbound: the wire mirror dials loopback, which a card does not reach.
 func protoConfig(outbound map[string]interface{}, iface string, port int) ([]byte, error) {
 	out := make(map[string]interface{}, len(outbound)+2)
 	for k, v := range outbound {
 		out[k] = v
 	}
 	out["tag"] = "probe"
-	out["bind_interface"] = iface
+	if iface != "" {
+		out["bind_interface"] = iface
+	}
 	return json.Marshal(map[string]interface{}{
 		"log":       map[string]interface{}{"disabled": true},
 		"inbounds":  []interface{}{map[string]interface{}{"type": "mixed", "listen": "127.0.0.1", "listen_port": port}},

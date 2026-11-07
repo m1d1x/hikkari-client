@@ -458,7 +458,9 @@ func TestLoadNowAnswersAtOnceAndClosesTheRound(t *testing.T) {
 	for {
 		got := log.snapshot()
 		if len(got) > 0 && got[len(got)-1] == "[diag:load] on request: done" {
-			if len(got) != 3 || !strings.HasPrefix(got[0], "[diag:load] p-a proto=") || !strings.HasPrefix(got[1], "[diag:load] p-b proto=") {
+			// Each profile's hello, then its counts.
+			if len(got) != 5 || !strings.HasPrefix(got[0], "[diag:wire] p-a proto=") || !strings.HasPrefix(got[1], "[diag:load] p-a proto=") ||
+				!strings.HasPrefix(got[2], "[diag:wire] p-b proto=") || !strings.HasPrefix(got[3], "[diag:load] p-b proto=") {
 				t.Fatalf("%q", got)
 			}
 			if strings.Contains(strings.Join(got, "\n"), "SECRET") {
