@@ -79,7 +79,7 @@ func (f *File) AutoPreference() []string {
 	scores := []score{}
 	for _, p := range f.Profiles {
 		if eligible[p.Name] {
-			if m := f.CapacityFor(p, time.Now()); m != nil {
+			if m := f.CapacityFor(p, time.Now()); m != nil && m.Mbps > 0 {
 				scores = append(scores, score{p.Name, m.Mbps})
 			}
 		}
@@ -94,7 +94,14 @@ func (f *File) AutoPreference() []string {
 
 func (f *File) AutoPreferenceExpires() int64 {
 	var earliest int64
+	eligible := map[string]bool{}
+	for _, id := range f.AutoProfiles() {
+		eligible[id] = true
+	}
 	for _, p := range f.Profiles {
+		if !eligible[p.Name] {
+			continue
+		}
 		if m := f.CapacityFor(p, time.Now()); m != nil {
 			if earliest == 0 || m.ExpiresAt < earliest {
 				earliest = m.ExpiresAt

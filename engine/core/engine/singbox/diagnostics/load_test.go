@@ -151,6 +151,18 @@ func TestLoadLineNamesTheKnobs(t *testing.T) {
 	if !strings.HasPrefix(line, "p-a proto=vless-reality fp=firefox sni=www.samsung.com port=8443 ") {
 		t.Fatal(line)
 	}
+	ob["tls"].(map[string]interface{})["reality"].(map[string]interface{})["key_share"] = "classical"
+	if got := loadKnobs(ob); !strings.HasSuffix(got, " alpn=h2/http/1.1 key_share=classical") {
+		t.Fatalf("reality key_share: %q", got)
+	}
+	xhttp := map[string]interface{}{
+		"type": "vless", "server_port": float64(443),
+		"tls":       map[string]interface{}{"enabled": true, "server_name": "x.example", "utls": map[string]interface{}{"enabled": true, "fingerprint": "chrome"}},
+		"transport": map[string]interface{}{"type": "xhttp", "host": "x.example", "path": "/p", "mode": "stream-up"},
+	}
+	if got, want := loadKnobs(xhttp), " fp=chrome sni=x.example port=443 flow=none mode=stream-up"; got != want {
+		t.Fatalf("xhttp knobs %q, want %q", got, want)
+	}
 	if got := loadKnobs(map[string]interface{}{"type": "hysteria2", "tls": map[string]interface{}{"server_name": "a b"}}); got != "" {
 		t.Fatalf("hysteria with a bad name: %q", got)
 	}
@@ -327,6 +339,18 @@ func TestLoadOnAMobileNetworkAsksASmallBurstAndNotOften(t *testing.T) {
 	if got := r.loadNow("/nonexistent/sing-box", ifaces); !strings.HasPrefix(got[0], "started") {
 		t.Fatalf("after the limit: %v", got)
 	}
+	// The round reads loadSelfNet, which the cleanup puts back: let it end first.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		r.mu.Lock()
+		busy := r.loadBusy
+		r.mu.Unlock()
+		if !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the third round did not end")
+		}
+	}
 }
 
 func TestLoadRunsOnlyWhenAllowed(t *testing.T) {
@@ -458,9 +482,8 @@ func TestLoadNowAnswersAtOnceAndClosesTheRound(t *testing.T) {
 	for {
 		got := log.snapshot()
 		if len(got) > 0 && got[len(got)-1] == "[diag:load] on request: done" {
-			// Each profile's hello, then its counts.
-			if len(got) != 5 || !strings.HasPrefix(got[0], "[diag:wire] p-a proto=") || !strings.HasPrefix(got[1], "[diag:load] p-a proto=") ||
-				!strings.HasPrefix(got[2], "[diag:wire] p-b proto=") || !strings.HasPrefix(got[3], "[diag:load] p-b proto=") {
+			// One line a profile: the hello is the release test's, not the round's.
+			if len(got) != 3 || !strings.HasPrefix(got[0], "[diag:load] p-a proto=") || !strings.HasPrefix(got[1], "[diag:load] p-b proto=") {
 				t.Fatalf("%q", got)
 			}
 			if strings.Contains(strings.Join(got, "\n"), "SECRET") {

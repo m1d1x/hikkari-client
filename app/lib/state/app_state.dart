@@ -18,7 +18,7 @@ final bool xrayAvailable = !Platform.isWindows;
 
 /// Debug routing uses the real Go domain/queue with an in-memory store and
 /// preview executor. It never configures or restarts a native engine.
-const bool kRoutingDryRun = kDebugMode;
+const bool kRoutingDryRun = kDebugMode && !kLiveEngine;
 
 /// Dev-only kill switch for everything else that would poke the real engine:
 /// VPN on/off, profile switch/rename/delete, auto-mode, and profile import.
@@ -26,7 +26,10 @@ const bool kRoutingDryRun = kDebugMode;
 /// still feels real) and never call into [NekkoboxCore] — no real VPN
 /// connect/disconnect flapping while iterating on the frontend. Flip back to
 /// false to wire to backend.
-const bool kEngineDryRun = kDebugMode;
+// Live debug runs retain hot reload while using real profiles and the engine.
+// flutter run -d macos --dart-define=HIKKARI_LIVE=true
+const bool kLiveEngine = bool.fromEnvironment('HIKKARI_LIVE');
+const bool kEngineDryRun = kDebugMode && !kLiveEngine;
 
 /// What the update banner shows in dry-run, to work on its design without a
 /// staged release: `flutter run --dart-define=DRY_UPDATE=mandatory` (staged;
@@ -328,7 +331,25 @@ class AppState extends ChangeNotifier {
         _health = _dryHealth;
         _cleanliness = _dryCleanliness;
         _update = _dryUpdate;
-        _uptime = {'dry-demo': _seedDryUptime()};
+        _profileCountries = const {
+          'dry-demo': 'nl',
+          'dry-frankfurt': 'de',
+          'dry-paris': 'fr',
+        };
+        _uptime = {
+          for (final p in _dryProfiles)
+            p.name:
+                p.capacity?.history
+                    .map(
+                      (point) => PingSample(
+                        ts: point.ts,
+                        ok: point.rttMs > 0,
+                        rttMs: point.rttMs,
+                      ),
+                    )
+                    .toList() ??
+                const [],
+        };
         _autoMode = false;
       } else {
         _profiles = await _core.profiles();
@@ -682,13 +703,63 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<ProfileInfo> _dryProfiles = const [
+  // Preview fixtures use the current production widgets and their exact metric
+  // model. Every profile is visibly labelled demo; no network measurements run.
+  static RelayCapacity _demoMetrics(int rtt, double mbps, double phase) {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final bucket = now ~/ 1800 * 1800;
+    return RelayCapacity(
+      mbps: mbps,
+      limited: false,
+      rttMs: rtt,
+      points: 3,
+      measuredAt: now,
+      expiresAt: now + 5400,
+      history: List.generate(
+        48,
+        (i) => RelayMetricPoint(
+          ts: bucket - (47 - i) * 1800,
+          rttMs: i == 47
+              ? rtt
+              : (rtt + 12 * math.sin(i / 4 + phase) + 4 * math.sin(i * 1.7))
+                    .round(),
+          mbps: i == 47
+              ? mbps
+              : mbps *
+                    (0.85 +
+                        0.1 * math.sin(i / 5 + phase) +
+                        0.04 * math.sin(i * 1.1)),
+        ),
+      ),
+    );
+  }
+
+  List<ProfileInfo> _dryProfiles = [
     ProfileInfo(
       name: 'dry-demo',
-      label: 'Демо-профиль (dry-run)',
+      label: 'амстердам · демо',
       active: true,
       endpoint: 'demo.example.com:443',
       protocol: 'vless',
+      autoEligible: true,
+      capacity: _demoMetrics(87, 128, 0),
+    ),
+    ProfileInfo(
+      name: 'dry-frankfurt',
+      label: 'франкфурт · демо',
+      active: false,
+      endpoint: 'demo.example.com:443',
+      protocol: 'vless',
+      autoEligible: true,
+      capacity: _demoMetrics(112, 74, 1.8),
+    ),
+    const ProfileInfo(
+      name: 'dry-paris',
+      label: 'париж · демо',
+      active: false,
+      endpoint: 'demo.example.com:443',
+      protocol: 'vless',
+      autoEligible: true,
     ),
   ];
 
@@ -825,6 +896,9 @@ class AppState extends ChangeNotifier {
                     active: true,
                     endpoint: p.endpoint,
                     protocol: p.protocol,
+                    autoEligible: p.autoEligible,
+                    capacity: p.capacity,
+                    subscription: p.subscription,
                   )
                 : ProfileInfo(
                     name: p.name,
@@ -832,6 +906,9 @@ class AppState extends ChangeNotifier {
                     active: false,
                     endpoint: p.endpoint,
                     protocol: p.protocol,
+                    autoEligible: p.autoEligible,
+                    capacity: p.capacity,
+                    subscription: p.subscription,
                   ),
         ];
         _profiles = _dryProfiles;
@@ -866,6 +943,9 @@ class AppState extends ChangeNotifier {
                     active: p.active,
                     endpoint: p.endpoint,
                     protocol: p.protocol,
+                    autoEligible: p.autoEligible,
+                    capacity: p.capacity,
+                    subscription: p.subscription,
                   )
                 : p,
         ];

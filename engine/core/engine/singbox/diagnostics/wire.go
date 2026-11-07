@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -22,44 +21,30 @@ import (
 // is Chrome 133, a TLS profile with no fingerprint sends Go's own hello, an ALPN
 // of exactly h3 moves XHTTP off uTLS altogether
 // (hikkari-client plans/2026-11-07-knob-truth-wire-diagnostics.md, 2.1). Only the
-// bytes say what left, so the load round takes them from a mirror: the profile's
-// outbound as it is, with the server swapped for a listener on loopback that
-// reads the ClientHello and hangs up. No network, no capture rights, nothing the
-// censor sees; the handshake is never finished and needs not be.
+// bytes say what left, so a mirror takes them: the outbound as it is, with the
+// server swapped for a listener on loopback that reads the ClientHello and hangs
+// up. No network, no capture rights; the handshake is never finished and needs
+// not be.
 //
-// The line carries what the hello shows and nothing that varies per connection
-// or could name the user: no random, no session id (Reality hides its auth there),
-// no key bytes, no SNI value (the knobs carry the configured one).
+// The hello is set by the core's revision and the config alone: one binary with
+// one config sends the same hello on any machine. So the mirror runs in the
+// release's test (TestReleaseCoreSendsTheRecordedHellos), not on testers, who
+// only report their knobs; the hub checks those against what it handed out. The
+// parser and the hashes here are the ones a receiver on the node will use (plan
+// W5), and the browser reference (W4).
+//
+// hk keeps nothing that varies per connection or could name the user: no random,
+// no session id (Reality hides its auth there), no key bytes, no SNI value.
 const (
 	wireWait     = 5 * time.Second
 	wireMaxHello = 1 << 16 // a handshake message length is 24 bits; nothing real comes near 64 KB
 )
 
 // hkVersion names the canonical form hk hashes. Bump it with any change to
-// helloHK, or the hub's reference table stops matching for no reason.
+// hk, or the recorded rows stop matching for no reason.
 const hkVersion = "h1"
 
-// wireRound is what every line of a round shares: the core's revision, by
-// which the hub picks the hellos this core must send, and the network the
-// subscription was asked from, by which it picks the knobs it handed out.
-type wireRound struct {
-	Core string // 12 hex of the core's revision, "" when the core does not say
-	Net  string // «AS12389», "" when unknown
-}
-
-func (w wireRound) fields() string {
-	var b strings.Builder
-	if w.Core != "" {
-		b.WriteString(" core=" + w.Core)
-	}
-	if w.Net != "" {
-		b.WriteString(" net=" + w.Net)
-	}
-	return b.String()
-}
-
 var reCoreRevision = regexp.MustCompile(`(?m)^Revision: ([0-9a-f]{12})[0-9a-f]*\s*$`)
-var reNetwork = regexp.MustCompile(`^AS[1-9][0-9]{0,9}$`)
 
 // coreRevision asks the core binary for its revision: «sing-box version»
 // prints «Revision: <commit>». The version line can read «unknown» on a build
@@ -77,62 +62,6 @@ func coreRevision(ctx context.Context, binary string) string {
 		return string(m[1])
 	}
 	return ""
-}
-
-func newWireRound(ctx context.Context, binary, network string) wireRound {
-	w := wireRound{Core: coreRevision(ctx, binary)}
-	if reNetwork.MatchString(network) {
-		w.Net = network
-	}
-	return w
-}
-
-// wireLine is the profile's [diag:wire] line: its knobs as the config holds
-// them, the round's core and network, then the hello the core sent.
-func wireLine(ctx context.Context, binary string, t loadTarget, round wireRound) string {
-	head := t.Tag + " proto=" + t.Proto + loadKnobs(t.Outbound) + round.fields()
-	if why := wireSkip(t.Outbound); why != "" {
-		return head + " wire=skip why=" + why
-	}
-	msg, records, err := mirrorHello(ctx, binary, t.Outbound)
-	if err != nil {
-		// err is ours and names no profile field; the core's own output is dropped.
-		return fmt.Sprintf("%s wire_error=%q", head, err.Error())
-	}
-	h, err := parseClientHello(msg)
-	if err != nil {
-		return fmt.Sprintf("%s wire_error=%q", head, err.Error())
-	}
-	return head + " " + h.fields() + " records=" + strconv.Itoa(records)
-}
-
-// wireSkip says why a profile has no ClientHello over TCP to take, or "".
-// QUIC carries its hello in an encrypted Initial (plan W6).
-func wireSkip(ob map[string]interface{}) string {
-	kind, _ := ob["type"].(string)
-	if udpOutbounds[kind] {
-		return "udp"
-	}
-	tlsCfg, _ := ob["tls"].(map[string]interface{})
-	if on, _ := tlsCfg["enabled"].(bool); !on {
-		return "no_tls"
-	}
-	if tr, _ := ob["transport"].(map[string]interface{}); tr != nil {
-		if typ, _ := tr["type"].(string); typ == "xhttp" && onlyH3(tlsCfg["alpn"]) {
-			return "quic"
-		}
-	}
-	return ""
-}
-
-// onlyH3 is XHTTP's rule for HTTP/3: a tls.alpn of exactly ["h3"].
-func onlyH3(v interface{}) bool {
-	list, _ := v.([]interface{})
-	if len(list) != 1 {
-		return false
-	}
-	s, _ := list[0].(string)
-	return s == "h3"
 }
 
 // mirrorHello runs the outbound in a core of its own pointed at a loopback

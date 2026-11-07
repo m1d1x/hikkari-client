@@ -621,18 +621,38 @@ class TrafficCounters {
   );
 }
 
+class RelayMetricPoint {
+  final int ts;
+  final int rttMs;
+  final double mbps;
+  const RelayMetricPoint({
+    required this.ts,
+    required this.rttMs,
+    required this.mbps,
+  });
+  factory RelayMetricPoint.fromJson(Map<String, dynamic> j) => RelayMetricPoint(
+    ts: (j['ts'] as num?)?.toInt() ?? 0,
+    rttMs: (j['rttMs'] as num?)?.toInt() ?? 0,
+    mbps: (j['mbps'] as num?)?.toDouble() ?? 0,
+  );
+}
+
 class RelayCapacity {
   final double mbps;
   final bool limited;
   final int measuredAt;
   final int expiresAt;
   final int points;
+  final int rttMs;
+  final List<RelayMetricPoint> history;
   const RelayCapacity({
     required this.mbps,
     required this.limited,
     required this.measuredAt,
     required this.expiresAt,
     required this.points,
+    this.rttMs = 0,
+    this.history = const [],
   });
   factory RelayCapacity.fromJson(Map<String, dynamic> j) => RelayCapacity(
     mbps: (j['mbps'] as num?)?.toDouble() ?? 0,
@@ -640,17 +660,18 @@ class RelayCapacity {
     measuredAt: (j['measuredAt'] as num?)?.toInt() ?? 0,
     expiresAt: (j['expiresAt'] as num?)?.toInt() ?? 0,
     points: (j['points'] as num?)?.toInt() ?? 0,
+    rttMs: (j['rttMs'] as num?)?.toInt() ?? 0,
+    history: (j['history'] as List<dynamic>? ?? const [])
+        .map((p) => RelayMetricPoint.fromJson(p as Map<String, dynamic>))
+        .toList(),
   );
   bool get fresh =>
       mbps.isFinite &&
-      mbps > 0 &&
+      mbps >= 0 &&
       points > 0 &&
+      measuredAt <= DateTime.now().millisecondsSinceEpoch ~/ 1000 + 120 &&
       expiresAt > DateTime.now().millisecondsSinceEpoch ~/ 1000;
-  String get label => fresh
-      ? '↓ ${limited ? "≥ " : ""}${mbps.toStringAsFixed(mbps < 10 ? 1 : 0).replaceAll(".", ",")} Мбит/с'
-      : '↓ —';
-  String get description =>
-      'Замер наших пробников в РФ · $points точек · '
-      '${((DateTime.now().millisecondsSinceEpoch ~/ 1000 - measuredAt) / 60).clamp(0, 9999).floor()} мин назад'
-      '${limited ? " · нижняя граница: предел не установлен" : ""}. Скорость вашего подключения может отличаться.';
+  String get label => fresh && mbps > 0
+      ? '${limited ? "≥ " : ""}${mbps.toStringAsFixed(mbps < 10 ? 1 : 0).replaceAll(".", ",")} mbps'
+      : '—';
 }

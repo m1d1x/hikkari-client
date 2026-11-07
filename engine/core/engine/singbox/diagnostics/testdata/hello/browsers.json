@@ -1,0 +1,86 @@
+[
+  {
+    "file": "browser-chrome-157-headed",
+    "browser": "Google Chrome for Testing 157.0.8103.38 (Stable), headed window, --disable-field-trial-config, macOS 26 arm64, 2026-11-07",
+    "fp": "chrome_155",
+    "stable": true,
+    "known_stale": []
+  },
+  {
+    "file": "browser-chrome-157-noft-a",
+    "browser": "Google Chrome for Testing 157.0.8103.38 (Stable), --headless=new --disable-field-trial-config, 2026-11-07",
+    "fp": "chrome_155",
+    "stable": true,
+    "known_stale": []
+  },
+  {
+    "file": "browser-chrome-157-noft-b",
+    "browser": "Google Chrome for Testing 157.0.8103.38 (Stable), --headless=new --disable-field-trial-config, second run, 2026-11-07",
+    "fp": "chrome_155",
+    "stable": true,
+    "known_stale": []
+  },
+  {
+    "file": "browser-chrome-157-a",
+    "browser": "Chrome for Testing 157 with its field-trial testing config: PqcBandwidthExperiment arm Enabled_0 adds server_padding (0x12e0), which branded Chrome sends only to users Finch puts in that arm",
+    "fp": "chrome_155",
+    "stable": false
+  },
+  {
+    "file": "browser-chrome-157-b",
+    "browser": "Chrome for Testing 157 with its field-trial testing config (PqcBandwidthExperiment Enabled_0), second run",
+    "fp": "chrome_155",
+    "stable": false
+  },
+  {
+    "file": "browser-firefox-159-sni",
+    "browser": "Firefox 159.0.1 (release), --headless, server name wire-mirror.example as the core's recordings, 2026-11-07",
+    "fp": "firefox",
+    "stable": true,
+    "known_stale": [
+      "groups",
+      "extensions",
+      "ciphers"
+    ]
+  },
+  {
+    "file": "browser-firefox-159-a",
+    "browser": "Firefox 159.0.1 (release), --headless, macOS 26 arm64, 2026-11-07",
+    "fp": "firefox",
+    "stable": true,
+    "known_stale": [
+      "groups",
+      "extensions",
+      "ciphers"
+    ]
+  },
+  {
+    "file": "browser-firefox-159-b",
+    "browser": "Firefox 159.0.1 (release), --headless, second run, 2026-11-07",
+    "fp": "firefox",
+    "stable": true,
+    "known_stale": [
+      "groups",
+      "extensions",
+      "ciphers"
+    ]
+  },
+  {
+    "file": "browser-chrome-157-shell",
+    "browser": "chrome-headless-shell 157.0.8103.38: not what users run, its hello is Chromium 152's",
+    "fp": "chrome_155",
+    "stable": false
+  },
+  {
+    "file": "browser-chromium-152-pane-a",
+    "browser": "Chromium 152.0.7977.167, Claude desktop browser pane (Electron), macOS 26, 2026-11-07",
+    "fp": "chrome_155",
+    "stable": false
+  },
+  {
+    "file": "browser-chromium-152-pane-b",
+    "browser": "Chromium 152.0.7977.167, Claude desktop browser pane (Electron), macOS 26, 2026-11-07, second connection",
+    "fp": "chrome_155",
+    "stable": false
+  }
+]

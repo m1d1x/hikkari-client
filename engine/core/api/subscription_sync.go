@@ -19,6 +19,7 @@ import (
 
 const subscriptionPollInterval = 5 * time.Minute
 const subscriptionMinimumInterval = 2 * time.Minute
+const subscriptionOfflineInterval = 30 * time.Minute
 
 var subscriptionMetadataProfileLabel = regexp.MustCompile(`(?i)^осталось\s+дн\.?\s*\d+\b`)
 var subscriptionSecret = regexp.MustCompile(`(?i)[a-z][a-z0-9+.-]*://[^\s"<>]+`)
@@ -294,8 +295,8 @@ func (c *Core) syncSubscriptions(ctx context.Context, urgent, broken bool) bool 
 			return handledBroken
 		}
 		now := time.Now().Unix()
-		accelerated := (urgent || (broken && (pf.Auto || source.ID == activeSource))) && source.Failures == 0 && now-source.LastAttempt >= int64(subscriptionMinimumInterval/time.Second)
-		if now < source.NextAttempt && !accelerated {
+		accelerated := urgent || (broken && (pf.Auto || source.ID == activeSource))
+		if !subscriptionRefreshDue(source, now, c.health.Probe().TunnelOK, accelerated) {
 			continue
 		}
 		deviceID, err := c.subscriptionDeviceID()
@@ -353,7 +354,7 @@ func (c *Core) applySubscriptionResponse(ctx context.Context, requested profile.
 	}
 	if fetchErr == nil {
 		source.LastSuccess = time.Now().Unix()
-		source.NextAttempt = source.LastSuccess + int64(subscriptionPollInterval/time.Second)
+		source.NextAttempt = source.LastSuccess + int64(subscriptionRefreshInterval(source.URL, c.health.Probe().TunnelOK)/time.Second)
 		source.Failures = 0
 		fetchErr = c.commitProfiles(ctx, before, after)
 		if fetchErr == nil {
@@ -366,12 +367,40 @@ func (c *Core) applySubscriptionResponse(ctx context.Context, requested profile.
 	source.Revision++
 	source.Failures++
 	delay := subscriptionRetryDelay(source.Failures, fetchErr)
+	if interval := subscriptionRefreshInterval(source.URL, c.health.Probe().TunnelOK); interval == subscriptionOfflineInterval && delay < interval {
+		delay = interval
+	}
 	source.NextAttempt = time.Now().Add(delay).Unix()
 	if err := c.profiles.Write(before); err != nil {
 		fetchErr = errors.Join(fetchErr, err)
 	}
 	c.logSubscriptionError(requested.ID, fetchErr)
 }
+
+// Only Hikkari's background exchange follows this policy. Explicit user imports
+// remain immediate and third-party provider schedules retain their old behavior.
+func subscriptionRefreshInterval(sourceURL string, tunnelOK bool) time.Duration {
+	if subscription.IsHikkariURL(sourceURL) && !tunnelOK {
+		return subscriptionOfflineInterval
+	}
+	return subscriptionPollInterval
+}
+func subscriptionRefreshDue(source profile.Subscription, now int64, tunnelOK, urgent bool) bool {
+	interval := subscriptionRefreshInterval(source.URL, tunnelOK)
+	next := source.NextAttempt
+	// Recompute healthy schedules when VPN state changes: restoring a working
+	// tunnel must not wait for the longer deadline written while disconnected.
+	if source.Failures == 0 && source.LastSuccess > 0 && next > 0 {
+		next = source.LastSuccess + int64(interval/time.Second)
+	}
+	if interval == subscriptionOfflineInterval && source.LastAttempt > 0 {
+		next = max(next, source.LastAttempt+int64(interval/time.Second))
+		urgent = false // startup/wake cannot turn VPN-off traffic into a burst
+	}
+	accelerated := urgent && source.Failures == 0 && now-source.LastAttempt >= int64(subscriptionMinimumInterval/time.Second)
+	return now >= next || accelerated
+}
+
 func subscriptionRetryDelay(failures int, err error) time.Duration {
 	delay := subscriptionMinimumInterval
 	for i := 1; i < failures && delay < 15*time.Minute; i++ {

@@ -720,7 +720,34 @@ func (c *Core) SetAutoMode(on bool) error {
 //  Uptime history
 // ============================================================
 
-func (c *Core) UptimeHistory() map[string][]PingSample { return c.uptime.Snapshot() }
+func (c *Core) UptimeHistory() map[string][]PingSample {
+	out := c.uptime.Snapshot()
+	pf, err := c.profiles.Read()
+	if err != nil {
+		return map[string][]PingSample{}
+	}
+	for _, p := range pf.Profiles {
+		if p.Subscription == nil {
+			continue
+		}
+		owned := false
+		for _, source := range pf.Subscriptions {
+			if source.ID == p.Subscription.ID && subscription.IsHikkariURL(source.URL) {
+				owned = true
+				break
+			}
+		}
+		if owned {
+			delete(out, p.Name)
+			if m := pf.CapacityFor(p, time.Now()); m != nil {
+				for _, point := range m.History {
+					out[p.Name] = append(out[p.Name], PingSample{Ts: point.Ts, OK: point.RTTMS > 0, RttMs: point.RTTMS, Src: uptime.SrcProber})
+				}
+			}
+		}
+	}
+	return out
+}
 
 // ----- downdetector -----
 

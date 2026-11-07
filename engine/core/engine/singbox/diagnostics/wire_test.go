@@ -11,11 +11,13 @@ import (
 	"testing"
 )
 
-// wireGolden is what the core in archive/sing-box (sing-box-lx f350f1e, uTLS fork
-// of metacubex/utls v1.8.7) sent for each case of wireCases, recorded by
-// TestRecordWireHellos. A core update that changes a hello changes a row here;
-// that is the point (plan section 7). The hub's reference table holds the same
-// pairs per core version.
+// wireGolden is what the release's core sends for each case of wireCases:
+// sing-box-lx v1.14.3-lx.21-hk.1 (revision c06e742b5717, uTLS fork of
+// metacubex/utls v1.8.7), recorded by TestRecordWireHellos on darwin/arm64;
+// the cores of f350f1e and of 1.0.54-1.0.55 testers on Windows sent the same
+// rows. A core update that changes a hello changes a row here; that is the
+// point (plan section 7). reference.json beside the hellos holds the plain
+// TLS rows with the revision they were recorded from.
 var wireGolden = map[string]struct{ ja4, hk string }{
 	"tls-chrome":               {"t13d1516h2_8daaf6152771_d8a2da3f94cd", "h1e431ec7444af069a"},
 	"tls-chrome-again":         {"t13d1516h2_8daaf6152771_d8a2da3f94cd", "h1e431ec7444af069a"},
@@ -202,45 +204,41 @@ func TestParseClientHelloSurvivesEveryCut(t *testing.T) {
 	}
 }
 
-func TestWireSkipsWhatHasNoTCPHello(t *testing.T) {
-	for want, ob := range map[string]map[string]interface{}{
-		"udp":    {"type": "hysteria2", "tls": map[string]interface{}{"enabled": true}},
-		"no_tls": {"type": "vless"},
-		"quic": {"type": "vless", "tls": map[string]interface{}{"enabled": true, "alpn": []interface{}{"h3"}},
-			"transport": map[string]interface{}{"type": "xhttp"}},
-		"": {"type": "vless", "tls": map[string]interface{}{"enabled": true, "alpn": []interface{}{"h2", "h3"}},
-			"transport": map[string]interface{}{"type": "xhttp"}},
-	} {
-		if got := wireSkip(ob); got != want {
-			t.Errorf("want %q, got %q for %v", want, got, ob)
-		}
-	}
-}
-
-// TestWireLineThroughARealCore is the golden test of plan section 7: the core
-// in HIKKARI_TEST_CORE must still send the recorded hellos. When it fails after
-// a core update, the hello changed: record anew and send the new rows to the
-// hub's reference table.
-func TestWireLineThroughARealCore(t *testing.T) {
+// TestReleaseCoreSendsTheRecordedHellos is the golden test of plan section 7:
+// the core in HIKKARI_TEST_CORE, the one the release ships, must send the
+// recorded hellos. The hello depends on the core's revision and the config
+// alone, so this test stands for every tester on that release. When it fails
+// after a core update, the hello changed: record anew (TestRecordWireHellos)
+// and check the new rows against the browsers before shipping.
+func TestReleaseCoreSendsTheRecordedHellos(t *testing.T) {
 	binary := os.Getenv("HIKKARI_TEST_CORE")
 	if binary == "" {
 		t.Skip("HIKKARI_TEST_CORE is not set")
 	}
-	round := newWireRound(context.Background(), binary, "AS12389")
-	if !regexp.MustCompile(`^ core=[0-9a-f]{12} net=AS12389$`).MatchString(round.fields()) {
-		t.Fatalf("round %q", round.fields())
+	rev := coreRevision(context.Background(), binary)
+	if !regexp.MustCompile(`^[0-9a-f]{12}$`).MatchString(rev) {
+		t.Fatalf("the core names no revision: %q", rev)
 	}
+	t.Logf("core %s", rev)
 	for name, ob := range wireCases() {
 		if name == "tls-randomized" {
 			continue // seeded per process
 		}
-		line := wireLine(context.Background(), binary, loadTarget{Tag: "p-rec", Proto: "vless", Outbound: ob}, round)
-		want := wireGolden[name]
-		if !strings.Contains(line, " ja4="+want.ja4+" hk="+want.hk+" ") {
-			t.Errorf("%s: %s", name, line)
+		msg, _, err := mirrorHello(context.Background(), binary, ob)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
 		}
-		if strings.Contains(line, wireSNI) && !strings.Contains(line, " sni="+wireSNI+" ") {
-			t.Errorf("%s: the server name outside its knob: %s", name, line)
+		h, err := parseClientHello(msg)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if want := wireGolden[name]; h.ja4() != want.ja4 || h.hk() != want.hk {
+			t.Errorf("%s: ja4=%s hk=%s, recorded ja4=%s hk=%s", name, h.ja4(), h.hk(), want.ja4, want.hk)
+		}
+		if !h.SNI {
+			t.Errorf("%s: no SNI in the hello", name)
 		}
 	}
 }

@@ -55,6 +55,8 @@ class _CurrentProfileCardState extends State<CurrentProfileCard> {
         child: ProfileSummaryCard(
           title: label.toLowerCase(),
           samples: hist,
+          capacity: active?.capacity,
+          useProbeMetrics: active?.autoEligible ?? false,
           selected: active != null,
           forceChecking: s.isWarmingUp,
           onTap: s.busy ? null : () => ProfilesSheet.show(context),
@@ -72,7 +74,7 @@ class _CurrentProfileCardState extends State<CurrentProfileCard> {
           trailing: TweenAnimationBuilder<Color?>(
             tween: ColorTween(end: _hover ? t.primary : t.textMuted),
             duration: const Duration(milliseconds: 150),
-            builder: (_, color, __) =>
+            builder: (_, color, _) =>
                 Icon(Icons.keyboard_arrow_down, size: 18, color: color),
           ),
         ),

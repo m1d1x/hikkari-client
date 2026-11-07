@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
@@ -5,10 +6,10 @@ import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
 import 'sparkline.dart';
 
-class ProfileSummaryCard extends StatelessWidget {
+class ProfileSummaryCard extends StatefulWidget {
   final String title;
-  final String? capacityLabel;
-  final String? capacityHint;
+  final RelayCapacity? capacity;
+  final bool useProbeMetrics;
   final List<PingSample> samples;
   final bool selected;
   final VoidCallback? onTap;
@@ -45,8 +46,8 @@ class ProfileSummaryCard extends StatelessWidget {
   const ProfileSummaryCard({
     super.key,
     required this.title,
-    this.capacityLabel,
-    this.capacityHint,
+    this.capacity,
+    this.useProbeMetrics = false,
     required this.samples,
     required this.selected,
     this.onTap,
@@ -70,9 +71,72 @@ class ProfileSummaryCard extends StatelessWidget {
   });
 
   @override
+  State<ProfileSummaryCard> createState() => _ProfileSummaryCardState();
+}
+
+class _ProfileSummaryCardState extends State<ProfileSummaryCard> {
+  bool _hover = false;
+  String get title => widget.title;
+  RelayCapacity? get capacity => widget.capacity;
+  bool get useProbeMetrics => widget.useProbeMetrics;
+  List<PingSample> get samples => widget.samples;
+  bool get selected => widget.selected;
+  VoidCallback? get onTap => widget.onTap;
+  VoidCallback? get onTrailingTap => widget.onTrailingTap;
+  Widget? get leading => widget.leading;
+  Widget? get trailing => widget.trailing;
+  Widget? get footer => widget.footer;
+  bool get footerVisible => widget.footerVisible;
+  EdgeInsetsGeometry get margin => widget.margin;
+  EdgeInsetsGeometry get padding => widget.padding;
+  double get minTitleWidth => widget.minTitleWidth;
+  double get maxTitleWidth => widget.maxTitleWidth;
+  double get minRttWidth => widget.minRttWidth;
+  double get maxRttWidth => widget.maxRttWidth;
+  double get trailingWidth => widget.trailingWidth;
+  double get leadingWidth => widget.leadingWidth;
+  double get titleFontSize => widget.titleFontSize;
+  FontWeight get titleWeight => widget.titleWeight;
+  double get chartHeight => widget.chartHeight;
+  bool get forceChecking => widget.forceChecking;
+  // Keep the switcher's per-entry identity on rapid hover reversals.
+  static const _morphDuration = Duration(milliseconds: 280);
+
+  // The incoming value rises from below, the outgoing one leaves upward.
+  static Widget _metricRoll(Widget child, Animation<double> animation) {
+    final incoming = animation.status != AnimationStatus.reverse;
+    final offset = Tween<Offset>(
+      begin: Offset(0, incoming ? 0.55 : -0.55),
+      end: Offset.zero,
+    ).animate(animation);
+    return ClipRect(
+      child: SlideTransition(
+        position: offset,
+        child: FadeTransition(opacity: animation, child: child),
+      ),
+    );
+  }
+
+  static List<double?>? _blend(List<double?>? a, List<double?>? b, double k) {
+    if (a == null || b == null) return a ?? b;
+    if (k <= 0) return a;
+    if (k >= 1) return b;
+    return List<double?>.generate(a.length, (i) {
+      final x = a[i], y = b[i];
+      if (x == null) return k < 0.5 ? null : y;
+      if (y == null) return k < 0.5 ? x : null;
+      return x + (y - x) * k;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final rtt = UptimeStats.avgRtt(samples);
+    final remote = useProbeMetrics;
+    final fresh = capacity?.fresh ?? false;
+    final rtt = remote
+        ? (fresh ? capacity!.rttMs : -1)
+        : UptimeStats.avgRtt(samples);
     final lineColor = selected ? t.primary : t.textMuted;
     final bgColor = selected ? const Color(0xFF1A1014) : t.surface;
     final borderColor = selected ? t.primary.withValues(alpha: 0.32) : t.border;
@@ -86,8 +150,8 @@ class ProfileSummaryCard extends StatelessWidget {
     //              Гасим до 45%, в углу "down".
     //   ok       — обычное число ms.
     final recent = UptimeStats.recentAvgRtt(samples);
-    final checking = forceChecking || samples.length < 3;
-    final dead = !checking && (recent < 0 || recent > 1000);
+    final checking = !remote && (forceChecking || samples.length < 3);
+    final dead = !remote && !checking && (recent < 0 || recent > 1000);
 
     return Padding(
       padding: margin,
@@ -119,29 +183,8 @@ class ProfileSummaryCard extends StatelessWidget {
                   selected: selected,
                   samples: samples,
                   lineColor: lineColor,
+                  capacityLabel: capacity?.label,
                 ),
-                if (capacityLabel != null)
-                  Padding(
-                    padding: EdgeInsets.only(
-                      left: padding.resolve(TextDirection.ltr).left,
-                      right: 14,
-                      bottom: 7,
-                    ),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Tooltip(
-                        message: capacityHint ?? '',
-                        child: Text(
-                          capacityLabel!,
-                          style: TextStyle(
-                            color: t.textMuted,
-                            fontFamily: t.monoFamily,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
                 if (footer != null)
                   AnimatedSize(
                     duration: const Duration(milliseconds: 180),
@@ -184,6 +227,7 @@ class ProfileSummaryCard extends StatelessWidget {
     required bool selected,
     required List<PingSample> samples,
     required Color lineColor,
+    String? capacityLabel,
   }) {
     final titleStyle = TextStyle(
       color: t.textSecondary,
@@ -210,8 +254,10 @@ class ProfileSummaryCard extends StatelessWidget {
           ? 'down'
           : checking
           ? '…'
+          : rtt <= 0
+          ? '—'
           : '$rtt',
-      children: dead || checking
+      children: dead || checking || rtt <= 0
           ? null
           : [
               TextSpan(
@@ -225,6 +271,46 @@ class ProfileSummaryCard extends StatelessWidget {
       style: rttStyle,
     );
 
+    final speedText = capacityLabel ?? '—';
+    final speedSpan = TextSpan(
+      text: speedText.replaceFirst(' mbps', ''),
+      style: rttStyle,
+      children: speedText.endsWith(' mbps')
+          ? [
+              TextSpan(
+                text: ' mbps',
+                style: TextStyle(
+                  color: t.textMuted.withValues(alpha: 0.62),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ]
+          : null,
+    );
+    final showSpeed = useProbeMetrics && _hover;
+    final metricSpan = showSpeed ? speedSpan : rttSpan;
+    final fresh = capacity?.fresh ?? false;
+    final history = fresh ? capacity!.history : const <RelayMetricPoint>[];
+    // Fill the 24-hour time axis with missing buckets, never duplicate a measurement.
+    final bucket = DateTime.now().millisecondsSinceEpoch ~/ 1000 ~/ 1800 * 1800;
+    final byTime = {for (final p in history) p.ts: p};
+    // Both series on one 48-bucket axis, each scaled to its own maximum, so
+    // hover morphs one line into the other instead of swapping two charts.
+    List<double?>? series(double Function(RelayMetricPoint) pick) {
+      if (!useProbeMetrics) return null;
+      final raw = List<double?>.generate(48, (i) {
+        final p = byTime[bucket - (47 - i) * 1800];
+        if (p == null) return null;
+        final value = pick(p);
+        return value > 0 ? value : null;
+      });
+      final top = raw.whereType<double>().fold<double>(0, math.max);
+      if (top <= 0) return raw;
+      return [for (final v in raw) v == null ? null : v / top];
+    }
+
+    final rttValues = series((p) => p.rttMs.toDouble());
+    final speedValues = series((p) => p.mbps);
     // Меряем НАТУРАЛЬНУЮ ширину (maxWidth: infinity), потом сами
     // зажимаем в max. Плюс +2px буфер на случай округления / snap'а в
     // глифовых метриках — иначе SizedBox может оказаться на пиксель уже,
@@ -263,7 +349,10 @@ class ProfileSummaryCard extends StatelessWidget {
         final hPad = resolvedPadding.left + resolvedPadding.right;
 
         // Желаемая ширина rtt-блока — его натуральная, ограниченная max.
-        final rttWanted = measure(rttSpan, maxRttWidth);
+        final rttWanted = math.max(
+          measure(rttSpan, maxRttWidth),
+          useProbeMetrics ? measure(speedSpan, maxRttWidth) : 0.0,
+        );
         // Желаемая ширина заголовка — натуральная, ограниченная max.
         final titleWanted = measure(
           TextSpan(text: title, style: titleStyle),
@@ -326,20 +415,53 @@ class ProfileSummaryCard extends StatelessWidget {
             SizedBox(
               width: chartW,
               height: chartHeight,
-              child: Sparkline(samples: samples, color: lineColor),
+              child: TweenAnimationBuilder<double>(
+                tween: Tween(end: showSpeed ? 1 : 0),
+                duration: _morphDuration,
+                curve: Curves.easeInOutCubic,
+                builder: (context, k, _) => Sparkline(
+                  samples: samples,
+                  values: _blend(rttValues, speedValues, k),
+                  windowSize: useProbeMetrics ? 48 : 60,
+                  color: lineColor,
+                ),
+              ),
             ),
             const SizedBox(width: gapR),
             SizedBox(
               width: rttW,
-              child: Text.rich(
-                rttSpan,
-                textAlign: TextAlign.right,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textHeightBehavior: trimmedHeight,
+              child: AnimatedSwitcher(
+                duration: _morphDuration,
+                transitionBuilder: _metricRoll,
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                layoutBuilder: (current, previous) => Stack(
+                  alignment: Alignment.centerRight,
+                  children: [...previous, ?current],
+                ),
+                child: Semantics(
+                  key: ValueKey(showSpeed),
+                  label: showSpeed
+                      ? 'Пропускная способность пробников'
+                      : 'Задержка',
+                  child: Text.rich(
+                    metricSpan,
+                    textAlign: TextAlign.right,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    textHeightBehavior: trimmedHeight,
+                  ),
+                ),
               ),
             ),
-            if (trailing != null) ...[const SizedBox(width: gapT), trailing!],
+            if (trailing != null) ...[
+              const SizedBox(width: gapT),
+              SizedBox(
+                width: trailingW,
+                child: Center(child: trailing),
+              ),
+            ],
           ],
         );
 
@@ -363,6 +485,9 @@ class ProfileSummaryCard extends StatelessWidget {
         return Material(
           color: Colors.transparent,
           child: InkWell(
+            onHover: (value) {
+              if (_hover != value) setState(() => _hover = value);
+            },
             onTapDown: hasAnyTap ? (d) => tapX = d.localPosition.dx : null,
             onTap: hasAnyTap
                 ? () {
