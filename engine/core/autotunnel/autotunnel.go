@@ -9,6 +9,13 @@
 // the running tunnel and its connections are not touched. The list is kept per
 // physical network and entries expire: a site unblocked later goes back to the
 // direct path on its own.
+//
+// A blocked site is usually blocked whole, but it is reached through many
+// names: a video service hands every video to another of its cache hosts, and
+// each new name would cost the wait for proof again. So once two names of one
+// registrable domain are proven silent, the list holds the domain with all its
+// names instead — written with a leading dot, ".googlevideo.com", the one form
+// the rule set renders as a suffix.
 package autotunnel
 
 import (
@@ -24,6 +31,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 
 	"NekkoVPN/core/fsutil"
 )
@@ -43,6 +52,10 @@ const (
 	minHello = 200
 	// silentConns is how many separate connections must stay silent: one can
 	// die for any reason, and a browser retries a blocked site right away.
+	// A silent QUIC attempt counts as one of them, but never alone: a provider
+	// may drop QUIC to sites it lets through over TCP, and a browser falls back
+	// to TCP on its own. The QUIC attempt and the TCP fallback go out together,
+	// so a site is proven at the first look instead of after a second retry.
 	silentConns = 2
 	// silentWindow is how long the evidence for a host stays good.
 	silentWindow = 2 * time.Minute
@@ -83,6 +96,7 @@ type Detector struct {
 
 type hostEvidence struct {
 	silent   map[string]bool // connection IDs
+	tcp      bool            // a TCP connection is among them
 	lastSeen time.Time
 }
 
@@ -115,6 +129,7 @@ func (d *Detector) Observe(now time.Time, conns []Conn) []string {
 			d.seen[c.Host] = e
 		}
 		e.silent[c.ID] = true
+		e.tcp = e.tcp || c.Network == "tcp"
 		e.lastSeen = now
 	}
 	var proven []string
@@ -124,7 +139,7 @@ func (d *Detector) Observe(now time.Time, conns []Conn) []string {
 			delete(d.seen, host)
 			continue
 		}
-		if len(e.silent) >= silentConns {
+		if len(e.silent) >= silentConns && e.tcp {
 			proven = append(proven, host)
 			delete(d.seen, host)
 		}
@@ -133,18 +148,18 @@ func (d *Detector) Observe(now time.Time, conns []Conn) []string {
 	return proven
 }
 
-// watched: TLS over TCP to a named host on the direct path. Only there does
-// silence mean something: other ports may rightly wait for the client to speak,
-// and without a name there is nothing to route by.
+// watched: TLS to a named host on the direct path, over TCP or QUIC. Only there
+// does silence mean something: other ports may rightly wait for the client to
+// speak, and without a name there is nothing to route by.
 func watched(c Conn) bool {
-	return c.Direct && c.Network == "tcp" && c.Port == "443" && isDomain(c.Host)
+	return c.Direct && (c.Network == "tcp" || c.Network == "udp") && c.Port == "443" && isDomain(c.Host)
 }
 
 func isDomain(host string) bool {
 	return strings.Contains(host, ".") && net.ParseIP(host) == nil
 }
 
-// List is the set of hosts, kept in two files: the rule set the core reads and
+// List is the set of hosts and suffix entries, kept in two files: the rule set the core reads and
 // the expiry times it does not need to know about. On desktop the rule set the
 // running core follows is the service's copy (see SetPublish); the file here is
 // the GUI's own, for an engine run directly from this config.
@@ -183,12 +198,14 @@ func (l *List) SetPublish(f func([]string) error) {
 
 func (l *List) statePath() string { return l.path + ".state" }
 
-// Add records hosts.
+// Add records hosts. A host whose registrable domain already has another name
+// in the list takes that domain in whole: the names give way to one suffix
+// entry, and the domain's further names never wait for proof.
 func (l *List) Add(now time.Time, hosts []string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, h := range hosts {
-		l.hosts[h] = now.Add(entryTTL)
+		l.addLocked(h, now.Add(entryTTL))
 	}
 	for len(l.hosts) > maxHosts {
 		var oldest string
@@ -200,6 +217,49 @@ func (l *List) Add(now time.Time, hosts []string) error {
 		delete(l.hosts, oldest)
 	}
 	return l.saveLocked()
+}
+
+func (l *List) addLocked(host string, until time.Time) {
+	site := siteOf(host)
+	if site == "" {
+		l.hosts[host] = until
+		return
+	}
+	suffix := "." + site
+	if _, held := l.hosts[suffix]; held {
+		l.hosts[suffix] = until
+		return
+	}
+	var siblings []string
+	for h := range l.hosts {
+		if h != host && siteOf(h) == site {
+			siblings = append(siblings, h)
+		}
+	}
+	if len(siblings) == 0 {
+		l.hosts[host] = until
+		return
+	}
+	for _, h := range siblings {
+		delete(l.hosts, h)
+	}
+	delete(l.hosts, host)
+	l.hosts[suffix] = until
+}
+
+// siteOf is the registrable domain of a host by the public suffix list:
+// "rr3---sn-4g5e6nss.googlevideo.com" and "googlevideo.com" are both of
+// "googlevideo.com", while "user.github.io" is a site of its own. "" for a
+// suffix entry or a public suffix itself: neither stands for a site.
+func siteOf(host string) string {
+	if strings.HasPrefix(host, ".") {
+		return ""
+	}
+	site, err := publicsuffix.EffectiveTLDPlusOne(host)
+	if err != nil {
+		return ""
+	}
+	return site
 }
 
 // Expire drops the entries past their time, writing only when there are any.
@@ -280,16 +340,18 @@ func (l *List) Publish() error {
 }
 
 // ValidateHosts reports whether hosts are a list the core can route by:
-// domains only, no duplicates, bounded. The detector only ever produces
-// domains; the service re-checks at its boundary, where the list arrives
-// from an unprivileged process.
+// domains only, a suffix entry being a domain with a leading dot, no
+// duplicates, bounded. The list only ever holds such entries; the service
+// re-checks at its boundary, where the list arrives from an unprivileged
+// process.
 func ValidateHosts(hosts []string) error {
 	if len(hosts) > maxHosts {
 		return fmt.Errorf("%d hosts, the list holds %d", len(hosts), maxHosts)
 	}
 	seen := make(map[string]bool, len(hosts))
 	for _, h := range hosts {
-		if !isDomain(h) {
+		name := strings.TrimPrefix(h, ".")
+		if !isDomain(name) || strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") || strings.Contains(name, "..") {
 			return fmt.Errorf("%q is not a domain", h)
 		}
 		if len(h) > maxHostLen {
@@ -324,12 +386,24 @@ func WriteRuleSet(path string, hosts []string) error {
 	return os.WriteFile(path, content, 0o644)
 }
 
-// RuleSet renders hosts as a sing-box source rule set. An empty set is valid:
-// the core needs the file to exist from its first start.
+// RuleSet renders hosts as a sing-box source rule set: a name as an exact
+// domain, a suffix entry ".site" as the site and every name under it. An empty
+// set is valid: the core needs the file to exist from its first start.
 func RuleSet(hosts []string) ([]byte, error) {
+	var exact, suffixes []string
+	for _, h := range hosts {
+		if site, ok := strings.CutPrefix(h, "."); ok {
+			suffixes = append(suffixes, site)
+		} else {
+			exact = append(exact, h)
+		}
+	}
 	rules := []map[string][]string{}
-	if len(hosts) > 0 {
-		rules = append(rules, map[string][]string{"domain": hosts})
+	if len(exact) > 0 {
+		rules = append(rules, map[string][]string{"domain": exact})
+	}
+	if len(suffixes) > 0 {
+		rules = append(rules, map[string][]string{"domain_suffix": suffixes})
 	}
 	return json.Marshal(map[string]interface{}{"version": 3, "rules": rules})
 }

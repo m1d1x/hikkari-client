@@ -72,6 +72,40 @@ func TestDetectorLeavesWhatIsNotProven(t *testing.T) {
 	}
 }
 
+func quic(id, host string, age time.Duration) Conn {
+	c := silent(id, host, age)
+	c.Network = "udp"
+	c.Upload = 1250 // one padded QUIC Initial
+	return c
+}
+
+// A browser opens QUIC and its TCP fallback to a video host together; both
+// silent prove the host at the first look.
+func TestDetectorTakesASilentQUICAttemptWithATCPOne(t *testing.T) {
+	host := "rr3---sn-4g5e6nss.googlevideo.com"
+	got := NewDetector().Observe(t0, []Conn{quic("q", host, time.Minute), silent("t", host, time.Minute)})
+	if !reflect.DeepEqual(got, []string{host}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
+// A provider may drop QUIC to a site it lets through over TCP: QUIC alone
+// proves nothing, and a TCP answer clears what QUIC left.
+func TestDetectorNeverProvesAHostFromQUICAlone(t *testing.T) {
+	d := NewDetector()
+	if got := d.Observe(t0, []Conn{quic("a", "x.example", time.Minute), quic("b", "x.example", time.Minute)}); len(got) != 0 {
+		t.Fatalf("QUIC alone proved %v", got)
+	}
+	answered := silent("c", "x.example", time.Minute)
+	answered.Download = 4000
+	if got := d.Observe(t0.Add(time.Second), []Conn{quic("a", "x.example", time.Minute), answered}); len(got) != 0 {
+		t.Fatalf("answered over TCP and proved %v", got)
+	}
+	if got := d.Observe(t0.Add(2*time.Second), []Conn{silent("d", "x.example", time.Minute)}); len(got) != 0 {
+		t.Fatalf("the cleared QUIC evidence still counted: %v", got)
+	}
+}
+
 func TestDetectorForgetsOldEvidence(t *testing.T) {
 	d := NewDetector()
 	d.Observe(t0, []Conn{silent("a", "x.example", time.Minute)})
@@ -126,6 +160,86 @@ func TestListWritesTheRuleSetAndSurvivesARestart(t *testing.T) {
 	}
 	if got := OpenList(path, nil).Hosts(); !reflect.DeepEqual(got, []string{"a.example", "b.example"}) {
 		t.Fatalf("after restart: %v", got)
+	}
+}
+
+func readRuleSetSuffixes(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rs struct {
+		Rules []struct {
+			Suffix []string `json:"domain_suffix"`
+		} `json:"rules"`
+	}
+	if err := json.Unmarshal(raw, &rs); err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, r := range rs.Rules {
+		out = append(out, r.Suffix...)
+	}
+	return out
+}
+
+// Every video comes from another cache host of one domain. The second silent
+// host takes the whole domain, so the third never waits for proof.
+func TestListTakesTheWholeSiteOnItsSecondSilentName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auto-tunnel.json")
+	l := OpenList(path, nil)
+	if err := l.Add(t0, []string{"rr3---sn-4g5e6nss.googlevideo.com", "www.youtube.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Hosts(); !reflect.DeepEqual(got, []string{"rr3---sn-4g5e6nss.googlevideo.com", "www.youtube.com"}) {
+		t.Fatalf("one name each: %v", got)
+	}
+	if err := l.Add(t0.Add(time.Hour), []string{"rr1---sn-gxuo03g-3c2l.googlevideo.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Hosts(); !reflect.DeepEqual(got, []string{".googlevideo.com", "www.youtube.com"}) {
+		t.Fatalf("after the second name: %v", got)
+	}
+	if got := readRuleSet(t, path); !reflect.DeepEqual(got, []string{"www.youtube.com"}) {
+		t.Fatalf("exact names: %v", got)
+	}
+	if got := readRuleSetSuffixes(t, path); !reflect.DeepEqual(got, []string{"googlevideo.com"}) {
+		t.Fatalf("suffixes: %v", got)
+	}
+	// The site itself counts as a name of it.
+	if err := l.Add(t0.Add(2*time.Hour), []string{"youtube.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Hosts(); !reflect.DeepEqual(got, []string{".googlevideo.com", ".youtube.com"}) {
+		t.Fatalf("after the bare site: %v", got)
+	}
+	if got := OpenList(path, nil).Hosts(); !reflect.DeepEqual(got, []string{".googlevideo.com", ".youtube.com"}) {
+		t.Fatalf("after restart: %v", got)
+	}
+}
+
+// A name proven again under a held suffix renews the suffix, not a name of its
+// own; and sites of their own by the public suffix list never merge.
+func TestListKeepsSitesApart(t *testing.T) {
+	l := OpenList(filepath.Join(t.TempDir(), "auto-tunnel.json"), nil)
+	if err := l.Add(t0, []string{"a.googlevideo.com", "b.googlevideo.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Add(t0.Add(entryTTL/2), []string{"c.googlevideo.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Expire(t0.Add(entryTTL + time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Hosts(); !reflect.DeepEqual(got, []string{".googlevideo.com"}) {
+		t.Fatalf("renewed suffix: %v", got)
+	}
+	if err := l.Add(t0, []string{"alice.github.io", "bob.github.io", "a.co.uk"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Hosts(); !reflect.DeepEqual(got, []string{".googlevideo.com", "a.co.uk", "alice.github.io", "bob.github.io"}) {
+		t.Fatalf("separate sites merged: %v", got)
 	}
 }
 
@@ -265,6 +379,7 @@ func TestValidateHosts(t *testing.T) {
 		nil,
 		{"a.example"},
 		{"a.example", "b.example"},
+		{"a.example", ".googlevideo.com"}, // a suffix entry
 	}
 	for _, hosts := range ok {
 		if err := ValidateHosts(hosts); err != nil {
@@ -272,12 +387,16 @@ func TestValidateHosts(t *testing.T) {
 		}
 	}
 	bad := [][]string{
-		{"localhost"},          // no dot: not routable by name
-		{"192.0.2.1"},          // an address, not a domain
-		{"a b.example"},        // whitespace
-		{"a.example/b"},        // path separator
-		{"a.example", ""},      // empty
+		{"localhost"},                           // no dot: not routable by name
+		{"192.0.2.1"},                           // an address, not a domain
+		{"a b.example"},                         // whitespace
+		{"a.example/b"},                         // path separator
+		{"a.example", ""},                       // empty
 		{strings.Repeat("x", 254) + ".example"}, // longer than a domain may be
+		{"..googlevideo.com"},                   // a suffix entry is one dot and a domain
+		{".com."},                               // nor a trailing dot
+		{".localhost"},                          // nor a name without a dot
+		{".192.0.2.1"},                          // nor an address
 	}
 	for _, hosts := range bad {
 		if err := ValidateHosts(hosts); err == nil {

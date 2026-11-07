@@ -18,6 +18,16 @@ import (
 	"NekkoVPN/core/routing"
 )
 
+// bundledVersion is the shipped catalog's version: a catalog the hub serves
+// is newer only above it.
+var bundledVersion = func() int64 {
+	c, err := Parse(bundled)
+	if err != nil {
+		panic(err)
+	}
+	return c.Version
+}()
+
 func testCatalog(version int64, domain string) []byte {
 	c, _ := Parse(bundled)
 	c.Version = version
@@ -68,8 +78,8 @@ func TestCatalogRejectsInvalidDocuments(t *testing.T) {
 		`{"schemaVersion":9,"version":2,"services":[]}`,
 		`{"schemaVersion":1,"version":0,"services":[]}`,
 		`{"schemaVersion":1,"version":2,"services":[],"execute":"bad"}`,
-		string(testCatalog(3, "https://wrong.example/path")),
-		string(testCatalog(3, "bad domain.example")),
+		string(testCatalog(bundledVersion+1, "https://wrong.example/path")),
+		string(testCatalog(bundledVersion+1, "bad domain.example")),
 		string(bundled) + ` {}`,
 		strings.Repeat("x", MaxCatalogBytes+1),
 	} {
@@ -81,7 +91,7 @@ func TestCatalogRejectsInvalidDocuments(t *testing.T) {
 
 func TestRefreshPersistenceOptOutAndLastGoodFallback(t *testing.T) {
 	var mu sync.Mutex
-	body := testCatalog(3, "new.example")
+	body := testCatalog(bundledVersion+1, "new.example")
 	status := 200
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +119,7 @@ func TestRefreshPersistenceOptOutAndLastGoodFallback(t *testing.T) {
 	if err := m.Refresh(context.Background()); err == nil {
 		t.Fatal("missing HTTP failure")
 	}
-	if got := m.Snapshot(); got.Catalog.Version != 3 || got.Error == "" {
+	if got := m.Snapshot(); got.Catalog.Version != bundledVersion+1 || got.Error == "" {
 		t.Fatal("last-good cache lost")
 	}
 	if err := m.SetSync(false); err != nil {
@@ -126,13 +136,13 @@ func TestRefreshPersistenceOptOutAndLastGoodFallback(t *testing.T) {
 		t.Fatal("opt-out still fetches")
 	}
 	restored := newManager(t, path, Options{URL: server.URL}).Snapshot()
-	if restored.SyncEnabled || restored.Catalog.Version != 3 || !Selected(restored.Catalog, restored.Choices, routing.ModeProxy, "steam") {
+	if restored.SyncEnabled || restored.Catalog.Version != bundledVersion+1 || !Selected(restored.Catalog, restored.Choices, routing.ModeProxy, "steam") {
 		t.Fatal("choices/version not restored")
 	}
 }
 
 func TestVersionValidationAndETag(t *testing.T) {
-	var body = testCatalog(3, "v2.example")
+	var body = testCatalog(bundledVersion+1, "v2.example")
 	var notModified bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if notModified {
@@ -155,25 +165,27 @@ func TestVersionValidationAndETag(t *testing.T) {
 		t.Fatal(err)
 	}
 	notModified = false
-	for _, invalid := range [][]byte{testCatalog(2, "old.example"), testCatalog(3, "changed.example"), []byte(`{`)} {
+	for _, invalid := range [][]byte{testCatalog(bundledVersion, "old.example"), testCatalog(bundledVersion+1, "changed.example"), []byte(`{`)} {
 		body = invalid
 		if err := m.Refresh(context.Background()); err == nil {
 			t.Fatal("bad update accepted")
 		}
-		if m.Snapshot().Catalog.Version != 3 || m.Snapshot().Catalog.Services[0].Domains[0] != "v2.example" {
+		if m.Snapshot().Catalog.Version != bundledVersion+1 || m.Snapshot().Catalog.Services[0].Domains[0] != "v2.example" {
 			t.Fatal("working data overwritten")
 		}
 	}
 }
 
 func TestFailedApplicationRestoresDiskAndState(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(testCatalog(3, "v2.example")) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(testCatalog(bundledVersion+1, "v2.example"))
+	}))
 	defer server.Close()
 	var applied []int64
 	path := filepath.Join(t.TempDir(), "state.json")
 	m := newManager(t, path, Options{URL: server.URL, Apply: func(s State) error {
 		applied = append(applied, s.Catalog.Version)
-		if s.Catalog.Version == 3 {
+		if s.Catalog.Version == bundledVersion+1 {
 			return fmt.Errorf("backend rejected update")
 		}
 		return nil
@@ -181,13 +193,13 @@ func TestFailedApplicationRestoresDiskAndState(t *testing.T) {
 	if err := m.Refresh(context.Background()); err == nil {
 		t.Fatal("application error lost")
 	}
-	if !reflect.DeepEqual(applied, []int64{3, 2}) {
+	if !reflect.DeepEqual(applied, []int64{bundledVersion + 1, bundledVersion}) {
 		t.Fatal("rollback not applied", applied)
 	}
-	if got := newManager(t, path, Options{}).Snapshot(); got.Catalog.Version != 2 {
+	if got := newManager(t, path, Options{}).Snapshot(); got.Catalog.Version != bundledVersion {
 		t.Fatal("bad state persisted")
 	}
-	if m.Snapshot().Catalog.Version != 2 {
+	if m.Snapshot().Catalog.Version != bundledVersion {
 		t.Fatal("bad state published")
 	}
 }
@@ -197,7 +209,7 @@ func TestOptOutWinsAgainstInFlightResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
 		<-release
-		_, _ = w.Write(testCatalog(3, "new.example"))
+		_, _ = w.Write(testCatalog(bundledVersion+1, "new.example"))
 	}))
 	defer server.Close()
 	m := newManager(t, "", Options{URL: server.URL})
@@ -211,14 +223,14 @@ func TestOptOutWinsAgainstInFlightResponse(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if got := m.Snapshot(); got.SyncEnabled || got.Catalog.Version != 2 {
+	if got := m.Snapshot(); got.SyncEnabled || got.Catalog.Version != bundledVersion {
 		t.Fatal("in-flight update ignored opt-out")
 	}
 }
 
 func TestSSEInvalidationFetchesAndAppliesCatalog(t *testing.T) {
 	var version atomic.Int64
-	version.Store(3)
+	version.Store(bundledVersion + 1)
 	events := make(chan struct{}, 4)
 	connected := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -254,19 +266,19 @@ func TestSSEInvalidationFetchesAndAppliesCatalog(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("no SSE connection")
 	}
-	waitVersion(t, m, 3)
-	version.Store(4)
+	waitVersion(t, m, bundledVersion+1)
+	version.Store(bundledVersion + 2)
 	events <- struct{}{}
-	waitVersion(t, m, 4)
+	waitVersion(t, m, bundledVersion+2)
 	if err := m.SetSync(false); err != nil {
 		t.Fatal(err)
 	}
-	version.Store(5)
+	version.Store(bundledVersion + 3)
 	events <- struct{}{}
 	if err := m.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if m.Snapshot().Catalog.Version != 4 {
+	if m.Snapshot().Catalog.Version != bundledVersion+2 {
 		t.Fatal("SSE bypassed opt-out")
 	}
 	cancel()
@@ -387,7 +399,7 @@ func TestTheBucketIsDrawnOnceAndSentWithEachRequest(t *testing.T) {
 		buckets = append(buckets, r.URL.Query().Get("bucket"))
 		w.WriteHeader(status)
 		if status == 200 {
-			_, _ = w.Write(testCatalog(3, "new.example"))
+			_, _ = w.Write(testCatalog(bundledVersion+1, "new.example"))
 		}
 	}))
 	defer server.Close()
