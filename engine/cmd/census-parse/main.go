@@ -17,21 +17,23 @@ import (
 
 	"NekkoVPN/core/capacity"
 	"NekkoVPN/core/engine/singbox"
+	configfile "NekkoVPN/core/engine/singbox/config"
 	"NekkoVPN/core/subscription"
 )
 
 // Entry is what the census keeps of a profile. It is built field by field from
 // the ones named here: a new secret in the config cannot reach it by accident.
 type Entry struct {
-	CapacityKey string `json:"capacityKey,omitempty"`
-	Node        string `json:"node,omitempty"`
-	Label       string `json:"label"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	Protocol    string `json:"protocol"`
-	Transport   string `json:"transport"`
-	Security    string `json:"security"`
-	SNI         string `json:"sni,omitempty"`
+	Resolver    map[string]interface{} `json:"resolver,omitempty"`
+	CapacityKey string                 `json:"capacityKey,omitempty"`
+	Node        string                 `json:"node,omitempty"`
+	Label       string                 `json:"label"`
+	Host        string                 `json:"host"`
+	Port        int                    `json:"port"`
+	Protocol    string                 `json:"protocol"`
+	Transport   string                 `json:"transport"`
+	Security    string                 `json:"security"`
+	SNI         string                 `json:"sni,omitempty"`
 	// Config is the whole outbound, secrets included, only with --with-config:
 	// ops hands it straight to the hub, which seals it for census proto.
 	Config map[string]interface{} `json:"config,omitempty"`
@@ -40,6 +42,14 @@ type Entry struct {
 func entryOf(d singbox.Draft) (Entry, error) {
 	host, _ := d.Config["server"].(string)
 	port := intField(d.Config["server_port"])
+	if d.Config["type"] == "awg" || d.Config["type"] == "wireguard" {
+		if peers, ok := d.Config["peers"].([]interface{}); ok && len(peers) == 1 {
+			if peer, ok := peers[0].(map[string]interface{}); ok {
+				host, _ = peer["address"].(string)
+				port = intField(peer["port"])
+			}
+		}
+	}
 	if host == "" || port <= 0 {
 		return Entry{}, errors.New("profile has no server address")
 	}
@@ -48,6 +58,10 @@ func entryOf(d singbox.Draft) (Entry, error) {
 		protocol = d.Kind
 	}
 	e := Entry{Label: d.Label, Host: host, Port: port, Protocol: protocol, Transport: "tcp", Security: "none"}
+	if protocol == "awg" || protocol == "wireguard" {
+		e.Transport = "udp"
+		e.Security = "wireguard"
+	}
 	if tr, ok := d.Config["transport"].(map[string]interface{}); ok {
 		if t, _ := tr["type"].(string); t != "" {
 			e.Transport = t
@@ -109,10 +123,18 @@ func run(ctx context.Context, in io.Reader, out io.Writer, withConfig bool) erro
 	for _, d := range imported.Items {
 		e, err := entryOf(d.Draft)
 		if err != nil {
-			continue // AmneziaWG-style drafts without one address are not a TCP entry
+			continue // unsupported or incomplete address
 		}
 		if withConfig {
 			e.Config = d.Draft.Config
+			if e.Protocol == "awg" || e.Protocol == "wireguard" {
+				block := make(map[string]interface{}, len(e.Config))
+				for k, v := range e.Config {
+					block[k] = v
+				}
+				block["tag"] = "probe"
+				e.Config, e.Resolver = configfile.MeasurementEndpoint(block)
+			}
 			e.CapacityKey = d.Key
 			e.Node = d.Node
 		}

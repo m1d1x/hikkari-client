@@ -33,6 +33,7 @@ type Backend struct {
 	preferenceMu          sync.Mutex
 	preferenceSent        string
 	preferenceUnsupported bool
+	preferenceSentAt      time.Time
 	config                *configfile.Store
 	process               vpn.Manager
 	control               *clashapi.Client
@@ -463,7 +464,7 @@ func (b *Backend) SetAutoPreference(ids []string, expiresAt int64) error {
 	}{tags, expiresAt})
 	b.preferenceMu.Lock()
 	defer b.preferenceMu.Unlock()
-	if b.preferenceUnsupported || b.preferenceSent == string(raw) {
+	if (b.preferenceUnsupported && time.Since(b.preferenceSentAt) < 10*time.Minute) || (b.preferenceSent == string(raw) && time.Since(b.preferenceSentAt) < 30*time.Second) {
 		return nil
 	}
 	supported, err := b.control.SetPreference(tags, expiresAt)
@@ -472,5 +473,6 @@ func (b *Backend) SetAutoPreference(ids []string, expiresAt int64) error {
 	}
 	b.preferenceUnsupported = !supported
 	b.preferenceSent = string(raw)
+	b.preferenceSentAt = time.Now()
 	return nil
 }

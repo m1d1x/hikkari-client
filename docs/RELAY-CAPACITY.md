@@ -20,10 +20,22 @@ possible observation-point/test-endpoint bottleneck; it cannot prove that the
 server's own maximum was reached. The reported number is measured download
 throughput on the tested path, not a guaranteed subscriber speed or upload rate.
 
-The existing fleet renderer supplies supported outbound profiles. AmneziaWG
-endpoints are not rendered by `FleetLinks` today and therefore have no capacity
-measurement; missing data must remain missing, never become zero or fabricated
-speed. Supporting these requires a managed benchmark peer, not a subscriber's key.
+Capacity tasks also include AmneziaWG endpoints (2.0 and 3.1). The hub owns a
+persistent benchmark peer per active RU observation point, distinct from both
+subscriber peers and the reserved admission peer. Migration 042 stores these
+peers; addresses come from the existing shared AWG address sequence. Normal
+relay pulses distribute public keys. New peers wait at least one minute before
+scheduling, allowing ordinary pulse propagation; a relay that is offline still
+produces an honest failure. Retired/non-RU peers leave relay authorization on
+its next pulse and cannot fetch capacity links. Claimed task tokens bind link
+issuance to the task's slot. The diagnostic TLS matrix continues excluding AWG.
+
+The kit parser uses the client's production endpoint normalizer, including AWG
+3.1 fields and DNS through the endpoint. The runner puts this config under
+`endpoints`, never `outbounds`, and runs the same bounded RTT/download procedure.
+A bounded 204 warm-up establishes the cold AWG handshake and tunnel DNS before
+three timed RTT requests. The isolated process has a 45-second deadline.
+No system TUN or subscriber VPN is touched.
 
 ## Delivery and identity
 
@@ -32,6 +44,14 @@ userinfo, display fragment and `hikkari-node` query parameter. Query ordering an
 host/scheme case are canonicalized. A changed host, port, fingerprint or transport
 parameter invalidates the old observation. Source URLs and subscriber credentials
 are not sent in metrics. Only verified Hikkari subscription sources supply advice.
+
+For `vpn://` AWG links, the bounded qCompress decoder hashes canonical INI
+transport fields with a versioned domain prefix. It excludes the client private
+key, local address, DNS and display document; endpoint, server public key,
+obfuscation and generation parameters remain part of the identity. Therefore a
+benchmark peer and a subscriber receive the same metric only for the same AWG
+transport. Malformed/unsupported documents receive no key. Both repositories
+share fixed contract test vectors.
 
 The subscription supplies `Hikkari-Relay-Capacity` for compatible header clients;
 newer negotiated subscription envelopes can carry the same metrics in their

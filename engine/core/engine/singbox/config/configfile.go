@@ -1113,3 +1113,9 @@ func corePeers(raw interface{}) ([]interface{}, bool) {
 	}
 	return out, renamed
 }
+
+// MeasurementEndpoint returns the production endpoint and its tunnel DNS for
+// an isolated measurement core. The input profile is not mutated.
+func MeasurementEndpoint(block map[string]interface{}) (map[string]interface{}, map[string]interface{}) {
+	return singBoxEndpoint(block)
+}

@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -59,5 +62,46 @@ func TestRunErrorHidesURL(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret-token") {
 		t.Fatalf("error leaks the token: %v", err)
+	}
+}
+
+func TestRunAWGEndpointWithTunnelDNS(t *testing.T) {
+	key := "pBNbQ3vIFMTZCbCkQtLObNUtsM9hAi+ZhlrgZbH0Xgc="
+	conf := "[Interface]\nPrivateKey = " + key + "\nAddress = 10.66.0.7/32\nJc = 4\nJmin = 40\nJmax = 70\nS1 = 33\nS2 = 57\nH1 = 11\nH2 = 12\nH3 = 13\nH4 = 14\n[Peer]\nPublicKey = " + key + "\nEndpoint = 203.0.113.9:31000\nAllowedIPs = 0.0.0.0/0\n"
+	doc, _ := json.Marshal(map[string]any{"containers": []any{map[string]any{"container": "amnezia-awg", "awg": map[string]any{"last_config": conf}}}})
+	var encoded bytes.Buffer
+	binary.Write(&encoded, binary.BigEndian, uint32(len(doc)))
+	zw := zlib.NewWriter(&encoded)
+	zw.Write(doc)
+	zw.Close()
+	link := "vpn://" + base64.RawURLEncoding.EncodeToString(encoded.Bytes()) + "?hikkari-node=n%3Aawg-one#AWG"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(link)) }))
+	defer server.Close()
+	for _, withConfig := range []bool{false, true} {
+		var out bytes.Buffer
+		if err := run(context.Background(), strings.NewReader(server.URL+"\n"), &out, withConfig); err != nil {
+			t.Fatal(err)
+		}
+		var entries []Entry
+		if err := json.Unmarshal(out.Bytes(), &entries); err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("AWG was dropped: %s", out.String())
+		}
+		e := entries[0]
+		if e.Host != "203.0.113.9" || e.Port != 31000 || e.Transport != "udp" {
+			t.Fatalf("wrong endpoint: %+v", e)
+		}
+		if withConfig {
+			if e.Config["type"] != "wireguard" || len(e.CapacityKey) != 64 || e.Node != "awg-one" || e.Resolver["detour"] != "probe" {
+				t.Fatalf("incomplete measurement contract: %+v", e)
+			}
+			if _, ok := e.Config["dns"]; ok {
+				t.Fatal("profile DNS leaked into endpoint")
+			}
+		} else if strings.Contains(out.String(), key) || e.Config != nil || e.Resolver != nil {
+			t.Fatal("census exposed credentials")
+		}
 	}
 }
