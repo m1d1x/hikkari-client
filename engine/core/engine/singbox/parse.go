@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"NekkoVPN/core/naive"
 	"NekkoVPN/core/profile"
 	"NekkoVPN/core/profile/legacy"
 	"NekkoVPN/core/subscription"
@@ -56,9 +57,18 @@ func ParseURI(uri string) (Draft, error) {
 	}
 	u, err := url.Parse(uri)
 	if err != nil {
+		if strings.HasPrefix(strings.ToLower(uri), "naive+") {
+			return Draft{}, fmt.Errorf("naive: неверная ссылка")
+		}
 		return Draft{}, fmt.Errorf("не удалось разобрать ссылку: %w", err)
 	}
 	switch strings.ToLower(u.Scheme) {
+	case "naive+https", "naive+quic":
+		l, err := naive.Parse(u)
+		if err != nil {
+			return Draft{}, err
+		}
+		return Draft{Kind: profile.KindOutbound, Label: l.Label, Config: l.Outbound()}, nil
 	case "hysteria2", "hy2":
 		return parseHysteria2(u)
 	case "vless":

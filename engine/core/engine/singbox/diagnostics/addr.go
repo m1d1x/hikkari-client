@@ -33,7 +33,8 @@ func addrDead(ctx context.Context, t loadTarget, local net.IP) (tcp int, dead bo
 	kind, _ := t.Outbound["type"].(string)
 	tlsCfg, _ := t.Outbound["tls"].(map[string]interface{})
 	on, _ := tlsCfg["enabled"].(bool)
-	if udpOutbounds[kind] || !on {
+	quic, _ := t.Outbound["quic"].(bool)
+	if udpOutbounds[kind] || (kind == "naive" && quic) || !on {
 		return 0, false
 	}
 	host, _ := t.Outbound["server"].(string)
