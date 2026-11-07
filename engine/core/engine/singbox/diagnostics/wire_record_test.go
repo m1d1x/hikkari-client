@@ -106,19 +106,20 @@ func TestRecordWireHellos(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "reference.json"), append(out, '\n'), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("reference for core %s: %d rows; send it with: scripts/ops wire-ref-add --file %s",
+	t.Logf("reference for core %s: %d rows in %s; update wireGolden in wire_test.go to match",
 		ref.Core, len(ref.Rows), filepath.Join(dir, "reference.json"))
 }
 
-// referenceRow and the file around it are what the hub's
-// POST /api/v1/ops/wire/reference takes (hikkari-control internal/wirecheck).
+// referenceRow and the file around it name the hellos a core revision sends
+// per fingerprint: the release's record, which the browser reference (plan W4)
+// is held against.
 type referenceRow struct {
 	FP  string `json:"fp"`
 	HK  string `json:"hk"`
 	JA4 string `json:"ja4"`
 }
 
-// referenceName is the fingerprint a recording stands for in the hub's table:
+// referenceName is the fingerprint a recording stands for in reference.json:
 // a plain TLS hello per name, «go» for none. The other cases test the mirror,
 // not the core.
 func referenceName(name string) (string, bool) {
