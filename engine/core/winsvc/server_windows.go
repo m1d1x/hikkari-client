@@ -71,6 +71,7 @@ func NewServer(root string) (*service.Server, error) {
 		SyncBinaries: bins.sync,
 		ResumeCore:   true,
 		NetworkStack: stack,
+		ForeignVPN:   foreignSystem{},
 	})
 	if err != nil {
 		return nil, err

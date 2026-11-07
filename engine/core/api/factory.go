@@ -46,6 +46,10 @@ func (c *Core) InitForEngine(baseDir, id string) error {
 		c.mu.Unlock()
 		return fmt.Errorf("смена движка требует Shutdown перед повторным Init")
 	}
+	// The bundled engines run their core in the service, beside whatever
+	// tunnels other VPN clients keep up; an injected engine (InitWithEngine)
+	// does not, and leaves the machine alone.
+	c.stopForeignVPN = c.stopForeignVPNInService
 	c.mu.Unlock()
 	switch id {
 	case "", "sing-box":

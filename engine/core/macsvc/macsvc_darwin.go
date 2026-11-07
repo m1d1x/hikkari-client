@@ -109,6 +109,7 @@ func Run() error {
 		TrialDeadline:     trialDeadline,
 		NetworkStack:      stack,
 		HostRepair:        stack,
+		ForeignVPN:        foreignSystem{},
 	})
 	if err != nil {
 		return err

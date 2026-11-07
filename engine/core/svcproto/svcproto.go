@@ -7,6 +7,7 @@
 //
 //	GUI ──{"op":"start","engine":…,"config":{…}}──▶ service   sanitise, write, run core
 //	GUI ──{"op":"autotunnel","hosts":[…]}──────▶ service   rewrite the core's autotunnel rule set
+//	GUI ──{"op":"stop_foreign_vpn"}─────▶ service      end another VPN client's tunnel before a connect
 //	GUI ──{"op":"stop"}─────────────────▶ service      stop core
 //	GUI ──{"op":"status"}───────────────▶ service      running? core log? update state?
 //	GUI ──{"op":"check_update"}─────────▶ service      poll the channel now (throttled)
@@ -86,6 +87,11 @@ const (
 	// list travels as data; the service owns the rule set file the core
 	// reads and rewrites the config's rule set path to it — see Sanitize.
 	OpAutoTunnel = "autotunnel"
+
+	// OpStopForeignVPN ends the live tunnel of another VPN client before a
+	// connect: two tunnels fight over the routes and the DNS, and neither
+	// works. See ForeignVPNStop.
+	OpStopForeignVPN = "stop_foreign_vpn"
 )
 
 // CodeAppReplaced: the GUI runs a release other than the installed one (an
@@ -186,6 +192,16 @@ type Response struct {
 	NetworkReset  *NetworkReset  `json:"networkReset,omitempty"`
 	NetworkScan   *NetworkScan   `json:"networkScan,omitempty"`
 	NetworkRepair *NetworkRepair `json:"networkRepair,omitempty"`
+	ForeignVPN    *ForeignVPNStop `json:"foreignVpn,omitempty"`
+}
+
+// ForeignVPNStop is the outcome of OpStopForeignVPN: the clients whose
+// tunnel was ended, and those whose tunnel is still up. Names are the
+// clients' product names (AmneziaVPN) or, for a VPN configuration of the
+// system, the name the user gave it. Empty lists when nothing was found.
+type ForeignVPNStop struct {
+	Stopped []string `json:"stopped"`
+	Failed  []string `json:"failed"`
 }
 
 // ReloadOutcome is what the core did with an OpReload. Declined names what

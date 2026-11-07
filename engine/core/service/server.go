@@ -20,6 +20,7 @@ package service
 import (
 	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/autotunnel"
+	"NekkoVPN/core/foreignvpn"
 	"NekkoVPN/core/fsutil"
 	"context"
 	"errors"
@@ -114,6 +115,10 @@ type Config struct {
 	// the settings belong to the machine, not to the signed-in user. Nil:
 	// the GUI repairs them itself and the op is refused.
 	HostRepair HostRepair
+
+	// ForeignVPN ends another VPN client's tunnel (OpStopForeignVPN). Nil:
+	// the op is refused.
+	ForeignVPN foreignvpn.System
 
 	// CoreReady says the sing-box core answers; a start waits for it, or for
 	// the core's exit and its reason. Nil: its Clash API answers.
@@ -461,6 +466,20 @@ func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
 		}
 		resp := s.status()
 		resp.NetworkRepair = &repair
+		return resp
+	case svcproto.OpStopForeignVPN:
+		if s.cfg.ForeignVPN == nil {
+			return fail(errors.New("остановка других VPN не поддерживается на этой системе"))
+		}
+		stop, err := foreignvpn.Stop(s.cfg.ForeignVPN, s.log.Logf)
+		if err != nil {
+			return fail(err)
+		}
+		if len(stop.Stopped)+len(stop.Failed) > 0 {
+			s.log.Logf("service: foreign vpn: stopped=%s failed=%s", svcproto.ScanList(stop.Stopped), svcproto.ScanList(stop.Failed))
+		}
+		resp := s.status()
+		resp.ForeignVPN = &stop
 		return resp
 	case svcproto.OpStop:
 		if req.Restarting {

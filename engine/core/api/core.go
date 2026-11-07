@@ -82,6 +82,9 @@ type Core struct {
 	host netdoctor.Selection
 	// testerLog streams the engine log to the hub while tester mode is on
 	testerLog *testerlog.Shipper
+	// stopForeignVPN ends other VPN clients' tunnels before a connect and
+	// names them; nil leaves them alone (an injected engine).
+	stopForeignVPN func() []string
 	// autoTunnel is nil for an engine without a view of its direct traffic.
 	autoTunnel *autotunnel.List
 	// support delivers support reports, retrying until the hub takes them

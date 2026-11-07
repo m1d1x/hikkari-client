@@ -701,7 +701,10 @@ class AppState extends ChangeNotifier {
 
   // ----- mutations -----
 
-  Future<void> toggleVpn() async {
+  /// Starts or stops the tunnel. Returns the other VPN clients a start
+  /// turned off first, for the UI to say so; empty otherwise.
+  Future<List<String>> toggleVpn() async {
+    var foreignStopped = const <String>[];
     if (_dryRun) {
       await _withBusy(() async {
         if (isRunning) {
@@ -726,7 +729,7 @@ class AppState extends ChangeNotifier {
         _dryHealth = _dryHealthOn;
         _health = _dryHealth;
       });
-      return;
+      return foreignStopped;
     }
     await _withBusy(() async {
       if (isRunning) {
@@ -735,7 +738,7 @@ class AppState extends ChangeNotifier {
         return;
       }
       final startedAt = DateTime.now();
-      await _core.startVpnAsync();
+      foreignStopped = await _core.startVpnAsync();
       _connectedSince = DateTime.now();
       // The engine can exit asynchronously after Start (e.g. TUN access
       // denied). It can also go down for a moment and come back on its own —
@@ -759,6 +762,7 @@ class AppState extends ChangeNotifier {
         );
       }
     });
+    return foreignStopped;
   }
 
   static const _startPoll = Duration(milliseconds: 500);

@@ -19,6 +19,7 @@ import 'package:provider/provider.dart';
 class _TestEngineCore extends NekkoboxCore {
   bool running = false;
   bool failStart = true;
+  List<String> foreignStopped = const [];
   String logOutput =
       'INFO[0000] starting engine\n'
       'FATAL[0001] configure tun interface: Access is denied (utun99)\n'
@@ -80,12 +81,13 @@ class _TestEngineCore extends NekkoboxCore {
   }
 
   @override
-  Future<void> startVpnAsync() async {
+  Future<List<String>> startVpnAsync() async {
     if (failStart) {
       running = false;
-      return;
+      return const [];
     }
     running = true;
+    return foreignStopped;
   }
 
   @override
@@ -395,9 +397,7 @@ void main() {
           child: MaterialApp(
             theme: buildAppTheme(),
             home: Scaffold(
-              body: BrandHeader(
-                onOpenLogs: () => logsOpened = true,
-              ),
+              body: BrandHeader(onOpenLogs: () => logsOpened = true),
             ),
           ),
         ),
@@ -446,5 +446,42 @@ void main() {
     await toggle;
     expect(state.lastError, isNull);
     expect(state.isRunning, isTrue);
+  });
+
+  testWidgets('a start that turned another VPN off says so', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(420, 650));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final core = _TestEngineCore()
+      ..failStart = false
+      ..foreignStopped = const ['AmneziaVPN'];
+    final state = AppState(core, dryRun: false);
+    await state.start();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: MaterialApp(
+          theme: buildAppTheme(),
+          home: const Scaffold(body: Center(child: PowerToggle())),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(PowerToggle),
+            matching: find.byType(InkWell),
+          )
+          .first,
+    );
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    expect(state.isRunning, isTrue);
+    expect(find.text('AmneziaVPN отключён'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 3));
+    state.dispose();
   });
 }

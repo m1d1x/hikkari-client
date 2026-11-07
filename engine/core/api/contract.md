@@ -62,7 +62,7 @@ idempotent. Repeating `Init` with the same data directory is idempotent; a diffe
 
 | method       | args | data   |
 |--------------|------|--------|
-| `StartVPN`   | —    | `null` |
+| `StartVPN`   | —    | `{foreignVpnStopped?: [string]}` |
 | `StopVPN`    | —    | `null` |
 | `RestartVPN` | —    | `null` |
 | `IsRunning`  | —    | `bool` |

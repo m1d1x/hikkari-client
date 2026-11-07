@@ -73,7 +73,15 @@ abstract class NekkoboxCore {
   // ----- VPN -----
 
   Future<void> restartVpnAsync() => _callAsync('RestartVPN');
-  Future<void> startVpnAsync() => _callAsync('StartVPN');
+
+  /// Starts the tunnel. Returns the other VPN clients whose tunnel the
+  /// engine ended first (two tunnels up and neither works).
+  Future<List<String>> startVpnAsync() async {
+    final data = await _callAsync('StartVPN') as Map<String, dynamic>?;
+    final stopped = data?['foreignVpnStopped'] as List<dynamic>?;
+    return stopped?.cast<String>() ?? const [];
+  }
+
   Future<void> stopVpnAsync() => _callAsync('StopVPN');
   Future<bool> isRunning() async => await _callAsync('IsRunning') as bool;
 

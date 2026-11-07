@@ -65,16 +65,39 @@ func (c *Core) ValidateConfiguration() error {
 		Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, Routing: effective,
 	}, c.backend.Info().Capabilities)
 }
+
+// ConnectOutcome is what a press of «Подключиться» did besides the start.
+type ConnectOutcome struct {
+	// ForeignVPNStopped are the other VPN clients whose tunnel was ended
+	// first, for the UI to say so.
+	ForeignVPNStopped []string `json:"foreignVpnStopped,omitempty"`
+}
+
 func (c *Core) StartVPN() error {
+	_, err := c.Connect()
+	return err
+}
+
+// Connect is the user's start. Another VPN client's tunnel is ended first:
+// with two tunnels up neither works (core/foreignvpn). The host selection
+// is dropped then, since the direct path it found ran under that tunnel.
+func (c *Core) Connect() (ConnectOutcome, error) {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
 	if err := c.flushRoutingLocked(); err != nil {
-		return err
+		return ConnectOutcome{}, err
 	}
 	// A press that waited for superviseCore finds the core already up; starting
 	// it again would be a second break for nothing.
 	if !c.routingPreview && c.backend.IsRunning() {
-		return nil
+		return ConnectOutcome{}, nil
+	}
+	var outcome ConnectOutcome
+	if !c.routingPreview && c.stopForeignVPN != nil {
+		outcome.ForeignVPNStopped = c.stopForeignVPN()
+		if len(outcome.ForeignVPNStopped) > 0 {
+			c.forgetHostLocked()
+		}
 	}
 	started := time.Now()
 	err := c.startVPN()
@@ -84,7 +107,7 @@ func (c *Core) StartVPN() error {
 	if !c.routingPreview {
 		c.reportConnect(started, err)
 	}
-	return err
+	return outcome, err
 }
 
 func (c *Core) startVPN() (err error) {

@@ -12,6 +12,7 @@ import 'profile_flag_badge.dart';
 import 'profiles_sheet.dart';
 import 'service_ping_sheet.dart';
 import 'sparkline.dart';
+import 'vpn_toggle.dart';
 
 class PowerToggle extends StatefulWidget {
   const PowerToggle({super.key});
@@ -82,7 +83,7 @@ class _PowerToggleState extends State<PowerToggle> {
                     ? null
                     : noProfiles
                     ? () => AddProfileDialog.show(context)
-                    : () => s.toggleVpn(),
+                    : () => toggleVpnWithNotice(context, s),
                 onSecondaryTap: kDebugMode
                     ? () => s.simulateEngineFailure()
                     : null,

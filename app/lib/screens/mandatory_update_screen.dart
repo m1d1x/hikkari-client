@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
+import '../widgets/vpn_toggle.dart';
 import '../widgets/window_titlebar.dart';
 
 /// Shown instead of the app while the installed version is below the
@@ -309,7 +310,7 @@ class _TunnelRowState extends State<_TunnelRow> {
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: busy ? null : s.toggleVpn,
+        onTap: busy ? null : () => toggleVpnWithNotice(context, s),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           height: 44,

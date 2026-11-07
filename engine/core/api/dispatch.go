@@ -115,7 +115,11 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 
 	// ----- VPN control -----
 	case "StartVPN":
-		return nil, c.StartVPN()
+		outcome, err := c.Connect()
+		if err != nil {
+			return nil, err
+		}
+		return outcome, nil
 	case "StopVPN":
 		return nil, c.StopVPN()
 	case "RestartVPN":
