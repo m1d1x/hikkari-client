@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// The hot reload control channel of the patched core (core-patches 0009,
+// The hot reload control channel of the patched core (core patch 0009 in m1d1x/sing-box-lx branch hikkari,
 // cmd_run_hikkari.go): the core started with --hikkari-control reads
 // "hikkari:reload <sha256>" from stdin, applies the config file in place when
 // only proxy outbounds and group members changed, and answers with one

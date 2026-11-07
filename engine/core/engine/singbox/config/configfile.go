@@ -475,7 +475,7 @@ const realIPv6SniffTimeout = "5s"
 // Every global address goes by the name it sniffed: a Russian name then goes
 // direct and connects over whatever the machine has, any other leaves the exit to
 // pick the address. The core keeps the replaced address for ip_cidr rules
-// (core-patches 0008), so a Russian range goes direct under any name. A refusal of Russian ranges before the handshake did not do
+// (core patch 0008, m1d1x/sing-box-lx branch hikkari), so a Russian range goes direct under any name. A refusal of Russian ranges before the handshake did not do
 // this: on Windows sites with an AAAA record stayed closed in Chrome while those
 // without one opened (plans/2026-11-05-fleet-ipv6-exit.md). Global unicast only:
 // LAN and fake addresses keep their routes. This sniff waits far longer than the

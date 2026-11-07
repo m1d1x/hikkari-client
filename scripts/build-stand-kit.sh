@@ -8,18 +8,18 @@
 # A vantage is a Linux box, so the kit is that core and the client's own link
 # parser, both linux-amd64, built from this tree:
 #
-#   OUT_DIR/blobs/<sha256>               sing-box-lx at SING_BOX_LX_TAG with
-#                                        core-patches/sing-box-lx/*.patch, and
-#                                        engine/cmd/census-parse
+#   OUT_DIR/blobs/<sha256>               sing-box-lx from our fork
+#                                        m1d1x/sing-box-lx at SING_BOX_LX_TAG,
+#                                        and engine/cmd/census-parse
 #   OUT_DIR/stand/linux-amd64.json       {"version", "core", "files": {
 #                                        "sing-box": {"sha256", "size"},
 #                                        "census-parse": {"sha256", "size"}}}
 #
 # The layout is the update channel's (scripts/publish-update-channel.sh):
 # blobs are shared, content-addressed, and the manifest names them by hash.
-# "core" is how every row of the dataset names the core: the tag and the first
-# 8 hex of SHA-256 over the patches in order, as hikkari-control `ops matrix`
-# names the core it builds itself.
+# "core" is how every row of the dataset names the core: the fork's tag, which
+# already holds our patches, as hikkari-control `ops matrix` names the core it
+# builds itself.
 #
 # Environment: SING_BOX_LX_TAG (required), as build-windows.yml pins it.
 set -euo pipefail
@@ -35,15 +35,12 @@ OUT="$(cd "$OUT" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-git clone -q --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/Leadaxe/sing-box-lx "$WORK/sbx"
+git clone -q --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/m1d1x/sing-box-lx "$WORK/sbx"
 (
 	cd "$WORK/sbx"
 	git submodule update -q --init --depth 1 submodules/gvisor submodules/sing-tun submodules/utls submodules/wireguard-go
-	for p in "$REPO"/core-patches/sing-box-lx/*.patch; do
-		git apply "$p"
-	done
 	TAGS=$(make -s -f Makefile.lx lx-print-tags)
-	CORE_VERSION="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG##*-}-hikkari"
+	CORE_VERSION="$(tr -d '[:space:]' < upstream.version)-${SING_BOX_LX_TAG#*-}"
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -tags "$TAGS" \
 		-ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$CORE_VERSION' -checklinkname=0 -s -w -buildid=" \
 		-o "$WORK/sing-box" ./cmd/sing-box
@@ -54,8 +51,7 @@ git clone -q --depth 1 --branch "$SING_BOX_LX_TAG" https://github.com/Leadaxe/si
 		-o "$WORK/census-parse" ./cmd/census-parse
 )
 
-PATCH_SUM="$(cat "$REPO"/core-patches/sing-box-lx/*.patch | sha256sum | cut -c1-8)"
-CORE_LABEL="sing-box-lx $SING_BOX_LX_TAG+$PATCH_SUM"
+CORE_LABEL="sing-box-lx $SING_BOX_LX_TAG"
 
 entry() {
 	local f="$1" sum size

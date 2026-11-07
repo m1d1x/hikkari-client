@@ -103,7 +103,7 @@ blackhole, RST, задержку и потерю UDP. Всё на loopback, root
 не мешает (свои порты 21xxx).
 
 ```bash
-# ядро собрать как в CI: sing-box-lx нужного тега + core-patches/sing-box-lx/*.patch
+# ядро собрать как в CI: m1d1x/sing-box-lx по тегу SING_BOX_LX_TAG из build-windows.yml (наши патчи уже коммиты ветки hikkari)
 cd engine && go run ./cmd/failover-stand -core /path/to/sing-box -xray /path/to/xray
 ```
 

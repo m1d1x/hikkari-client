@@ -231,7 +231,7 @@ func (b *Backend) SetTesterGate(tester func() bool) {
 }
 
 // flowRetryDelay is how long a TCP dial to a server stays silent before another
-// attempt starts from a new source port (core-patches/.../0003). Well over any
+// attempt starts from a new source port (core patch 0003, m1d1x/sing-box-lx branch hikkari). Well over any
 // RTT that works, so a path that answers never sees a second SYN.
 const flowRetryDelay = "1s"
 
