@@ -113,24 +113,38 @@ func TestHelloDiffIgnoresWhatChangesPerConnection(t *testing.T) {
 	}
 }
 
-// What Chrome 157 and Firefox 159 showed (07.11): chrome_155 lacks one
-// extension of Chrome 157 (0x12e0; 0xca34 is Chrome's own), chrome lacks it
-// too and the ML-DSA signature algorithms; firefox still offers FFDHE and two
-// CBC suites Firefox 159 dropped, and lacks session_ticket and
+// What Chrome 157 and Firefox 159 showed (07.11). Branded Chrome 157 — headed
+// or headless, without the field-trial testing config Chrome for Testing
+// applies — sends exactly the core's chrome_155. The testing config puts it in
+// PqcBandwidthExperiment, whose arm adds BoringSSL's server_padding (0x12e0,
+// body 0: ask the server for 0 bytes of EncryptedExtensions padding); branded
+// Chrome sends that only to users Finch puts in the arm. firefox still offers
+// FFDHE and two CBC suites Firefox 159 dropped, and lacks session_ticket and
 // psk_key_exchange_modes. chrome-headless-shell is not the browser: its hello
 // is Chromium 152's.
 func TestBrowserRecordingsOfStable0711(t *testing.T) {
-	c157 := readHello(t, "browser-chrome-157-a")
-	if d := helloDiff(c157, readHello(t, "browser-chrome-157-b")); len(d) != 0 {
-		t.Fatalf("two runs of Chrome 157 differ: %+v", d)
+	c155 := readHello(t, "tls-chrome_155")
+	for _, name := range []string{"browser-chrome-157-headed", "browser-chrome-157-noft-a", "browser-chrome-157-noft-b"} {
+		if b := readHello(t, name); b.hk() != c155.hk() || len(helloDiff(c155, b)) != 0 {
+			t.Fatalf("%s: hk %s, chrome_155 %s", name, b.hk(), c155.hk())
+		}
 	}
-	if onlyCore, onlyBrowser := extsOnlyIn(readHello(t, "tls-chrome_155"), c157); len(onlyCore) != 0 || !reflect.DeepEqual(onlyBrowser, []string{"12e0"}) {
-		t.Fatalf("chrome_155 vs Chrome 157: only core %v, only browser %v", onlyCore, onlyBrowser)
+	trial := readHello(t, "browser-chrome-157-a")
+	if onlyCore, onlyBrowser := extsOnlyIn(c155, trial); len(onlyCore) != 0 || !reflect.DeepEqual(onlyBrowser, []string{"12e0"}) {
+		t.Fatalf("chrome_155 vs Chrome 157 in the trial: only core %v, only browser %v", onlyCore, onlyBrowser)
 	}
-	if shell := readHello(t, "browser-chrome-157-shell"); shell.hk() != readHello(t, "browser-chromium-152-pane-a").hk() || shell.hk() == c157.hk() {
-		t.Fatalf("headless shell %s, Chrome 157 %s", shell.hk(), c157.hk())
+	for _, e := range trial.Exts {
+		if e.Type == 0x12e0 && string(e.Data) != "\x00\x00" {
+			t.Fatalf("server_padding body %x", e.Data)
+		}
 	}
-	ff := readHello(t, "browser-firefox-159-a")
+	if shell := readHello(t, "browser-chrome-157-shell"); shell.hk() != readHello(t, "browser-chromium-152-pane-a").hk() || shell.hk() == c155.hk() {
+		t.Fatalf("headless shell %s, chrome_155 %s", shell.hk(), c155.hk())
+	}
+	ff := readHello(t, "browser-firefox-159-sni")
+	if ff.hk() != readHello(t, "browser-firefox-159-a").hk() {
+		t.Fatal("Firefox 159's hk follows the server name")
+	}
 	core := helloFields(readHello(t, "tls-firefox"))
 	if f := helloFields(ff); f["groups"] != "x25519mlkem768,x25519,p256,p384,p521" || !strings.Contains(core["groups"], "ffdhe2048") {
 		t.Fatalf("firefox groups: core %s, browser %s", core["groups"], f["groups"])
