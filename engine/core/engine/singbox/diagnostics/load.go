@@ -110,7 +110,7 @@ func loadTargets(config []byte) ([]loadTarget, error) {
 func (r *Runner) maybeLoad(ctx context.Context) {
 	r.mu.Lock()
 	allowed := r.reachAllowed
-	due := !r.loadBusy && time.Since(r.loadAt) >= loadEvery
+	due := !r.loadBusy && !r.voiceBusy && time.Since(r.loadAt) >= loadEvery
 	ifaces := r.ifaces
 	r.mu.Unlock()
 	if allowed == nil || !due || !allowed() {
@@ -202,6 +202,11 @@ func (r *Runner) loadNow(binary string, ifaces []physIface) []string {
 	if r.loadBusy {
 		r.mu.Unlock()
 		return []string{`error="a round is running, its lines follow"`}
+	}
+	// Its bursts would read as the tunnel losing the voice series' datagrams.
+	if r.voiceBusy {
+		r.mu.Unlock()
+		return []string{`error="a voice round is running: ask again in a minute"`}
 	}
 	// A request does not get past the mobile network's limit of one round in
 	// loadEvery: a burst there can shut the tester's whole network.

@@ -23,6 +23,8 @@ scripts/ops testers
 | `request_diag` | `scripts/ops diag 001` | диагностика у тестера на связи, ждёт до 150 с; `--kind snapshot` |
 | `probe_targets` | `scripts/ops probe 001 --targets ams7-443=1.2.3.4:443` | по 12 TCP-соединений к адресам с карты тестера, мимо туннеля; Windows, клиент с 1.0.25 |
 | `probe_load` | `scripts/ops load 001` | раунд `diag:load` сейчас, по всем профилям тестера, ждёт до 15 мин; Windows, клиент с 1.0.33 |
+| `probe_voice` | `scripts/ops probe-voice 001` | звонок на пробу сейчас: 30 с датаграмм через туннель (на Windows ещё с карты), ждёт до 4 мин; туннель включён, клиент новее 1.0.59 |
+| `voice` | `scripts/ops voice --last 7d` | датасет голоса `voice_runs` всех тестеров с вердиктом `ok`/`audible`; также `--who`, `--proto`, `--rows 1` |
 | `errors` | `scripts/ops errors --window 24h` | группы ошибок клиентов; также `7d`, `30d` |
 | `tickets`, `ticket` | `scripts/ops tickets`, `scripts/ops ticket 4` | обращения в поддержку |
 | `ci_status` | `scripts/ops ci --repo client` | прогоны GitHub Actions; `control` для hub |
@@ -73,6 +75,15 @@ SSH-туннель и токен инструмент поднимает сам:
 - `diag:conn`: куда реально идёт трафик приложений и через какой выход. TCP браузера в обычных раундах только считается в
   `diag:conns`, поимённо его пишет `--kind snapshot` (клиент новее 1.0.37): хост, профиль, `up`, `down`. `down=0` при `up>0`: ответа нет.
 - `diag:stun`: UDP через туннель и с физической карты.
+- `diag:voice` (клиент новее 1.0.59, режим тестера): звонок на пробу. 30 с по 160 Б раз в 20 мс STUN-запросами на
+  `stun.cloudflare.com`, раз в 30 минут, на мобильной сети раз в 2 часа, не одновременно с `diag:load`. `path=tun` —
+  через туннель на выбранном профиле (`profile`, `proto`), `path=direct` — с физической карты мимо туннеля, только Windows:
+  сколько теряет сама сеть тестера. `isp` и `mobile` — сеть тестера (`isp_at=card` сейчас, `baseline` — снимок до туннеля).
+  Читать `gaps60`/`gaps150`/`gap_max`: паузы между ответами, которые слышит звонок. Через TCP-профиль (VLESS, Naive) потеря
+  около нуля, а пауза есть: TCP чинит сегмент и отдаёт пачкой. Паузы и в `direct` того же раунда — дело в сети тестера.
+  Hub складывает серии в `voice_runs` навсегда (лог живёт неделю); инструмент `voice` даёт группы по тестеру, пути,
+  протоколу и сети с вердиктом: `audible` — пауз больше 60 мс раз в минуту и чаще. Зачем это:
+  `plans/research/2026-11-08-udp-abroad-from-testers.md` (нужен ли UDP-вход рядом с TCP-профилями).
 - `diag:config`: конфиг приложения без секретов, а не то, на чём работает ядро. Строка обрезается на 8 КБ, не разбирай её как целый JSON. Ядро получает его при запуске: смотри последнюю строку `service: sing-box config (N bytes) hash=…` в `--src service`. За обновление один обрыв (служба и клиент новее 1.0.47): `updates: core stays down until the app sends the new release's config`, затем `service: sing-box is up on the config this release sent`. В логе клиента: `core is wanted and down: connecting (attempt N)`, `core is up on this release's config`. Если приложение не пришло за минуту: `service: no config from the app within 1m0s`; потом при его запуске `core config differs from this release: reconnecting`. Замена самой службы на Windows ждёт отключения или старта службы: `binaries: HikkariService.exe … waits until the core stops`.
 - `lifecycle` (после 1.0.50): намерение и результат перезапуска клиента. `begin id=N reason=…` пишется **до** остановки; `end` с тем же ID — после запуска/отката. `running=true ok=false` в конце значит, что операция не удалась, но ядро восстановлено. ID уникален в пределах процесса приложения; при сопоставлении учитывай время и перезапуск приложения. `reason` различает manual/preset/snapshot routing, profiles-runtime-change, physical-network-change, network-repair, auto-mode-change, profile-delete, profile-switch-fallback, release-config-mismatch и api-restart. Суффикс `/stop` обозначает вложенную остановку, `/rollback` — очистку неудачного кандидата. `caller` содержит цепочку функций, включая асинхронный источник (синхронизацию подписки/каталога или таймер правил); `changed` — категории/число правил, а не их значения. Профили: added/removed/changed, active_changed/auto_changed. Смотри внешнюю операцию целиком: успешный `/stop` ещё не означает успешный перезапуск. `begin` без `end` требует проверки дальнейших логов и `gap`.
 - Применение на ходу (клиент новее 1.0.51, патч ядра 0009): изменения профилей из подписки и удаление профиля сначала

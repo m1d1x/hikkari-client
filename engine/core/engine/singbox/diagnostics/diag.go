@@ -56,6 +56,12 @@ type Runner struct {
 	loadAt       time.Time   // last load round; see load.go
 	loadBusy     bool        // a load round is running
 	loadMobile   bool        // the last round found a mobile network
+
+	voiceAddr   string    // voiceTarget resolved before the TUN comes up; see voice.go
+	baseNet     string    // the network the tunnel-down baseline was seen from
+	voiceAt     time.Time // last voice round
+	voiceBusy   bool      // a voice round is running
+	voiceMobile bool      // the last voice round found a mobile network
 }
 
 type physIface struct {
@@ -75,6 +81,10 @@ func (r *Runner) Baseline() {
 	r.log.Logf("[diag] ===== baseline snapshot (tunnel down) =====")
 	r.sysInfo()
 	r.resolveStun()
+	base := netOf(publicIP(nil, r.stunList()))
+	r.mu.Lock()
+	r.baseNet = base
+	r.mu.Unlock()
 	r.goInterfaces("pre")
 	r.stunRound("direct/no-vpn")
 	runCommands(r.log, "pre", preCommands())
@@ -158,6 +168,7 @@ func (r *Runner) loop(ctx context.Context) {
 	runCommands(r.log, "dnsflood", dnsFloodCommands())
 	r.probeRound(ctx)
 	r.maybeReach(ctx)
+	r.maybeVoice(ctx)
 	r.maybeLoad(ctx)
 
 	// Dense for the first 10 minutes, then once a minute for the whole
@@ -182,6 +193,7 @@ func (r *Runner) loop(ctx context.Context) {
 			r.probeRound(ctx)
 		}
 		r.maybeReach(ctx)
+		r.maybeVoice(ctx)
 		r.maybeLoad(ctx)
 	}
 }
@@ -504,6 +516,7 @@ func (r *Runner) listedProcesses() map[string]string {
 
 func (r *Runner) resolveStun() {
 	var addrs []string
+	voice := ""
 	for _, t := range stunTargets {
 		host, port, _ := net.SplitHostPort(t)
 		ips, err := net.LookupIP(host)
@@ -514,6 +527,9 @@ func (r *Runner) resolveStun() {
 		for _, ip := range ips {
 			if ip.To4() != nil {
 				addrs = append(addrs, net.JoinHostPort(ip.String(), port))
+				if t == voiceTarget {
+					voice = net.JoinHostPort(ip.String(), port)
+				}
 				r.log.Logf("[diag:stun] %s → %s", t, ip)
 				break
 			}
@@ -521,6 +537,9 @@ func (r *Runner) resolveStun() {
 	}
 	r.mu.Lock()
 	r.stunAddr = addrs
+	if voice != "" {
+		r.voiceAddr = voice
+	}
 	r.mu.Unlock()
 }
 

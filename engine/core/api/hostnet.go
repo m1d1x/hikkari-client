@@ -171,7 +171,8 @@ func doctorLines(report NetworkReport) []string {
 // [diag:*] lines into the log as the session diagnostics do, load_profiles runs
 // each profile in a core of its own beside the tunnel as the periodic round
 // does, and probe_targets opens and closes bare TCP connections to the
-// addresses the operator named.
+// addresses the operator named. probe_voice sends a call's datagrams through
+// the tunnel for half a minute, and on Windows from the card beside it.
 func (c *Core) testerCommands() map[string]testerlog.Command {
 	return map[string]testerlog.Command{
 		"run_doctor": {Source: "doctor", Run: func(context.Context, json.RawMessage) []string {
@@ -195,6 +196,13 @@ func (c *Core) testerCommands() map[string]testerlog.Command {
 				return []string{"error=\"this engine has no load round\""}
 			}
 			return loader.LoadNow()
+		}},
+		"probe_voice": {Source: "diag:voice", Run: func(context.Context, json.RawMessage) []string {
+			voicer, ok := c.backend.(interface{ VoiceNow() []string })
+			if !ok {
+				return []string{"error=\"this engine has no voice round\""}
+			}
+			return voicer.VoiceNow()
 		}},
 		"probe_targets": {Source: "probe", Run: diag.ProbeTargets},
 		"proto_targets": {Source: "protoprobe", Run: func(ctx context.Context, params json.RawMessage) []string {

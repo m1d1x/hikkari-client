@@ -368,6 +368,16 @@ func (b *Backend) Snapshot() { b.diagnostics.Snapshot(b.IsRunning()) }
 // LoadNow starts a load round over every profile right now, on request.
 func (b *Backend) LoadNow() []string { return b.diagnostics.LoadNow() }
 
+// VoiceNow times a call's datagrams through the tunnel right now, on request.
+// With the tunnel down the series would time the bare network under the
+// tunnel's name, so it refuses.
+func (b *Backend) VoiceNow() []string {
+	if !b.IsRunning() {
+		return []string{`error="the tunnel is down: a voice round needs it up"`}
+	}
+	return b.diagnostics.VoiceNow()
+}
+
 func (b *Backend) Diagnose(reason string) {
 	if d, ok := b.process.(interface{ Diagnose(string) }); ok {
 		d.Diagnose(reason)
