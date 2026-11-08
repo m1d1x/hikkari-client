@@ -127,9 +127,7 @@ class _ImportRoutingDialogState extends State<ImportRoutingDialog> {
             decoration: BoxDecoration(
               color: t.surface2,
               borderRadius: BorderRadius.circular(t.radius),
-              border: Border.all(
-                color: _error != null ? t.bad : t.border,
-              ),
+              border: Border.all(color: _error != null ? t.bad : t.border),
             ),
             child: TextField(
               key: const ValueKey('import_routing_text_field'),
@@ -145,7 +143,8 @@ class _ImportRoutingDialogState extends State<ImportRoutingDialog> {
               ),
               decoration: InputDecoration(
                 contentPadding: const EdgeInsets.all(12),
-                hintText: '{\n  "version": 1,\n  "groups": { ... },\n  "services": { ... }\n}',
+                hintText:
+                    '{\n  "version": 1,\n  "groups": { ... },\n  "services": { ... }\n}',
                 hintStyle: TextStyle(
                   color: t.textFaint,
                   fontSize: 12,
@@ -165,11 +164,7 @@ class _ImportRoutingDialogState extends State<ImportRoutingDialog> {
             Text(
               _error!,
               key: const ValueKey('import_routing_error_text'),
-              style: TextStyle(
-                color: t.bad,
-                fontSize: 11.5,
-                height: 1.3,
-              ),
+              style: TextStyle(color: t.bad, fontSize: 11.5, height: 1.3),
             ),
           ],
         ],

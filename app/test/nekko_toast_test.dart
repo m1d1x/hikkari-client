@@ -17,6 +17,8 @@ class _Core extends NekkoboxCore {
 class _ImportState extends AppState {
   _ImportState() : super(_Core());
   bool added = false;
+  final imported = <String>[];
+  bool fail = false;
   @override
   List<ProfileInfo> get profiles => added
       ? [
@@ -25,12 +27,51 @@ class _ImportState extends AppState {
       : [];
   @override
   Future<String?> addProfileFromUri(String uri) async {
+    imported.add(uri);
+    if (fail) return null;
     added = true;
     return 'test';
   }
 }
 
 void main() {
+  testWidgets('deep link imports immediately and can retry after failure', (
+    tester,
+  ) async {
+    final state = _ImportState()..fail = true;
+    addTearDown(state.dispose);
+    const link = 'https://sub.example.com/sub/token';
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: MaterialApp(
+          theme: buildAppTheme(),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () =>
+                    ImportProfileDialog.show(context, initialLink: link),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(state.imported, [link]);
+    expect(find.text('не удалось добавить'), findsOneWidget);
+    state.fail = false;
+    await tester.tap(find.text('добавить'));
+    await tester.pump();
+    expect(state.imported, [link, link]);
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(find.text('профиль добавлен'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'import folds into the Nekko outcome and closes without a second notice',
     (tester) async {

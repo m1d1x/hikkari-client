@@ -544,7 +544,7 @@ void main() {
     await tester.pumpAndSettle();
 
     log = await logText(tester);
-    expect(log, contains('файл hosts: отключено записей — 1'));
+    expect(log, contains('файл hosts: отключено записей: 1'));
     expect(log, contains('перезагрузка не нужна'));
     expect(log, isNot(contains('перезагрузите компьютер')));
     expect(core.calls.where((c) => c == 'NetworkDiagnose'), hasLength(2));

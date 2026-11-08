@@ -70,11 +70,7 @@ class _WindowTitlebarState extends State<WindowTitlebar> with WindowListener {
                       ? MainAxisAlignment.center
                       : MainAxisAlignment.start,
                   children: [
-                    SvgPicture.asset(
-                      'assets/logo.svg',
-                      width: 14,
-                      height: 14,
-                    ),
+                    SvgPicture.asset('assets/logo.svg', width: 14, height: 14),
                     const SizedBox(width: 8),
                     Text(
                       'hikkari',

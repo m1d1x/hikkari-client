@@ -10,7 +10,18 @@ import 'service_icon.dart';
 
 const _serviceAliases = <String, List<String>>{
   'steam': ['стим'],
-  'faceit': ['фейсит', 'фасик', 'faceit', 'кс', 'кс2', 'cs2', 'cs', 'кска', 'античит', 'ac'],
+  'faceit': [
+    'фейсит',
+    'фасик',
+    'faceit',
+    'кс',
+    'кс2',
+    'cs2',
+    'cs',
+    'кска',
+    'античит',
+    'ac',
+  ],
   'discord': ['дискорд', 'дс'],
   'telegram': ['телеграм', 'телега', 'тг'],
   'youtube': ['ютуб', 'ютуп'],
@@ -29,7 +40,15 @@ const _serviceAliases = <String, List<String>>{
   'tbank': ['тинькофф', 'тиньк', 'тбанк', 'т-банк', 'tinkoff', 'tbank'],
   'vtb': ['втб', 'vtb', 'втб онлайн'],
   'alfa': ['альфа', 'альфабанк', 'альфа-банк', 'alfa'],
-  'banks': ['банк', 'банки', 'газпромбанк', 'райффайзен', 'мир', 'юмани', 'точка'],
+  'banks': [
+    'банк',
+    'банки',
+    'газпромбанк',
+    'райффайзен',
+    'мир',
+    'юмани',
+    'точка',
+  ],
   'gosuslugi': ['госуслуги', 'налог', 'почта', 'мосуслуги', 'мосру', 'emias'],
   'transport-ru': [
     'ржд',
@@ -166,10 +185,12 @@ class _ServicePresetsState extends State<ServicePresets> {
     if (rules.any((r) => r.toLowerCase().contains(q))) return true;
     final aliases = _serviceAliases[s.id];
     if (aliases != null &&
-        aliases.any((a) =>
-            a.contains(q) ||
-            (a.length >= 3 && q.contains(a)) ||
-            q.split(RegExp(r'\s+')).contains(a))) {
+        aliases.any(
+          (a) =>
+              a.contains(q) ||
+              (a.length >= 3 && q.contains(a)) ||
+              q.split(RegExp(r'\s+')).contains(a),
+        )) {
       return true;
     }
     return false;

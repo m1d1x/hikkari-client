@@ -117,7 +117,7 @@ class _NekkoErrorCardState extends State<NekkoErrorCard> {
     var sent = true;
     try {
       await appState.submitSupportReport(
-        'Ошибка подключения: ${widget.title} — ${widget.summary}',
+        'Ошибка подключения: ${widget.title}: ${widget.summary}',
       );
     } catch (_) {
       sent = false;

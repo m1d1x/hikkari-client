@@ -198,7 +198,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
       if (overrides > 0) {
         _appendLog(
           'WARN',
-          'файл hosts: $overrides запис${overrides == 1 ? "ь" : "ей"} подменяет популярные домены — «глубокий сброс» отключит их',
+          'файл hosts: $overrides запис${overrides == 1 ? "ь" : "ей"} подменяет популярные домены: «глубокий сброс» отключит их',
         );
       }
       if (supported) _applySystemScan(rep);
@@ -242,7 +242,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
         setState(() => _proxyHealth = ComponentHealth.warning);
         _appendLog(
           'WARN',
-          'системный прокси указывает на неработающий локальный порт — «починить сеть» отключит его',
+          'системный прокси указывает на неработающий локальный порт: «починить сеть» отключит его',
         );
       case 'live':
         setState(() => _proxyHealth = ComponentHealth.ok);
@@ -383,7 +383,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
     } else {
       _appendLog(
         'WARN',
-        'инструменты обхода блокировок: ${dpi.join(", ")} — «глубокий сброс» остановит их и переведёт в ручной запуск',
+        'инструменты обхода блокировок: ${dpi.join(", ")}: «глубокий сброс» остановит их и переведёт в ручной запуск',
       );
     }
     final wfp = (rep['foreignWfp'] as List?)?.cast<String>();
@@ -397,7 +397,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
     } else {
       _appendLog(
         'INFO',
-        '$firewall: ${wfp.join(", ")} — только для сведения, не трогаем',
+        '$firewall: ${wfp.join(", ")}: только для сведения, не трогаем',
       );
     }
   }
@@ -483,7 +483,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
         final names = ((res['staticAdapters'] as List?) ?? const []).join(', ');
         _appendLog(
           'WARN',
-          'на адаптерах вручную задан IP-адрес — сброс приостановлен',
+          'на адаптерах вручную задан IP-адрес: сброс приостановлен',
         );
         final force = await NekkoDialog.confirm(
           context,
@@ -508,7 +508,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
       if (hostsDisabled > 0) {
         _appendLog(
           'FIX',
-          'файл hosts: отключено записей — $hostsDisabled (создана резервная копия)',
+          'файл hosts: отключено записей: $hostsDisabled (создана резервная копия)',
         );
       }
       final dpiStopped =
@@ -527,7 +527,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
         );
       }
       if (res['rebootRequired'] == true) {
-        _appendLog('WARN', 'сброс выполнен — перезагрузите компьютер');
+        _appendLog('WARN', 'сброс выполнен: перезагрузите компьютер');
         NekkoToast.show(
           context,
           'стек сброшен: перезагрузите компьютер',
@@ -536,7 +536,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
       } else if (res['networkPending'] == true) {
         _appendLog(
           'WARN',
-          'сброс выполнен, но сеть ещё не поднялась — подождите минуту и нажмите «проверить»',
+          'сброс выполнен, но сеть ещё не поднялась: подождите минуту и нажмите «проверить»',
         );
         NekkoToast.show(
           context,

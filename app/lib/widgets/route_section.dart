@@ -589,7 +589,7 @@ class _ModeCaptionState extends State<_ModeCaption> {
     final t = context.tokens;
     final state = widget.state;
     final sentence = !state.routing.enabled
-        ? 'маршрутизация выключена — весь трафик идёт через vpn'
+        ? 'маршрутизация выключена: весь трафик идёт через vpn'
         : (state.routing.mode == RoutingMode.bypass
               ? 'через vpn идёт всё, кроме того что в списке'
               : 'через vpn идёт только то, что в списке');

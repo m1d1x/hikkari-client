@@ -92,6 +92,9 @@ class AppState extends ChangeNotifier {
   Map<String, List<PingSample>> _serviceUptime = const {};
   ServerCleanliness _cleanliness = ServerCleanliness.off;
   bool _busy = false;
+  // Which way the power button is taking the tunnel right now, so the screen
+  // can say "подключение…" / "отключение…" instead of a silent wait.
+  VpnTransition _vpnTransition = VpnTransition.none;
   // True between a routing list edit and the engine restart that picks it up.
   // The UI uses this for the "применяется… / применено" badge near the mode row.
   RoutingApplyStatus _routingApply = RoutingApplyStatus.idle;
@@ -214,6 +217,12 @@ class AppState extends ChangeNotifier {
   /// refreshed each tick alongside health (the engine read is instant).
   ServerCleanliness get cleanliness => _cleanliness;
   bool get busy => _busy;
+
+  /// The power button's press in flight: [VpnTransition.connecting] from the
+  /// press until the core is up or the start failed, [VpnTransition.disconnecting]
+  /// until it is down. Other busy work (profile switch, routing) leaves it
+  /// [VpnTransition.none].
+  VpnTransition get vpnTransition => _vpnTransition;
   RoutingApplyStatus get routingApply {
     if (_routingApply == RoutingApplyStatus.applied &&
         DateTime.now().millisecondsSinceEpoch - _routingAppliedAt > 6000) {
@@ -638,19 +647,19 @@ class AppState extends ChangeNotifier {
       CleanlinessReason(
         severity: 'high',
         title:
-            'Хостинг/датацентр IP — Cloudflare Turnstile почти всегда челленджит такие',
+            'Хостинг/датацентр IP: Cloudflare Turnstile почти всегда челленджит такие',
         fix:
-            'Перейти на residential или mobile выход — это устраняет главную причину фрода.',
+            'Перейти на residential или mobile выход: это устраняет главную причину фрода.',
       ),
       CleanlinessReason(
         severity: 'high',
         title: 'IP/подсеть в abuse-фидах (репутация: High)',
-        fix: 'Сменить IP/подсеть — с этого сервера уже спамили/абузили.',
+        fix: 'Сменить IP/подсеть: с этого сервера уже спамили/абузили.',
       ),
       CleanlinessReason(
         severity: 'med',
         title:
-            'ASN зарегистрирован в RU (гео IP — DE): CF повышает подозрительность',
+            'ASN зарегистрирован в RU (гео IP: DE): CF повышает подозрительность',
         fix: 'Выбрать провайдера с ASN в той же юрисдикции, что и гео.',
       ),
     ],
@@ -778,6 +787,19 @@ class AppState extends ChangeNotifier {
   /// Starts or stops the tunnel. Returns the other VPN clients a start
   /// turned off first, for the UI to say so; empty otherwise.
   Future<List<String>> toggleVpn() async {
+    if (_busy) return const <String>[];
+    _vpnTransition = isRunning
+        ? VpnTransition.disconnecting
+        : VpnTransition.connecting;
+    try {
+      return await _toggleVpn();
+    } finally {
+      _vpnTransition = VpnTransition.none;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<List<String>> _toggleVpn() async {
     var foreignStopped = const <String>[];
     if (_dryRun) {
       await _withBusy(() async {
@@ -1315,7 +1337,7 @@ class AppState extends ChangeNotifier {
     if (_dryRun) return _simulatedLogs();
     try {
       final logs = await _core.logTail();
-      return logs.isEmpty ? '[лог пуст — ядро ожидает подключения]' : logs;
+      return logs.isEmpty ? '[лог пуст: ядро ожидает подключения]' : logs;
     } on NekkoboxError catch (e) {
       return 'log error: ${e.message}';
     }
@@ -1500,4 +1522,7 @@ class AppState extends ChangeNotifier {
 /// - [pending] — list was just edited; debounce timer is running.
 /// - [applying] — engine restart in flight.
 /// - [applied] — last change has been picked up by the engine.
+/// Direction of the power button's press while it is in flight.
+enum VpnTransition { none, connecting, disconnecting }
+
 enum RoutingApplyStatus { idle, pending, applying, applied, failed, preview }

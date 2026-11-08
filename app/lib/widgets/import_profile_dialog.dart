@@ -20,7 +20,7 @@ import '../ui/nekko_error_card.dart';
 /// details remain available to copy without taking over the dialog.
 class ImportProfileDialog extends StatefulWidget {
   /// A link handed over from outside (a `hikkari://import` deep link): shown
-  /// filled in and added only when the user confirms it.
+  /// imported immediately while the dialog shows progress and the result.
   final String? initialLink;
 
   const ImportProfileDialog({super.key, this.initialLink});
@@ -49,6 +49,7 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
   bool _submitting = false;
   int? _added;
   String _lastObservedText = '';
+  Timer? _closeTimer;
 
   @override
   void initState() {
@@ -57,11 +58,15 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
     if (link != null) {
       _ctrl.text = link;
       _lastObservedText = link;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_submit());
+      });
     }
   }
 
   @override
   void dispose() {
+    _closeTimer?.cancel();
     _ctrl.dispose();
     super.dispose();
   }
@@ -126,9 +131,9 @@ class _ImportProfileDialogState extends State<ImportProfileDialog> {
     if (name != null) {
       final added = state.profiles.length - countBefore;
       setState(() => _added = added);
-      await Future<void>.delayed(const Duration(milliseconds: 1800));
-      if (!mounted) return;
-      Navigator.of(context).pop();
+      _closeTimer = Timer(const Duration(milliseconds: 1800), () {
+        if (mounted) Navigator.of(context).pop();
+      });
     } else {
       setState(() {
         _submitting = false;

@@ -277,7 +277,7 @@ void main() {
       expect(launched, Uri.parse('https://hikkari.net/pay'));
 
       // Direct deep-link call to ImportProfileDialog.show(..., initialLink: ...)
-      // still opens ImportProfileDialog straight away with the link filled in.
+      // imports immediately, shows the result and closes automatically.
       const deepLinkUrl = 'https://sub.hikkari.net/sub/demo123';
       await tester.pumpWidget(
         ChangeNotifierProvider<AppState>.value(
@@ -301,8 +301,9 @@ void main() {
       expect(find.byType(AddProfileDialog), findsNothing);
       expect(find.byType(ImportProfileDialog), findsOneWidget);
       expect(find.widgetWithText(TextField, deepLinkUrl), findsOneWidget);
-      await tester.tap(find.text('отмена'));
+      await tester.pump(const Duration(milliseconds: 1800));
       await tester.pumpAndSettle();
+      expect(find.byType(ImportProfileDialog), findsNothing);
 
       // Also verify ProfilesSheet's «+ добавить» button opens AddProfileDialog.
       await tester.pumpWidget(

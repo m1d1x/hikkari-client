@@ -27,8 +27,8 @@ sealed class DeepLink {
   }
 }
 
-/// Import a subscription or a server key. Always confirmed by the user in the
-/// import dialog: any web page can open a `hikkari://` link.
+/// Import a subscription or a server key. The import dialog shows progress
+/// immediately; importing never starts a VPN connection.
 final class ImportLink extends DeepLink {
   final String link;
 

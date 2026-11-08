@@ -29,8 +29,8 @@ class _HomeScreenState extends State<HomeScreen> {
     DeepLinks.listen(_onLink);
   }
 
-  /// A `hikkari://` link opened the app: bring the window up and ask the user
-  /// to confirm what the link hands over.
+  /// A `hikkari://` link opened the app: bring the window up and show import
+  /// progress without a second confirmation.
   Future<void> _onLink(DeepLink link) async {
     if (!mounted) return;
     if (Platform.isMacOS || Platform.isWindows || Platform.isLinux) {

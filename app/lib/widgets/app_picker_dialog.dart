@@ -176,7 +176,7 @@ class _AppPickerDialogState extends State<AppPickerDialog> {
                     hint: Platform.isWindows
                         ? 'EasyAntiCheat_EOS.exe'
                         : 'имя процесса',
-                    tooltip: 'имя файла процесса — как в диспетчере задач',
+                    tooltip: 'имя файла процесса: как в диспетчере задач',
                     onSubmitted: (_) => _submitManual(),
                   ),
                 ),
