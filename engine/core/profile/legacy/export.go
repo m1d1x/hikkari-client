@@ -7,6 +7,7 @@ package legacy
 import (
 	"NekkoVPN/core/profile"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -56,6 +57,13 @@ func exportHysteria2(p profile.Profile) (string, error) {
 		if b, _ := tls["insecure"].(bool); b {
 			q.Set("insecure", "1")
 		}
+		pin, err := hysteriaPin(tls)
+		if err != nil {
+			return "", err
+		}
+		if pin != "" {
+			q.Set("hikkari-spki", pin)
+		}
 	}
 	if obfs := cfgMap(c, "obfs"); obfs != nil {
 		if ot := cfgString(obfs, "type"); ot != "" {
@@ -66,6 +74,32 @@ func exportHysteria2(p profile.Profile) (string, error) {
 		}
 	}
 	return buildURI("hysteria2", password, "", host, port, q, p.Label), nil
+}
+
+// hysteriaPin is the link form of tls.certificate_public_key_sha256: the hub's
+// leaf is self-signed, so a link that lost the pin cannot connect at all. The
+// slice is []string fresh from ParseURI and []interface{} back from JSON. A pin
+// the link cannot carry is refused, not dropped.
+func hysteriaPin(tls map[string]interface{}) (string, error) {
+	var pins []string
+	switch v := tls["certificate_public_key_sha256"].(type) {
+	case []string:
+		pins = v
+	case []interface{}:
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				pins = append(pins, s)
+			}
+		}
+	}
+	if len(pins) == 0 {
+		return "", nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(pins[0])
+	if err != nil || len(pins) > 1 {
+		return "", fmt.Errorf("hysteria2: pin сертификата не помещается в ссылку")
+	}
+	return hex.EncodeToString(raw), nil
 }
 
 func exportVLESS(p profile.Profile) (string, error) {

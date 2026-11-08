@@ -663,41 +663,74 @@ func connectionSlug(c Connection) string {
 
 func prettyProtocol(p Profile) string {
 	if p.Connection != nil {
-		switch p.Connection.Protocol {
-		case "wireguard":
-			return "WireGuard"
-		case "awg":
-			return "AmneziaWG"
-		case "hysteria2":
-			return "Hysteria2"
-		case "shadowsocks":
-			return "Shadowsocks"
-		default:
-			return strings.ToUpper(p.Connection.Protocol)
-		}
+		return prettyConnection(*p.Connection)
 	}
 	if p.Config == nil {
 		return "—"
 	}
 	t, _ := p.Config["type"].(string)
-	switch strings.ToLower(t) {
-	case "awg":
-		return "AmneziaWG"
-	case "wireguard":
-		return "WireGuard"
-	case "hysteria2":
-		return "Hysteria2"
-	case "vless":
-		return "VLESS"
-	case "shadowsocks":
-		return "Shadowsocks"
-	case "trojan":
-		return "Trojan"
-	case "":
-		return "—"
-	default:
-		return strings.ToUpper(t)
+	var s stack
+	if tls, ok := p.Config["tls"].(map[string]interface{}); ok {
+		if r, ok := tls["reality"].(map[string]interface{}); ok {
+			if on, _ := r["enabled"].(bool); on {
+				s.security = "reality"
+			}
+		}
 	}
+	if tr, ok := p.Config["transport"].(map[string]interface{}); ok {
+		s.transport, _ = tr["type"].(string)
+	}
+	s.flow, _ = p.Config["flow"].(string)
+	if obfs, ok := p.Config["obfs"].(map[string]interface{}); ok {
+		s.obfs, _ = obfs["type"].(string)
+	}
+	if t == "" {
+		return "—"
+	}
+	return s.pretty(t)
+}
+
+// prettyConnection reads the same stack out of a share link.
+func prettyConnection(c Connection) string {
+	var s stack
+	if u, err := url.Parse(strings.TrimSpace(c.URI)); err == nil {
+		q := u.Query()
+		s = stack{security: q.Get("security"), transport: q.Get("type"), flow: q.Get("flow"), obfs: q.Get("obfs")}
+	}
+	return s.pretty(c.Protocol)
+}
+
+// stack is what tells two profiles of one protocol apart: "VLESS" says nothing
+// about whether the server is Reality with Vision or XHTTP.
+type stack struct{ security, transport, flow, obfs string }
+
+func (s stack) pretty(protocol string) string {
+	parts := []string{prettyName(protocol, map[string]string{
+		"wireguard": "WireGuard", "awg": "AmneziaWG", "hysteria2": "Hysteria2", "hy2": "Hysteria2",
+		"shadowsocks": "Shadowsocks", "vless": "VLESS", "trojan": "Trojan",
+	})}
+	if strings.EqualFold(s.security, "reality") {
+		parts = append(parts, "Reality")
+	}
+	if t := strings.ToLower(s.transport); t != "" && t != "tcp" && t != "raw" {
+		parts = append(parts, prettyName(t, map[string]string{
+			"xhttp": "XHTTP", "splithttp": "XHTTP", "ws": "WebSocket", "grpc": "gRPC", "httpupgrade": "HTTPUpgrade",
+		}))
+	}
+	if strings.Contains(strings.ToLower(s.flow), "vision") {
+		parts = append(parts, "Vision")
+	}
+	if s.obfs != "" {
+		parts = append(parts, prettyName(s.obfs, map[string]string{"salamander": "Salamander"}))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func prettyName(name string, known map[string]string) string {
+	if pretty, ok := known[strings.ToLower(name)]; ok {
+		return pretty
+	}
+	return strings.ToUpper(name)
 }
 
 func cloneMap(m map[string]interface{}) map[string]interface{} {

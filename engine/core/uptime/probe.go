@@ -39,6 +39,7 @@ type LiveProbe struct {
 	// die after ~1h of background runtime), and is slow anyway.
 	icmpMu   sync.Mutex
 	icmpConn *icmp.PacketConn
+	icmpRaw  bool
 	icmpSeq  uint32
 }
 
@@ -98,10 +99,6 @@ func tcpProbe(ctx context.Context, host string, port int) (bool, int) {
 // tcpProbe can't shake hands with them, so the graph would otherwise
 // stay flat-down for every inactive profile.
 //
-// Requires the process to run with privileges that allow raw ICMP. The
-// Nekko engine already needs admin for TUN, so this is satisfied in
-// practice; if it ever isn't, the probe just returns ok=false and the
-// graph falls back to the previous (empty) behaviour.
 // icmpConnOrInit returns a usable raw ICMP socket, opening one on first
 // use. If a previous socket is dead (network suspend/resume, driver hiccup,
 // Windows interface change) it's recreated on the next call. The socket
@@ -114,11 +111,19 @@ func (p *LiveProbe) icmpConnOrInit() (*icmp.PacketConn, error) {
 	if p.icmpConn != nil {
 		return p.icmpConn, nil
 	}
+	// A raw socket needs root, and the probe runs inside the unprivileged app
+	// on macOS: there the datagram ICMP socket is the one the OS lets it have.
+	raw := true
 	c, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	if err != nil {
+		raw = false
+		c, err = icmp.ListenPacket("udp4", "0.0.0.0")
+	}
 	if err != nil {
 		return nil, err
 	}
 	p.icmpConn = c
+	p.icmpRaw = raw
 	return c, nil
 }
 
@@ -169,7 +174,14 @@ func (p *LiveProbe) icmpProbe(ctx context.Context, host string) (bool, int) {
 	}
 
 	start := time.Now()
-	if _, err := conn.WriteTo(b, dst); err != nil {
+	var to net.Addr = dst
+	p.icmpMu.Lock()
+	raw := p.icmpRaw
+	p.icmpMu.Unlock()
+	if !raw {
+		to = &net.UDPAddr{IP: dst.IP}
+	}
+	if _, err := conn.WriteTo(b, to); err != nil {
 		p.dropICMP()
 		return false, 0
 	}

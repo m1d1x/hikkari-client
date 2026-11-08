@@ -51,7 +51,7 @@ class _PowerToggleState extends State<PowerToggle> {
     final label =
         active?.label.toLowerCase() ??
         (noProfiles ? 'добавить профиль' : 'выбрать профиль');
-    final endpoint = active?.endpoint ?? '';
+    final endpoint = active?.shownEndpoint ?? '';
     final countryCode = active == null ? null : s.countryCodeFor(active.name);
     final countryLoading = active != null && s.isCountryLoading(active.name);
 

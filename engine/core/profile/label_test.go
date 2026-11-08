@@ -2,6 +2,7 @@ package profile
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -41,5 +42,22 @@ func TestImportedAndExistingLabels(t *testing.T) {
 	}
 	if list[0].Label != "example.com" || list[1].Label != "Германия" || list[1].Name != "old-id" || !list[1].Active {
 		t.Fatalf("unexpected profiles: %+v", list)
+	}
+}
+
+func TestProtocolLabelNamesTheWholeStack(t *testing.T) {
+	for link, want := range map[string]string{
+		"vless://id@h:443?security=reality&flow=xtls-rprx-vision&type=tcp": "VLESS · Reality · Vision",
+		"vless://id@h:443?security=tls&type=xhttp&mode=stream-up":          "VLESS · XHTTP",
+		"hysteria2://a@h:443?obfs=salamander":                              "Hysteria2 · Salamander",
+		"hysteria2://a@h:443":                                              "Hysteria2",
+	} {
+		u := link[:strings.Index(link, ":")]
+		if got := prettyProtocol(Profile{Connection: &Connection{URI: link, Protocol: u}}); got != want {
+			t.Errorf("%s = %q, want %q", link, got, want)
+		}
+	}
+	if got := prettyProtocol(Profile{Connection: &Connection{Protocol: "awg"}}); got != "AmneziaWG" {
+		t.Errorf("awg = %q", got)
 	}
 }
