@@ -10,7 +10,7 @@ on:
 
 env:
   # The core: our fork m1d1x/sing-box-lx, as build-windows.yml pins it.
-  SING_BOX_LX_TAG: v1.14.3-lx.21-hk.2
+  SING_BOX_LX_TAG: v1.14.3-lx.21-hk.3
   # docs/AUTOUPDATE-ROADMAP.md, Phase 6/7: a tag stamps the version, bakes the
   # update channel into hikkari-updater, signs hikkari.app into stable/macos.
   RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
