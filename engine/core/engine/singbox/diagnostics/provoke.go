@@ -50,7 +50,7 @@ const (
 	provokeStall      = 5 * time.Second
 	provokeSmall      = 64 << 10
 	provokeVolume     = 4 << 20
-	provokeVolumeCap  = 15 * time.Second
+	provokeVolumeCap  = 12 * time.Second
 	provokeUpload     = 1 << 20
 	provokeALPN       = "hk-"
 	provokeMagic      = "HKP1"
@@ -63,18 +63,45 @@ const (
 type provokeTLS struct {
 	name string
 	sni  string
-	dl   int64 // bytes to ask the box for
-	ul   int64 // bytes to send it
-	cap  time.Duration
+	// random: the SNI is a domain made up for this round, on no list, as our
+	// own fresh domain would be. Empty sni and not random: no SNI at all.
+	random bool
+	dl     int64 // bytes to ask the box for
+	ul     int64 // bytes to send it
+	cap    time.Duration
 }
 
+// The SNI stimuli ask «does the censor read the name on this path, and which
+// names does it let through»: a big site (control), a name blocked across
+// Russia (calibration: cut both ways is expected, passing to a Russian box is
+// news), a name on no list, and no name. The volume pair asks whether a flow
+// stops near 16 KB, and whether the name matters to that.
 var provokeTLSStimuli = []provokeTLS{
 	{name: "control", sni: provokeControlSNI, dl: provokeSmall, cap: provokeHandshake + provokeStall},
-	{name: "sni-youtube", sni: "www.youtube.com", dl: provokeSmall, cap: provokeHandshake + provokeStall},
-	{name: "sni-instagram", sni: "www.instagram.com", dl: provokeSmall, cap: provokeHandshake + provokeStall},
-	{name: "sni-rutracker", sni: "rutracker.org", dl: provokeSmall, cap: provokeHandshake + provokeStall},
+	{name: "sni-blocked", sni: "www.youtube.com", dl: provokeSmall, cap: provokeHandshake + provokeStall},
+	{name: "sni-random", random: true, dl: provokeSmall, cap: provokeHandshake + provokeStall},
+	{name: "sni-none", dl: provokeSmall, cap: provokeHandshake + provokeStall},
 	{name: "volume", sni: provokeControlSNI, dl: provokeVolume, cap: provokeVolumeCap},
+	{name: "volume-random", random: true, dl: provokeVolume, cap: provokeVolumeCap},
 	{name: "upload", sni: provokeControlSNI, ul: provokeUpload, cap: provokeVolumeCap},
+}
+
+// randomDomain is a .com name of ten letters, new each round.
+func randomDomain() string {
+	b := make([]byte, 10)
+	_, _ = rand.Read(b)
+	for i := range b {
+		b[i] = 'a' + b[i]%26
+	}
+	return string(b) + ".com"
+}
+
+// sniWord renders an SNI for the log line: «-» for none.
+func sniWord(sni string) string {
+	if sni == "" {
+		return "-"
+	}
+	return sni
 }
 
 // provokeUDP is one datagram stimulus: a rate, a size and a length.
@@ -166,9 +193,13 @@ func provokeTarget(ctx context.Context, local net.IP, t probeTarget) []string {
 
 	var tags []string
 	var tlsOut []tlsResult
+	made := randomDomain()
 	for _, s := range provokeTLSStimuli {
 		if ctx.Err() != nil {
 			break
+		}
+		if s.random {
+			s.sni = made
 		}
 		r := runTLSStimulus(ctx, local, t.Addr, s, newTag())
 		tags = append(tags, r.tag)
@@ -198,7 +229,7 @@ func provokeTarget(ctx context.Context, local net.IP, t probeTarget) []string {
 			want = r.stim.ul
 		}
 		lines = append(lines, fmt.Sprintf("%s stim=%s sni=%s hs=%s hs_ms=%d got=%d/%d end=%s %s",
-			head, r.stim.name, r.stim.sni, r.hs, r.hsMs, r.got, want, r.end, srv(r.tag)))
+			head, r.stim.name, sniWord(r.stim.sni), r.hs, r.hsMs, r.got, want, r.end, srv(r.tag)))
 	}
 	for _, r := range udpOut {
 		line := fmt.Sprintf("%s stim=%s size=%d sent=%d back=%d", head, r.stim.name, r.stim.size, r.sent, r.back)

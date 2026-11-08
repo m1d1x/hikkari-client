@@ -186,7 +186,12 @@ func TestProvokeCleanBoxPassesEveryStimulus(t *testing.T) {
 	lines := provokeTarget(context.Background(), net.IPv4(127, 0, 0, 1), probeTarget{Label: "ru-spb", Addr: addr})
 	mustHave(t, lineFor(t, lines, "flows"), "opened=100/100", "refused=0")
 	mustHave(t, lineFor(t, lines, "control"), "hs=ok", "got=65536/65536", "end=done", "srv_hello=1", `srv_sni="www.microsoft.com"`, "srv_out=65536")
-	mustHave(t, lineFor(t, lines, "sni-youtube"), "sni=www.youtube.com", "hs=ok", "end=done", `srv_sni="www.youtube.com"`)
+	mustHave(t, lineFor(t, lines, "sni-blocked"), "sni=www.youtube.com", "hs=ok", "end=done", `srv_sni="www.youtube.com"`)
+	mustHave(t, lineFor(t, lines, "sni-none"), "sni=- ", "hs=ok", "end=done", `srv_sni=""`)
+	random := lineFor(t, lines, "sni-random")
+	mustHave(t, random, ".com hs=ok", "end=done")
+	name := strings.Fields(strings.SplitAfter(random, " sni=")[1])[0]
+	mustHave(t, lineFor(t, lines, "volume-random"), "sni="+name+" ", "got=4194304/4194304")
 	mustHave(t, lineFor(t, lines, "volume"), "got=4194304/4194304", "end=done")
 	mustHave(t, lineFor(t, lines, "upload"), "got=1048576/1048576", "end=done", "srv_in=1048576")
 	mustHave(t, lineFor(t, lines, "udp-voice"), "sent=250", "back=250", "srv_udp=250")
@@ -201,15 +206,16 @@ func TestProvokeSeesWhereTheCensorCut(t *testing.T) {
 	addr := startFakeBox(t, box)
 	lines := provokeTarget(context.Background(), net.IPv4(127, 0, 0, 1), probeTarget{Label: "ams3", Addr: addr})
 	// The hello reached the box, the client got no handshake.
-	yt := lineFor(t, lines, "sni-youtube")
+	yt := lineFor(t, lines, "sni-blocked")
 	mustHave(t, yt, "srv_hello=1", "got=0/65536")
 	if strings.Contains(yt, "hs=ok") {
 		t.Errorf("cut hello read as a handshake: %s", yt)
 	}
 	// The other SNIs pass.
-	mustHave(t, lineFor(t, lines, "sni-instagram"), "hs=ok", "end=done")
+	mustHave(t, lineFor(t, lines, "sni-random"), "hs=ok", "end=done")
 	// A download frozen at 16 KB stalls there.
 	mustHave(t, lineFor(t, lines, "volume"), "got=16384/4194304", "end=stall", "srv_out=16384")
+	mustHave(t, lineFor(t, lines, "volume-random"), "got=16384/4194304", "end=stall")
 	// Datagrams that never reached the box.
 	mustHave(t, lineFor(t, lines, "udp-voice"), "back=0", "srv_udp=0")
 }
