@@ -389,6 +389,17 @@ func (u *updates) withCoreDown(start bool, f func() error) error {
 // up at all — the case no start counter can see, since nothing of the new
 // version ran to count.
 //
+// The verdict is evidence, not absence. Every request names the release its
+// caller was started from (svcclient stamps it), so a GUI of the trial
+// version that has spoken to this service since the swap is alive — and an
+// alive GUI settles its own trial: its handshake is retried until the service
+// answers (api.startUpdates), so the one report the watchdog waits for cannot
+// be lost to the service's own restart anymore. A trial whose GUI was seen
+// alive is left to that handshake; only silence rolls back. (dima-001, 08.11:
+// 1.0.68 ran for five minutes and was rolled back with 0 failed starts
+// because its single recover_update fired 320 ms before the restarted service
+// was listening again.)
+//
 // A GUI that did report in owns the trial from there: it confirms once it has
 // stayed up (api.trialWindow), and one that dies first is counted against the
 // version at the next start. The deadline is not a confirmation deadline: the
@@ -404,7 +415,7 @@ func (u *updates) watchTrial(ctx context.Context) {
 	if deadline <= 0 {
 		return
 	}
-	applied := u.pendingSince()
+	to, applied := u.pendingTrial()
 	if applied.IsZero() || time.Since(applied) >= deadline {
 		return
 	}
@@ -417,7 +428,13 @@ func (u *updates) watchTrial(ctx context.Context) {
 		return
 	case <-time.After(time.Until(applied.Add(deadline))):
 	}
-	if u.pendingSince().IsZero() {
+	if to2, applied2 := u.pendingTrial(); applied2.IsZero() {
+		return // settled while we watched: confirmed or rolled back elsewhere
+	} else if to2 != "" {
+		to = to2
+	}
+	if to != "" && u.srv.guiAlive(to, applied) {
+		u.srv.log.Logf("updates: the GUI of %s on trial has been seen since the swap; the trial stays, its handshake settles it", to)
 		return
 	}
 	u.srv.log.Logf("updates: no GUI of the version on trial came up within %s, rolling back", deadline)
@@ -431,17 +448,20 @@ func (u *updates) watchTrial(ctx context.Context) {
 	}
 }
 
-// pendingSince is when the version on trial was swapped in; zero if none is.
-func (u *updates) pendingSince() time.Time {
+// pendingTrial is the version on trial and when it was swapped in; a zero
+// time if none is.
+func (u *updates) pendingTrial() (string, time.Time) {
 	u.opMu.Lock()
 	defer u.opMu.Unlock()
+	var to string
 	var at time.Time
 	_ = u.run("status", func(ev map[string]interface{}) {
 		if p, ok := ev["pending"].(map[string]interface{}); ok {
+			to = str(p["to"])
 			at = time.Unix(num(p["applied_at"]), 0)
 		}
 	})
-	return at
+	return to, at
 }
 
 // settle hands over to Config.SyncBinaries once no version is on trial: a

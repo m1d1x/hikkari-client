@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/svcproto"
 )
 
@@ -19,7 +20,17 @@ var ErrNoService = errors.New("служба hikkari не запущена: пе�
 
 // Call sends one request and returns the service's answer. A response with
 // ok=false comes back as an error carrying the service's message.
+//
+// The request names the release this process was started from
+// (appversion.Own) unless the caller stated one. The service compares it with
+// the installation on a core start and refuses another release's
+// (CodeAppReplaced), and its trial watchdog reads a GUI's contact as evidence
+// of life (Server.guiAlive). Own is captured once, early, so a swap later in
+// this process's life cannot change the answer.
 func Call(req svcproto.Request, timeout time.Duration) (svcproto.Response, error) {
+	if req.AppVersion == "" {
+		req.AppVersion = appversion.Own()
+	}
 	conn, err := dial(2 * time.Second)
 	if err != nil {
 		return svcproto.Response{}, fmt.Errorf("%w (%v)", ErrNoService, err)

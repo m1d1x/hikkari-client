@@ -70,7 +70,7 @@ func trialServer(t *testing.T, applied time.Time, deadline time.Duration) (*Serv
 	script := `#!/bin/sh
 case "$1" in
 status) [ -f "` + rolled + `" ] && { echo '{"event":"status","installed":"1.0.0"}'; exit 0; }
-        echo '{"event":"status","installed":"1.0.1","pending":{"applied_at":` + strconv.FormatInt(applied.Unix(), 10) + `}}' ;;
+        echo '{"event":"status","installed":"1.0.1","pending":{"applied_at":` + strconv.FormatInt(applied.Unix(), 10) + `,"to":"1.0.1"}}' ;;
 recover) echo '{"event":"recovered","result":"on_trial","from":"1.0.0","to":"1.0.1"}' ;;
 rollback) : > "` + rolled + `"; echo '{"event":"rolled_back","from":"1.0.0","to":"1.0.1"}' ;;
 esac
@@ -114,6 +114,61 @@ func TestTrialWithoutAGUIIsRolledBackAtTheDeadline(t *testing.T) {
 	watchTrialFor(t, s, 4*time.Second)
 	if _, err := os.Stat(rolled); err != nil {
 		t.Fatal("no GUI came up and the version on trial stayed")
+	}
+}
+
+// The verdict at the deadline is evidence, not absence: a GUI of the trial
+// version that has spoken to the service since the swap is alive, and an
+// alive GUI settles its own trial. What dima-001 did to 1.0.68 on 08.11 —
+// rolled back with 0 failed starts because its single recover_update landed
+// in the service's restart gap — must not roll back a running version.
+func TestTrialWithItsGUISeenAliveIsNotRolledBack(t *testing.T) {
+	s, rolled := trialServer(t, time.Now(), 2*time.Second)
+	s.dispatch(svcproto.Request{Op: svcproto.OpCheckUpdate, AppVersion: "1.0.1"})
+	watchTrialFor(t, s, 4*time.Second)
+	if _, err := os.Stat(rolled); err == nil {
+		t.Fatal("the trial was rolled back with its GUI seen alive")
+	}
+}
+
+// Evidence is per release and fresh: another release's contact, or one from
+// before the swap, does not keep a silent trial alive.
+func TestTrialWithNoFreshGUIContactIsRolledBack(t *testing.T) {
+	for name, contact := range map[string]func(s *Server){
+		"another release": func(s *Server) {
+			s.dispatch(svcproto.Request{Op: svcproto.OpCheckUpdate, AppVersion: "1.0.0"})
+		},
+		"before the swap": func(s *Server) {
+			s.noteGUIContactAt("1.0.1", time.Now().Add(-2*time.Minute))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, rolled := trialServer(t, time.Now(), 2*time.Second)
+			contact(s)
+			watchTrialFor(t, s, 4*time.Second)
+			if _, err := os.Stat(rolled); err != nil {
+				t.Fatalf("%s: the trial stayed without fresh evidence of its GUI", name)
+			}
+		})
+	}
+}
+
+func TestGUIAliveEvidence(t *testing.T) {
+	s := &Server{}
+	since := time.Now().Add(-time.Minute)
+	s.noteGUIContactAt("1.0.1", time.Now())
+	if !s.guiAlive("1.0.1", since) {
+		t.Fatal("a fresh contact from the trial version is evidence")
+	}
+	if s.guiAlive("1.0.2", since) {
+		t.Fatal("another release's contact is not evidence for this trial")
+	}
+	if s.guiAlive("1.0.1", time.Now()) {
+		t.Fatal("a contact from before the swap is not evidence")
+	}
+	s.noteGUIContactAt("1.0.1", time.Now().Add(-2*guiContactFresh))
+	if s.guiAlive("1.0.1", since) {
+		t.Fatal("a contact gone stale is not evidence")
 	}
 }
 

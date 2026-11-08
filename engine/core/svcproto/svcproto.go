@@ -114,11 +114,14 @@ type Request struct {
 	// answers with it: it cannot compute it, since it sees Config only after the
 	// server addresses are pinned.
 	ConfigHash string `json:"configHash,omitempty"`
-	// AppVersion, for OpStart: the release the GUI was started from
-	// (core/appversion), empty for a development build or a GUI from before
-	// it was sent. The service compares it with the installation's VERSION
-	// and refuses a start from another release (CodeAppReplaced): a config
-	// of another release may name fields the installed core does not know.
+	// AppVersion: the release the calling process was started from
+	// (core/appversion), stamped by svcclient on every request, empty for a
+	// development build or a caller from before it was sent. On OpStart the
+	// service compares it with the installation's VERSION and refuses a
+	// start from another release (CodeAppReplaced): a config of another
+	// release may name fields the installed core does not know. The trial
+	// watchdog reads it as evidence that the GUI of the version on trial is
+	// alive (Server.guiAlive).
 	AppVersion string `json:"appVersion,omitempty"`
 	// Restarting, for OpStop: a start follows at once, so the wish to be up
 	// stays. If that start fails the GUI keeps trying (Response.Wanted).

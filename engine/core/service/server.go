@@ -167,6 +167,12 @@ const coreExitPoll = 2 * time.Second
 // stored config. A version that dies on trial is rolled back well before it.
 var awaitConfigFor = time.Minute
 
+// guiContactFresh: how recently a GUI must have spoken for its version's
+// trial to count as alive. The GUI polls Health() every second, so a live one
+// is never silent this long; one that crashed or never came up stops speaking
+// at once.
+const guiContactFresh = time.Minute
+
 var ErrRestart = errors.New("service: restarting into the updated version")
 
 type Server struct {
@@ -183,6 +189,13 @@ type Server struct {
 	mu sync.Mutex
 
 	restart chan struct{}
+
+	// The last control request that named the release its caller was started
+	// from (svcclient stamps every request): watchTrial's evidence that the
+	// GUI of a version on trial is alive.
+	guiMu  sync.Mutex
+	guiVer string
+	guiAt  time.Time
 }
 
 // NewServer prepares the service's own directory and the core manager.
@@ -319,6 +332,38 @@ func (s *Server) handle(conn net.Conn) {
 	}
 }
 
+// noteGUIContact records which release the GUI that just spoke was started
+// from. A request without a release (a development build, a caller from
+// before requests were stamped) records nothing.
+func (s *Server) noteGUIContact(version string) {
+	if version == "" {
+		return
+	}
+	s.noteGUIContactAt(version, time.Now())
+}
+
+// noteGUIContactAt is noteGUIContact with the contact time chosen by the
+// caller.
+func (s *Server) noteGUIContactAt(version string, at time.Time) {
+	if version == "" {
+		return
+	}
+	s.guiMu.Lock()
+	defer s.guiMu.Unlock()
+	s.guiVer = version
+	s.guiAt = at
+}
+
+// guiAlive says a GUI of version was seen contacting this service since
+// since, recently enough to be running now. watchTrial's evidence: a version
+// on trial whose GUI is alive must not be rolled back for a handshake the
+// service's own restart could have swallowed.
+func (s *Server) guiAlive(version string, since time.Time) bool {
+	s.guiMu.Lock()
+	defer s.guiMu.Unlock()
+	return s.guiVer == version && s.guiAt.After(since) && s.guiAt.After(time.Now().Add(-guiContactFresh))
+}
+
 // idle says that nothing would notice the service restarting. Callers hold mu.
 func (s *Server) idle() bool {
 	_, pid := s.running()
@@ -340,6 +385,7 @@ func (s *Server) requestRestart() {
 }
 
 func (s *Server) dispatch(req svcproto.Request) svcproto.Response {
+	s.noteGUIContact(req.AppVersion)
 	fail := func(err error) svcproto.Response {
 		s.log.Logf("service: %s: %v", req.Op, err)
 		return svcproto.Response{Error: err.Error()}
