@@ -21,6 +21,7 @@ import (
 	diag "NekkoVPN/core/engine/singbox/diagnostics"
 	vpn "NekkoVPN/core/engine/singbox/process"
 	"NekkoVPN/core/profile"
+	"NekkoVPN/core/subscription"
 )
 
 const selectorTag = "proxy"
@@ -403,15 +404,24 @@ func (b *Backend) Normalize(p profile.Profile) (profile.Profile, error) {
 	p.Connection = &profile.Connection{URI: uri, Protocol: protocol, Host: host, Port: port}
 	return p, nil
 }
+
+// Decode keeps the link it was given as the profile's connection, not a link
+// re-exported from the parsed config. The two are not the same link: an
+// Amnezia vpn:// link re-exports as a WireGuard one, and a provider's link
+// loses what the exporter does not write. The provider's own link is what
+// its capacity metrics are keyed by (capacity.Key on both ends), so a
+// re-exported one never matched them: AmneziaWG profiles of the Hikkari
+// subscription showed no speed. Every stored link is one ParseURI reads,
+// which is what native() builds the runtime config from.
 func (b *Backend) Decode(input string) ([]profile.Profile, error) {
 	draft, err := ParseURI(input)
 	if err != nil {
 		return nil, err
 	}
-	p, err := b.Normalize(profile.Profile{Label: draft.Label, Kind: draft.Kind, Config: draft.Config})
-	if err != nil {
-		return nil, err
-	}
+	p := profile.Profile{Label: draft.Label, Kind: draft.Kind, Config: draft.Config}
+	host, port := profile.PeerHostPort(p)
+	protocol, _ := draft.Config["type"].(string)
+	p.Connection = &profile.Connection{URI: subscription.NormalizeLink(input), Protocol: protocol, Host: host, Port: port}
 	p.Config = nil
 	p.Kind = ""
 	return []profile.Profile{p}, nil
