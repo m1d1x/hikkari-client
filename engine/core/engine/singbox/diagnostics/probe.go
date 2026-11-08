@@ -29,14 +29,20 @@ type probeTarget struct {
 }
 
 func parseProbeTargets(params json.RawMessage) ([]probeTarget, error) {
+	return parseAddrTargets(params, maxProbeTargets)
+}
+
+// parseAddrTargets reads 1 to max labelled public ipv4:port addresses, the
+// targets of probe_targets and provoke_targets alike.
+func parseAddrTargets(params json.RawMessage, max int) ([]probeTarget, error) {
 	var req struct {
 		Targets []probeTarget `json:"targets"`
 	}
 	if err := json.Unmarshal(params, &req); err != nil {
 		return nil, fmt.Errorf("params: %w", err)
 	}
-	if len(req.Targets) == 0 || len(req.Targets) > maxProbeTargets {
-		return nil, fmt.Errorf("want 1 to %d targets, got %d", maxProbeTargets, len(req.Targets))
+	if len(req.Targets) == 0 || len(req.Targets) > max {
+		return nil, fmt.Errorf("want 1 to %d targets, got %d", max, len(req.Targets))
 	}
 	for _, t := range req.Targets {
 		if !probeLabel.MatchString(t.Label) {

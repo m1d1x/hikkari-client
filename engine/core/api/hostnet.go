@@ -173,6 +173,9 @@ func doctorLines(report NetworkReport) []string {
 // does, and probe_targets opens and closes bare TCP connections to the
 // addresses the operator named. probe_voice sends a call's datagrams through
 // the tunnel for half a minute, and on Windows from the card beside it.
+// provoke_targets sends stimuli ТСПУ is known to cut (blocked SNIs, a long
+// flow, a burst of source ports, datagram streams) from the card to the
+// provoke boxes the operator named, and asks each box what reached it.
 func (c *Core) testerCommands() map[string]testerlog.Command {
 	return map[string]testerlog.Command{
 		"run_doctor": {Source: "doctor", Run: func(context.Context, json.RawMessage) []string {
@@ -204,7 +207,8 @@ func (c *Core) testerCommands() map[string]testerlog.Command {
 			}
 			return voicer.VoiceNow()
 		}},
-		"probe_targets": {Source: "probe", Run: diag.ProbeTargets},
+		"probe_targets":   {Source: "probe", Run: diag.ProbeTargets},
+		"provoke_targets": {Source: "provoke", Run: diag.ProvokeTargets},
 		"proto_targets": {Source: "protoprobe", Run: func(ctx context.Context, params json.RawMessage) []string {
 			return diag.ProtoTargets(ctx, vpn.CoreBinary(), params)
 		}},
