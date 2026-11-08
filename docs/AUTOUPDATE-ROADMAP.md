@@ -215,6 +215,14 @@ GUI:                 баннер «Доступно X — Перезапуст�
       диске только в этом шаге. Выкладка — отдельный job `publish-channel` (environment `release`),
       `scripts/publish-update-channel.sh`: блобы → манифесты → проба, rsync без `--delete`, затем
       проба/манифест/блоб с публичного адреса.
+- [x] Публичные установщики обновляются тем же release-job после подписанного канала:
+      `scripts/publish-installer.sh` публикует версионный файл, проверяет SHA-256 через публичный URL,
+      заменяет постоянный `/download/hikkari.pkg` или `/download/hikkari-setup.exe` и последними
+      публикует `/download/latest-{macos,windows}.json` (версия, URL, SHA-256, размер).
+      Старые файлы сохраняются; повтор старого релиза и ошибка проверки не меняют актуальную ссылку.
+      Лендинг читает эти метаданные без фиксированной версии. Публичный Caddy-конфиг хранится в
+      `hikkari-control/deploy/Caddyfile.public`: изменяемые URL без кеширования, JSON с публичным CORS.
+      Проверка публикации: `python3 scripts/test-publish-installer.py` (также Updater CI).
 - Настройка (Settings → Secrets and variables → Actions):
   - переменные: `HIKKARI_UPDATE_URL` (`https://update.<домен>`), `HIKKARI_UPDATE_KEYS` (`release-1:<pub>`),
     `HIKKARI_RELEASE_KEY_ID` (`release-1`), `HIKKARI_DEPLOY_HOST` (`deploy@31.57.158.79`);
