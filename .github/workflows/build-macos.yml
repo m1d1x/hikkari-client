@@ -399,6 +399,12 @@ jobs:
           name: update-channel-macos
           path: update-channel
 
+      - name: Download tested installer
+        uses: actions/download-artifact@v4
+        with:
+          name: hikkari-macos
+          path: installer
+
       - name: SSH
         env:
           SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY }}
@@ -416,4 +422,6 @@ jobs:
         env:
           HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
           HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
-        run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}" macos
+        run: |
+          bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}" macos
+          bash scripts/publish-installer.sh installer/hikkari-*.pkg "${GITHUB_REF_NAME#v}" macos

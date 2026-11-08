@@ -7,11 +7,18 @@ name: Updater
 on:
   workflow_dispatch:
   push:
-    paths: [ 'updater/**', '.github/workflows/updater.yml' ]
+    paths: [ 'updater/**', 'scripts/publish-installer.sh', 'scripts/test-publish-installer.py', '.github/workflows/updater.yml' ]
   pull_request:
-    paths: [ 'updater/**', '.github/workflows/updater.yml' ]
+    paths: [ 'updater/**', 'scripts/publish-installer.sh', 'scripts/test-publish-installer.py', '.github/workflows/updater.yml' ]
 
 jobs:
+  installer-publication:
+    name: Installer publication safety
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/test-publish-installer.py
+
   test:
     name: cargo test (${{ matrix.os }})
     strategy:

@@ -740,6 +740,12 @@ jobs:
           name: update-channel
           path: update-channel
 
+      - name: Download tested installer
+        uses: actions/download-artifact@v4
+        with:
+          name: hikkari-setup
+          path: installer
+
       - name: SSH
         env:
           SSH_KEY: ${{ secrets.HIKKARI_DEPLOY_SSH_KEY }}
@@ -756,7 +762,9 @@ jobs:
         env:
           HIKKARI_UPDATE_URL: ${{ vars.HIKKARI_UPDATE_URL }}
           HIKKARI_DEPLOY_HOST: ${{ vars.HIKKARI_DEPLOY_HOST }}
-        run: bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}" windows
+        run: |
+          bash scripts/publish-update-channel.sh update-channel "${GITHUB_REF_NAME#v}" windows
+          bash scripts/publish-installer.sh installer/hikkari-setup.exe "${GITHUB_REF_NAME#v}" windows
 
   # The matrix stand's kit for the hub's vantages (scripts/build-stand-kit.sh):
   # the core users run and the client's link parser, linux-amd64, from this
