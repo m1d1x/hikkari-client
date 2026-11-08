@@ -47,7 +47,8 @@ with p.open('rb') as source:
 meta = dict(version=version, url=f'{base}/download/{filename}', sha256=digest.hexdigest(), size=p.stat().st_size)
 pathlib.Path(root, f'latest-{platform}.json').write_text(json.dumps(meta)+'\n')
 PY
-rsync_args=(-a --delay-updates -e 'ssh -o BatchMode=yes')
+# Preserve the server uploader identity, including an operator-run bootstrap.
+rsync_args=(-a --no-owner --no-group --delay-updates -e 'ssh -o BatchMode=yes')
 rsync "${rsync_args[@]}" "$tmp/download/" "$remote"download/ --include "$filename" --exclude '*'
 curl -fsS --retry 3 --max-time 300 "$base/download/$filename" -o "$tmp/public-installer"
 python3 - "$tmp" "$PLATFORM" <<'PY'
