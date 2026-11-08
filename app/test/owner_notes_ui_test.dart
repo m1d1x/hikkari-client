@@ -41,7 +41,7 @@ class _TestEngineCore extends NekkoboxCore {
       'Health' => {
         'running': running,
         'tunnelOK': running,
-        'ip': running ? '198.51.100.7' : '—',
+        'ip': running ? '198.51.100.7' : '-',
         'status': running ? 'ok' : 'off',
         'message': '',
       },

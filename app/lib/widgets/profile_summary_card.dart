@@ -255,7 +255,7 @@ class _ProfileSummaryCardState extends State<ProfileSummaryCard> {
           : checking
           ? '…'
           : rtt <= 0
-          ? '—'
+          ? '-'
           : '$rtt',
       children: dead || checking || rtt <= 0
           ? null
@@ -271,7 +271,7 @@ class _ProfileSummaryCardState extends State<ProfileSummaryCard> {
       style: rttStyle,
     );
 
-    final speedText = capacityLabel ?? '—';
+    final speedText = capacityLabel ?? '-';
     final speedSpan = TextSpan(
       text: speedText.replaceFirst(' mbps', ''),
       style: rttStyle,
@@ -421,6 +421,7 @@ class _ProfileSummaryCardState extends State<ProfileSummaryCard> {
                 curve: Curves.easeInOutCubic,
                 builder: (context, k, _) => Sparkline(
                   samples: samples,
+                  placeholderSeed: title,
                   values: _blend(rttValues, speedValues, k),
                   windowSize: useProbeMetrics ? 48 : 60,
                   color: lineColor,

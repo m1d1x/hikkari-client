@@ -109,9 +109,9 @@ class _PowerToggleState extends State<PowerToggle> {
 
     final noProfiles = s.profiles.isEmpty;
     final label =
-        active?.label.toLowerCase() ??
+        active?.displayLabel ??
         (noProfiles ? 'добавить профиль' : 'выбрать профиль');
-    final endpoint = active?.shownEndpoint ?? '';
+    final protocol = active == null ? '' : protocolCaption(active.protocol);
     final countryCode = active == null ? null : s.countryCodeFor(active.name);
     final countryLoading = active != null && s.isCountryLoading(active.name);
 
@@ -199,7 +199,7 @@ class _PowerToggleState extends State<PowerToggle> {
                 running: running,
                 dead: dead,
                 rttText: rttText,
-                endpoint: endpoint,
+                protocol: protocol,
                 countryCode: countryCode,
                 countryLoading: countryLoading,
                 err: err,
@@ -256,7 +256,7 @@ class _PowerToggleState extends State<PowerToggle> {
     required bool running,
     required bool dead,
     required String rttText,
-    required String endpoint,
+    required String protocol,
     required String? countryCode,
     required bool countryLoading,
     required String? err,
@@ -300,13 +300,14 @@ class _PowerToggleState extends State<PowerToggle> {
                       ),
                     ),
                   ),
-                  if (active != null && hist.length >= 2) ...[
+                  if (active != null) ...[
                     const SizedBox(width: 11),
                     SizedBox(
                       width: 50,
                       height: 17,
                       child: Sparkline(
                         samples: hist,
+                        placeholderSeed: label,
                         color: running
                             ? t.primary
                             : t.textMuted.withValues(alpha: 0.4),
@@ -340,31 +341,39 @@ class _PowerToggleState extends State<PowerToggle> {
                 ],
               ),
 
-              // Info row — flag + server IP, grouped together and centred.
-              if (active != null && endpoint.isNotEmpty) ...[
-                SizedBox(height: err != null ? 4 : 10),
+              // Info row — the server's country flag and the protocol. The
+              // address (often the camouflage domain) is not shown.
+              if (active != null &&
+                  (protocol.isNotEmpty ||
+                      countryCode != null ||
+                      countryLoading)) ...[
+                SizedBox(height: err != null ? 4 : 8),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    ProfileFlagBadge(
-                      countryCode: countryCode,
-                      loading: countryLoading,
-                      width: 16,
-                      height: 12,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      endpoint,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: t.textMuted.withValues(alpha: 0.55),
-                        fontFamily: t.monoFamily,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        letterSpacing: 0.2,
+                    if (countryCode != null || countryLoading)
+                      ProfileFlagBadge(
+                        countryCode: countryCode,
+                        loading: countryLoading,
+                        width: 16,
+                        height: 12,
                       ),
-                    ),
+                    if ((countryCode != null || countryLoading) &&
+                        protocol.isNotEmpty)
+                      const SizedBox(width: 8),
+                    if (protocol.isNotEmpty)
+                      Text(
+                        protocol,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: t.textMuted.withValues(alpha: 0.55),
+                          fontFamily: t.monoFamily,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
                   ],
                 ),
               ],

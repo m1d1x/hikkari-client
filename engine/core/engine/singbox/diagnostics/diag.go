@@ -435,7 +435,7 @@ func (r *Runner) connections(everyFlow bool) {
 			// process_name matches case-sensitively: a rule spelled
 			// differently from the live binary silently never fires.
 			if want != proc {
-				r.log.Logf("[diag:proc] case mismatch: rule %q, process %q — rule will not match", want, proc)
+				r.log.Logf("[diag:proc] case mismatch: rule %q, process %q; rule will not match", want, proc)
 			}
 		}
 		byProc[proc+"/"+c.Metadata.Network]++

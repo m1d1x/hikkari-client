@@ -15,7 +15,7 @@ import (
 
 // ErrNoService: the endpoint is not there — the service is not installed or not
 // running.
-var ErrNoService = errors.New("служба hikkari не запущена — переустановите приложение")
+var ErrNoService = errors.New("служба hikkari не запущена: переустановите приложение")
 
 // Call sends one request and returns the service's answer. A response with
 // ok=false comes back as an error carrying the service's message.

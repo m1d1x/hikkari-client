@@ -63,7 +63,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 140));
     expect(find.byType(Sparkline), findsOneWidget);
     await tester.pumpAndSettle();
-    expect(find.text('≥ 123 mbps'), findsOneWidget);
+    expect(find.text('123 mbps'), findsOneWidget);
     expect(find.text('87 ms'), findsNothing);
     expect(tester.getRect(find.byType(ProfileSummaryCard)), before);
     final chart = tester.widget<Sparkline>(find.byType(Sparkline));
@@ -100,12 +100,12 @@ void main() {
     await mount(tester, stale: true, width: 280);
     expect(find.text('87 ms'), findsNothing);
     expect(find.text('down'), findsNothing);
-    expect(find.text('—'), findsOneWidget);
+    expect(find.text('-'), findsOneWidget);
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await mouse.addPointer(location: Offset.zero);
     await mouse.moveTo(tester.getCenter(find.byType(ProfileSummaryCard)));
     await tester.pumpAndSettle();
-    expect(find.text('≥ 123 mbps'), findsNothing);
+    expect(find.text('123 mbps'), findsNothing);
     expect(
       tester
           .widget<Sparkline>(find.byType(Sparkline))

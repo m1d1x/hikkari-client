@@ -62,10 +62,10 @@ func normalizeIPValue(value string) (string, error) {
 	// The mistake worth naming: a URL or domain typed into the ip field.
 	if host := hostFromURLish(value); host != "" && !isIPish(host) {
 		return "", fmt.Errorf(
-			"%q — это не ip: добавь %q во вкладку «домены»", value, host)
+			"%q: это не ip, добавь %q во вкладку «домены»", value, host)
 	}
 	return "", fmt.Errorf(
-		"%q — не ip и не подсеть; примеры: 1.2.3.4, 192.168.0.0/16, 2001:db8::/32",
+		"%q: не ip и не подсеть; примеры: 1.2.3.4, 192.168.0.0/16, 2001:db8::/32",
 		value)
 }
 
@@ -88,10 +88,10 @@ func normalizeProcessValue(value string) (string, error) {
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", fmt.Errorf("%q — не удалось извлечь имя приложения", value)
+		return "", fmt.Errorf("%q: не удалось извлечь имя приложения", value)
 	}
 	if strings.ContainsAny(name, `*?<>|"`) {
-		return "", fmt.Errorf("%q — не похоже на имя приложения", value)
+		return "", fmt.Errorf("%q: не похоже на имя приложения", value)
 	}
 	return name, nil
 }
@@ -113,14 +113,14 @@ func normalizeFolderValue(value string) (string, error) {
 	}
 	frag = strings.TrimPrefix(frag, "/")
 	if strings.Trim(frag, "/") == "" {
-		return "", fmt.Errorf("%q — пустой путь", value)
+		return "", fmt.Errorf("%q: пустой путь", value)
 	}
 	if !strings.Contains(frag, "/") {
 		return "", fmt.Errorf(
-			"%q — нужен кусок пути со слешем, например %q", value, frag+"/")
+			"%q: нужен кусок пути со слешем, например %q", value, frag+"/")
 	}
 	if strings.ContainsAny(frag, `*?<>|"`) {
-		return "", fmt.Errorf("%q — не похоже на путь", value)
+		return "", fmt.Errorf("%q: не похоже на путь", value)
 	}
 	return frag, nil
 }
@@ -184,17 +184,17 @@ func normalizeDomainValue(value string) (string, error) {
 		host = canonical
 	}
 	if host == "" {
-		return "", fmt.Errorf("%q — не удалось извлечь домен", value)
+		return "", fmt.Errorf("%q: не удалось извлечь домен", value)
 	}
 	if isIPish(host) {
 		return "", fmt.Errorf(
-			"%q — это ip: добавь его во вкладку «ip»", host)
+			"%q: это ip, добавь его во вкладку «ip»", host)
 	}
 	if strings.ContainsAny(host, " \t/\\?#@") {
-		return "", fmt.Errorf("%q — не похоже на домен", value)
+		return "", fmt.Errorf("%q: не похоже на домен", value)
 	}
 	if !strings.Contains(host, ".") && allowedZoneSuffixes[host] == "" {
-		return "", fmt.Errorf("%q — домен без точки, нужен вид example.com", host)
+		return "", fmt.Errorf("%q: домен без точки, нужен вид example.com", host)
 	}
 	if len(host) > 253 {
 		return "", fmt.Errorf("слишком длинный домен")

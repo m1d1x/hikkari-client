@@ -21,6 +21,9 @@ import 'package:nekkobox/widgets/service_icon.dart';
 import 'package:nekkobox/theme/tokens.dart';
 import 'package:provider/provider.dart';
 
+/// Longest routing reveal, including the spring's sub-pixel tail.
+const _revealSettles = Duration(milliseconds: 1500);
+
 class PresetCore extends NekkoboxCore {
   final List<Map<String, dynamic>>? customServices;
   PresetCore({this.customServices});
@@ -58,20 +61,22 @@ class PresetCore extends NekkoboxCore {
         },
         'catalog': {
           'version': 2,
-          'services': customServices ?? [
-            {
-              'id': 'steam',
-              'name': 'Steam',
-              'icon': 'steam',
-              'domains': ['steampowered.com', 'steamcommunity.com'],
-              'ips': [],
-              'processes': {
-                'windows': ['steam.exe', 'steamwebhelper.exe'],
-                'darwin': ['steam_osx'],
-              },
-              'defaultModes': ['bypass', 'proxy'],
-            },
-          ],
+          'services':
+              customServices ??
+              [
+                {
+                  'id': 'steam',
+                  'name': 'Steam',
+                  'icon': 'steam',
+                  'domains': ['steampowered.com', 'steamcommunity.com'],
+                  'ips': [],
+                  'processes': {
+                    'windows': ['steam.exe', 'steamwebhelper.exe'],
+                    'darwin': ['steam_osx'],
+                  },
+                  'defaultModes': ['bypass', 'proxy'],
+                },
+              ],
         },
       },
     });
@@ -117,6 +122,150 @@ void main() {
       ..addFont(rootBundle.load('packages/simple_icons/fonts/SimpleIcons.ttf'));
     await Future.wait([text.load(), icons.load(), brands.load()]);
   });
+  for (final (windowHeight, serviceCount, staged) in [
+    (450.0, 1, true),
+    (650.0, 1, false),
+    (1100.0, 1, false),
+    (1100.0, 16, false),
+  ]) {
+    testWidgets(
+      'routing adapts at height $windowHeight with $serviceCount services',
+      (tester) async {
+        tester.view.physicalSize = Size(420, windowHeight);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final state = AppState(
+          PresetCore(
+            customServices: [
+              for (var i = 0; i < serviceCount; i++)
+                {
+                  'id': 'service-$i',
+                  'name': 'Service $i',
+                  'icon': 'steam',
+                  'domains': ['example$i.com'],
+                  'ips': [],
+                  'processes': <String, dynamic>{},
+                  'defaultModes': ['bypass', 'proxy'],
+                },
+            ],
+          ),
+        );
+        addTearDown(state.dispose);
+        await state.refreshPresetState();
+        await tester.pumpWidget(
+          ChangeNotifierProvider.value(
+            value: state,
+            child: MaterialApp(
+              theme: buildAppTheme(),
+              home: const HomeScreen(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final header = find.text('маршрутизация');
+        final section = find.byType(RouteSection);
+        final manual = find.byKey(
+          const ValueKey('route_manual_surface'),
+          skipOffstage: false,
+        );
+        double height() => tester.getSize(section).height;
+        await tester.tap(header);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(
+          tester.getSize(manual).height,
+          staged ? 0 : greaterThan(0),
+          reason: staged
+              ? 'lists below a viewport filled by the controls stay hidden'
+              : 'lists that fit on screen grow together with the controls',
+        );
+        final partial = height();
+        await tester.tap(header);
+        await tester.pump();
+        expect(height(), closeTo(partial, .01));
+        await tester.pumpAndSettle();
+        await tester.tap(header);
+        await tester.pump();
+        await tester.pump(_revealSettles);
+        final finalHeight = height();
+        await tester.pumpAndSettle();
+        expect(
+          height(),
+          closeTo(finalHeight, .01),
+          reason: 'opening finishes within the selected duration',
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  for (final windowHeight in [800.0, 1100.0, 1400.0]) {
+    testWidgets(
+      'routing header rises at a bounded speed in a $windowHeight window',
+      (tester) async {
+        tester.view.physicalSize = Size(480, windowHeight);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final state = AppState(
+          PresetCore(
+            customServices: [
+              for (var i = 0; i < 100; i++)
+                {
+                  'id': 'service-$i',
+                  'name': 'Service $i',
+                  'icon': 'steam',
+                  'domains': ['example$i.com'],
+                  'ips': [],
+                  'processes': <String, dynamic>{},
+                  'defaultModes': ['bypass', 'proxy'],
+                },
+            ],
+          ),
+        );
+        addTearDown(state.dispose);
+        await state.refreshPresetState();
+        await tester.pumpWidget(
+          ChangeNotifierProvider.value(
+            value: state,
+            child: MaterialApp(
+              theme: buildAppTheme(),
+              home: const HomeScreen(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final header = find.text('маршрутизация');
+        final start = tester.getTopLeft(header).dy;
+        await tester.tap(header);
+        await tester.pump();
+        var previous = start;
+        var peak = 0.0;
+        var elapsed = Duration.zero;
+        while (elapsed <= _revealSettles) {
+          await tester.pump(const Duration(milliseconds: 16));
+          elapsed += const Duration(milliseconds: 16);
+          final y = tester.getTopLeft(header).dy;
+          if ((previous - y) > peak) peak = previous - y;
+          previous = y;
+        }
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(header).dy, closeTo(previous, .01));
+        // A hundred services must not set the pace: only the on-screen path
+        // does, and a tall window gets more time instead of a faster header.
+        expect(
+          peak,
+          lessThan(90),
+          reason: 'rose ${start - previous}px, peak ${peak}px per 16ms frame',
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   testWidgets('expanded routing fits a small desktop window', (tester) async {
     tester.view.physicalSize = const Size(420, 650);
     tester.view.devicePixelRatio = 1;
@@ -158,7 +307,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('steampowered.com\nsteamcommunity.com'), findsOneWidget);
-    expect(find.byType(EditableText), findsNWidgets(2)); // manual input + preset search
+    expect(
+      find.byType(EditableText),
+      findsNWidgets(2),
+    ); // manual input + preset search
     expect(core.pending.isCompleted, isFalse);
     core.pending.complete([]);
     expect(
@@ -188,14 +340,26 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });
-  testWidgets('routing stays continuous through reversal and scroll bounds', (
-    tester,
-  ) async {
+  testWidgets('routing moves continuously through reversal, settling and '
+      'a scrolled collapse', (tester) async {
     tester.view.physicalSize = const Size(420, 650);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final core = PresetCore();
+    final core = PresetCore(
+      customServices: [
+        for (var i = 0; i < 40; i++)
+          {
+            'id': 'service-$i',
+            'name': 'Service $i',
+            'icon': 'steam',
+            'domains': ['example$i.com'],
+            'ips': [],
+            'processes': <String, dynamic>{},
+            'defaultModes': ['bypass', 'proxy'],
+          },
+      ],
+    );
     final state = AppState(core);
     await state.refreshPresetState();
     await tester.pumpWidget(
@@ -205,119 +369,151 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final section = find.byType(RouteSection);
     final header = find.text('маршрутизация');
-    double height() => tester.getSize(section).height;
-    final ruleRow = find.byKey(
-      const ValueKey('preset_surface_steam'),
+    final scroll = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    final row = find.byKey(
+      const ValueKey('preset_surface_service-0'),
       skipOffstage: false,
     );
-    final naturalRowWidth = tester.getSize(ruleRow).width;
+    final rowWidth = tester.getSize(row).width;
     final surfaces = [
       find.byKey(const ValueKey('route_manual_surface'), skipOffstage: false),
       find.byKey(const ValueKey('route_presets_surface'), skipOffstage: false),
     ];
-    final closed = height();
-    double? fullHeight;
-    List<double>? fullSurfaces;
-    final reveals = find.descendant(
-      of: section,
-      matching: find.byWidgetPredicate(
-        (w) => w is Align && w.heightFactor != null,
-        skipOffstage: false,
-      ),
-      skipOffstage: false,
-    );
-    Future<void> frames({required bool opening, bool anchored = true}) async {
-      final samples = <(double, double, List<double>)>[];
-      var previous = height();
-      var previousSurfaces = surfaces
-          .map((f) => tester.getSize(f).height)
-          .toList();
-      for (
-        var i = 0;
-        i < (AppDurations.routingExpand.inMilliseconds / 16).ceil() + 1;
-        i++
-      ) {
+    double y() => tester.getTopLeft(header).dy;
+    List<double> surfaceHeights() =>
+        surfaces.map((f) => tester.getSize(f).height).toList();
+
+    // Pumps until the reveal settles and checks every frame on the way.
+    Future<void> run({
+      required bool opening,
+      int? frames,
+      bool reversed = false,
+    }) async {
+      var previous = y();
+      var previousSurfaces = surfaceHeights();
+      final viewportBottom = tester
+          .getRect(find.byType(Scrollable).first)
+          .bottom;
+      // Space between the window edge and the catalog card, while it shows.
+      double? edgeGap() => tester.getSize(surfaces.last).height == 0
+          ? null
+          : viewportBottom - tester.getRect(surfaces.last).bottom;
+      var previousGap = edgeGap();
+      final limit = frames ?? _revealSettles.inMilliseconds ~/ 16;
+      for (var i = 0; i < limit; i++) {
         await tester.pump(const Duration(milliseconds: 16));
-        final current = height();
-        expect(
-          opening ? current >= previous - .01 : current <= previous + .01,
-          isTrue,
-          reason: 'frame $i: $previous -> $current',
-        );
-        final currentSurfaces = surfaces
-            .map((f) => tester.getSize(f).height)
-            .toList();
-        for (var j = 0; j < surfaces.length; j++) {
+        final current = y();
+        // Right after a reversal the spring may carry on briefly with the
+        // velocity it had; after that it heads to the target only.
+        if (!reversed || i > 6) {
           expect(
-            opening
-                ? currentSurfaces[j] >= previousSurfaces[j] - .01
-                : currentSurfaces[j] <= previousSurfaces[j] + .01,
+            opening ? current <= previous + .01 : current >= previous - .01,
             isTrue,
-            reason: 'each rounded surface must expand with its contents',
+            reason: 'frame $i: header $previous -> $current',
           );
         }
-        samples.add((
-          tester.widget<Align>(reveals.first).heightFactor!,
-          current,
-          currentSurfaces,
-        ));
-        previousSurfaces = currentSurfaces;
         expect(
-          tester.getSize(ruleRow).width,
-          closeTo(naturalRowWidth, .001),
+          (current - previous).abs(),
+          lessThan(50),
+          reason: 'frame $i: header must glide, not jump',
+        );
+        final currentSurfaces = surfaceHeights();
+        if (frames == null && !reversed) {
+          for (var j = 0; j < surfaces.length; j++) {
+            expect(
+              opening
+                  ? currentSurfaces[j] >= previousSurfaces[j] - .01
+                  : currentSurfaces[j] <= previousSurfaces[j] + .01,
+              isTrue,
+              reason: 'frame $i: each rounded surface follows its contents',
+            );
+          }
+        }
+        expect(
+          scroll.pixels,
+          inInclusiveRange(0, scroll.maxScrollExtent + .01),
+          reason: 'frame $i: the viewport never shows out-of-range content',
+        );
+        expect(
+          tester.getSize(row).width,
+          closeTo(rowWidth, .001),
           reason: 'revealing vertically must not change text layout width',
         );
+        final gap = edgeGap();
+        if (opening && !reversed && gap != null && previousGap != null) {
+          if (gap < -1) {
+            expect(
+              previousGap,
+              lessThan(.5),
+              reason:
+                  'frame $i: the cut card reaches the window edge before the '
+                  'rest of the list appears below it',
+            );
+          } else {
+            expect(
+              gap,
+              lessThanOrEqualTo(previousGap + .01),
+              reason: 'frame $i: the strip under the card only closes',
+            );
+          }
+        }
         expect(tester.takeException(), isNull, reason: 'frame $i');
         previous = current;
-      }
-      fullHeight ??= height();
-      fullSurfaces ??= surfaces.map((f) => tester.getSize(f).height).toList();
-      for (final (progress, total, sizes) in samples) {
-        expect(
-          total,
-          closeTo(closed + (fullHeight! - closed) * progress, .01),
-          reason:
-              'layout must preserve the controller curve without extra impulses',
-        );
-        for (var j = 0; j < sizes.length; j++) {
-          expect(
-            sizes[j],
-            closeTo(fullSurfaces![j] * progress, .01),
-            reason: 'every card must follow the same animation progress',
-          );
-        }
+        previousSurfaces = currentSurfaces;
+        previousGap = gap;
       }
     }
 
+    final closedY = y();
     await tester.tap(header);
     await tester.pump();
-    expect(height(), closeTo(closed, .01));
-    await frames(opening: true);
-    final opened = height();
-    expect(opened, greaterThan(closed + 100));
+    expect(y(), closeTo(closedY, .01));
+    await run(opening: true);
+    final openY = y();
+    expect(openY, lessThan(closedY - 100));
+    await tester.pumpAndSettle();
+    expect(
+      y(),
+      closeTo(openY, .01),
+      reason: 'the list below the fold appears without moving the header',
+    );
+    expect(
+      scroll.maxScrollExtent,
+      greaterThan(0),
+      reason: 'a long catalog continues below the fold once settled',
+    );
     expect(core.listAppsCalls, 0);
+
+    // Reversal keeps the current position and turns around smoothly.
     await tester.tap(header);
     await tester.pump();
-    expect(height(), closeTo(opened, .01));
-    await tester.pump(AppDurations.routingExpand * (48 / 260));
-    final interrupted = height();
-    expect(opened - interrupted, greaterThan((opened - closed) / 2));
+    expect(y(), closeTo(openY, .01));
+    await run(opening: false, frames: 8);
+    final interrupted = y();
+    expect(interrupted, greaterThan(openY + 20));
     await tester.tap(header);
     await tester.pump();
-    expect(height(), closeTo(interrupted, .01));
-    await frames(opening: true);
-    final scroll = tester
-        .state<ScrollableState>(find.byType(Scrollable).first)
-        .position;
-    scroll.jumpTo(scroll.maxScrollExtent);
+    expect(y(), closeTo(interrupted, .01));
+    await run(opening: true, reversed: true);
+    await tester.pumpAndSettle();
+    expect(y(), closeTo(openY, .01));
+
+    // Collapsing a page scrolled into the catalog: content and offset shrink
+    // together until the card is back at the bottom.
+    scroll.jumpTo(80);
     await tester.pump();
+    final scrolledY = y();
+    expect(scrolledY, closeTo(openY - 80, .01));
     await tester.tap(header);
     await tester.pump();
-    await frames(opening: false, anchored: false);
-    expect(height(), closeTo(closed, .01));
-    expect(scroll.pixels, closeTo(0, .01));
+    expect(y(), closeTo(scrolledY, .01));
+    await run(opening: false);
+    await tester.pumpAndSettle();
+    expect(y(), closeTo(closedY, .01));
+    expect(scroll.pixels, 0);
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });
@@ -380,10 +576,21 @@ void main() {
       await tester.tap(find.text('домены'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 64));
-      final beforeClose = height();
+      // Closing drops what is below the fold at once, down to the page's
+      // bottom padding strip at the edge; the card itself stays put.
+      double visibleHeight() => tester
+          .getRect(section)
+          .intersect(tester.getRect(find.byType(Scrollable).first))
+          .height;
+      final cardTop = tester.getTopLeft(section).dy;
+      final beforeClose = visibleHeight();
       await tester.tap(find.text('маршрутизация'));
       await tester.pump();
-      expect(height(), closeTo(beforeClose, .01));
+      expect(tester.getTopLeft(section).dy, closeTo(cardTop, .01));
+      expect(
+        visibleHeight(),
+        inInclusiveRange(beforeClose - 16.01, beforeClose),
+      );
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('маршрутизация'));
@@ -499,9 +706,7 @@ void main() {
                     child: const Text('снаружи'),
                   ),
                   const Expanded(
-                    child: SingleChildScrollView(
-                      child: RouteSection(),
-                    ),
+                    child: SingleChildScrollView(child: RouteSection()),
                   ),
                 ],
               ),
@@ -915,82 +1120,93 @@ void main() {
     ]) {
       final svg = resolveBrandSvg(id);
       expect(svg, isNotNull, reason: 'brand $id must have authentic SVG');
-      expect(svg, contains('<svg'), reason: 'brand $id SVG is missing <svg tag');
+      expect(
+        svg,
+        contains('<svg'),
+        reason: 'brand $id SVG is missing <svg tag',
+      );
     }
   });
 
-  testWidgets('preset search filters services by name, id, domains and aliases', (
-    tester,
-  ) async {
-    final core = PresetCore(
-      customServices: [
-        {
-          'id': 'steam',
-          'name': 'Steam',
-          'icon': 'steam',
-          'domains': ['steampowered.com', 'steamcommunity.com'],
-          'ips': [],
-          'processes': {},
-          'defaultModes': ['bypass', 'proxy'],
-        },
-        {
-          'id': 'discord',
-          'name': 'Discord',
-          'icon': 'discord',
-          'domains': ['discord.gg', 'discord.com'],
-          'ips': [],
-          'processes': {},
-          'defaultModes': ['proxy'],
-        },
-        {
-          'id': 'banks',
-          'name': 'Банки РФ',
-          'icon': 'banks',
-          'domains': ['sberbank.ru', 'tinkoff.ru'],
-          'ips': [],
-          'processes': {},
-          'defaultModes': ['bypass'],
-        },
-      ],
-    );
-    final state = await showPresets(tester, core);
-    expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
+  testWidgets(
+    'preset search filters services by name, id, domains and aliases',
+    (tester) async {
+      final core = PresetCore(
+        customServices: [
+          {
+            'id': 'steam',
+            'name': 'Steam',
+            'icon': 'steam',
+            'domains': ['steampowered.com', 'steamcommunity.com'],
+            'ips': [],
+            'processes': {},
+            'defaultModes': ['bypass', 'proxy'],
+          },
+          {
+            'id': 'discord',
+            'name': 'Discord',
+            'icon': 'discord',
+            'domains': ['discord.gg', 'discord.com'],
+            'ips': [],
+            'processes': {},
+            'defaultModes': ['proxy'],
+          },
+          {
+            'id': 'banks',
+            'name': 'Банки РФ',
+            'icon': 'banks',
+            'domains': ['sberbank.ru', 'tinkoff.ru'],
+            'ips': [],
+            'processes': {},
+            'defaultModes': ['bypass'],
+          },
+        ],
+      );
+      final state = await showPresets(tester, core);
+      expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
 
-    final searchField = find.byKey(const ValueKey('preset_search_field'));
-    expect(searchField, findsOneWidget);
+      final searchField = find.byKey(const ValueKey('preset_search_field'));
+      expect(searchField, findsOneWidget);
 
-    // Filter by name
-    await tester.enterText(searchField, 'steam');
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
-    expect(find.byKey(const ValueKey('preset_action_discord')), findsNothing);
+      // Filter by name
+      await tester.enterText(searchField, 'steam');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
+      expect(find.byKey(const ValueKey('preset_action_discord')), findsNothing);
 
-    // Filter by Russian alias
-    await tester.enterText(searchField, 'дискорд');
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('preset_action_discord')), findsOneWidget);
-    expect(find.byKey(const ValueKey('preset_action_steam')), findsNothing);
+      // Filter by Russian alias
+      await tester.enterText(searchField, 'дискорд');
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('preset_action_discord')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('preset_action_steam')), findsNothing);
 
-    // Filter by domain inside rules
-    await tester.enterText(searchField, 'sberbank');
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('preset_action_banks')), findsOneWidget);
-    expect(find.byKey(const ValueKey('preset_action_steam')), findsNothing);
+      // Filter by domain inside rules
+      await tester.enterText(searchField, 'sberbank');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('preset_action_banks')), findsOneWidget);
+      expect(find.byKey(const ValueKey('preset_action_steam')), findsNothing);
 
-    // Nothing found
-    await tester.enterText(searchField, 'nonexistentxyz123');
-    await tester.pumpAndSettle();
-    expect(find.text('ничего не найдено'), findsOneWidget);
+      // Nothing found
+      await tester.enterText(searchField, 'nonexistentxyz123');
+      await tester.pumpAndSettle();
+      expect(find.text('ничего не найдено'), findsOneWidget);
 
-    // Clear search
-    await tester.tap(find.byIcon(Icons.close));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
-    expect(find.byKey(const ValueKey('preset_action_discord')), findsOneWidget);
+      // Clear search
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('preset_action_steam')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('preset_action_discord')),
+        findsOneWidget,
+      );
 
-    await tester.pumpWidget(const SizedBox());
-    state.dispose();
-  });
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    },
+  );
 }
 
 class DiscoveryCore extends NekkoboxCore {

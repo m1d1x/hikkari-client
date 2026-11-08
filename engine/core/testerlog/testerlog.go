@@ -175,7 +175,7 @@ func (s *Shipper) follow() bool {
 	for _, l := range trimOverlap(tail, live) {
 		s.pushLocked(l)
 	}
-	s.pushLocked(fmt.Sprintf("%s [testerlog] ===== режим тестера включён, выше — хвост лога до включения =====",
+	s.pushLocked(fmt.Sprintf("%s [testerlog] ===== режим тестера включён, выше хвост лога до включения =====",
 		time.Now().Format("2006/01/02 15:04:05.000000")))
 	for _, l := range live {
 		s.pushLocked(l)

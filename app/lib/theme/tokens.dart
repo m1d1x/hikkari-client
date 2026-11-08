@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 
 /// System animation curves.
 abstract final class AppCurves {
@@ -25,9 +28,38 @@ abstract final class AppDurations {
   /// Accordion panels and large layout expansions.
   static const Duration expand = Duration(milliseconds: 260);
 
-  // Routing motion: balanced pace between the original and inspection speeds.
-  static const Duration routingExpand = Duration(milliseconds: 520);
+  /// Tab height changes and preset row details inside routing.
   static const Duration routingDetails = Duration(milliseconds: 440);
+}
+
+/// Physical motion for large on-screen travel.
+abstract final class AppMotion {
+  static const double _settleMin = .27;
+  static const double _settleMax = .44;
+  static const double _settleReference = 300;
+
+  /// Critically damped spring for moving a surface [distance] logical pixels,
+  /// such as the routing card rising to the top of the window.
+  ///
+  /// It answers the click within a frame, peaks at a sixth of the settling
+  /// time and lands without a bounce, in both directions and when reversed
+  /// mid-flight (the spring keeps the current velocity). Settling time grows
+  /// with the square root of the path: a tall window gets more time instead of
+  /// a faster card, without making it wait linearly longer.
+  static SpringDescription travelSpring(double distance) {
+    final settle = (_settleMin * math.sqrt(distance / _settleReference)).clamp(
+      _settleMin,
+      _settleMax,
+    );
+    // After 6/ω a critically damped spring has under 2% of the path left;
+    // the rest is a sub-pixel-per-frame tail.
+    final omega = 6 / settle;
+    return SpringDescription(
+      mass: 1,
+      stiffness: omega * omega,
+      damping: 2 * omega,
+    );
+  }
 }
 
 /// Design tokens ported 1:1 from `NekkoVPN/frontend/src/App.svelte` (the

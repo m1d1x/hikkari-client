@@ -114,6 +114,13 @@ void main() {
       );
     });
 
+    test('protocolCaption names the protocol and hides an unknown one', () {
+      expect(protocolCaption('vless-reality'), 'vless · reality');
+      expect(protocolCaption('hysteria2'), 'hysteria2');
+      expect(protocolCaption('other'), '');
+      expect(protocolCaption(''), '');
+    });
+
     test('formatProfileLabel formats cities into clean lowercase names', () {
       expect(formatProfileLabel('ФИНКА СТАРАЯ'), 'хельсинки-01');
       expect(formatProfileLabel('НИДЕРЛАНДСК'), 'амстердам-01');
@@ -121,6 +128,8 @@ void main() {
       expect(formatProfileLabel('Hikkari ams1-1'), 'амстердам-01');
       expect(formatProfileLabel('Hikkari ams1-2'), 'амстердам-02');
       expect(formatProfileLabel('Hikkari hel1-1'), 'хельсинки-01');
+      expect(formatProfileLabel('Hikkari eun17-2'), 'eun17-2');
+      expect(formatProfileLabel('Hikkari Riga 001'), 'riga 001');
       expect(formatProfileLabel('Hikkari fra1-3'), 'франкфурт-03');
       expect(formatProfileLabel('хельсинки-02'), 'хельсинки-02');
       expect(formatProfileLabel('Custom-Server-1'), 'custom-server-1');

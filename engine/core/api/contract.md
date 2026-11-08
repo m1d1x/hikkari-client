@@ -186,7 +186,7 @@ Valid `category` values: `"domains"`, `"ips"`, `"processes"`, `"folders"` (path 
   "active":   true,            // manually selected
   "autoEligible": true,         // verified Hikkari source; never inferred from display metadata
   "endpoint": "1.2.3.4:51820", // "host:port" or ""
-  "protocol": "AmneziaWG",     // pretty name ("AmneziaWG", "WireGuard", "—")
+  "protocol": "AmneziaWG",     // pretty name ("AmneziaWG", "WireGuard", "-")
   "subscription": {             // omitted for individually imported profiles
     "id": "sub-…",              // stable local grouping key for the subscription source
     "title": "Pelmeska_s",      // provider title / Content-Disposition filename

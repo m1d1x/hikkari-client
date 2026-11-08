@@ -18,7 +18,12 @@ final bool xrayAvailable = !Platform.isWindows;
 
 /// Debug routing uses the real Go domain/queue with an in-memory store and
 /// preview executor. It never configures or restarts a native engine.
-const bool kRoutingDryRun = kDebugMode && !kLiveEngine;
+const bool kRoutingDryRun = (kDebugMode && !kLiveEngine) || kDryPreview;
+
+/// Dry run in a profile build, to judge motion and frame times at real speed
+/// without touching the engine:
+/// flutter run --profile -d macos --dart-define=HIKKARI_DRY=true
+const bool kDryPreview = bool.fromEnvironment('HIKKARI_DRY');
 
 /// Dev-only kill switch for everything else that would poke the real engine:
 /// VPN on/off, profile switch/rename/delete, auto-mode, and profile import.
@@ -29,7 +34,7 @@ const bool kRoutingDryRun = kDebugMode && !kLiveEngine;
 // Live debug runs retain hot reload while using real profiles and the engine.
 // flutter run -d macos --dart-define=HIKKARI_LIVE=true
 const bool kLiveEngine = bool.fromEnvironment('HIKKARI_LIVE');
-const bool kEngineDryRun = kDebugMode && !kLiveEngine;
+const bool kEngineDryRun = (kDebugMode && !kLiveEngine) || kDryPreview;
 
 /// What the update banner shows in dry-run, to work on its design without a
 /// staged release: `flutter run --dart-define=DRY_UPDATE=mandatory` (staged;
@@ -343,6 +348,8 @@ class AppState extends ChangeNotifier {
         _profileCountries = const {
           'dry-demo': 'nl',
           'dry-frankfurt': 'de',
+          'dry-riga': 'lv',
+          'dry-nl': 'nl',
           'dry-paris': 'fr',
         };
         _uptime = {
@@ -587,7 +594,7 @@ class AppState extends ChangeNotifier {
   static const _dryHealthOff = HealthInfo(
     running: false,
     tunnelOK: false,
-    ip: '—',
+    ip: '-',
     status: 'off',
     message: '',
   );
@@ -712,8 +719,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Preview fixtures use the current production widgets and their exact metric
-  // model. Every profile is visibly labelled demo; no network measurements run.
+  // Preview fixtures (debug builds only, see [kEngineDryRun]) use the current
+  // production widgets and their exact metric model, with plain city names so
+  // the screen reads as it will for a user; no network measurements run.
   static RelayCapacity _demoMetrics(int rtt, double mbps, double phase) {
     final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final bucket = now ~/ 1800 * 1800;
@@ -743,31 +751,67 @@ class AppState extends ChangeNotifier {
     );
   }
 
+  // Demo hikkari subscription: 30 days and 300 GB of 1000 GB left, so the
+  // values are the hover renew target. Drop either under 7 days or 100 GB to
+  // see the static renew button. The checkout is /pay, the only page the app
+  // treats as a renew target.
+  static final SubscriptionInfo _demoSubscription = SubscriptionInfo(
+    id: 'dry-hikkari',
+    title: 'hikkari',
+    uploadBytes: 20 * 1000000000,
+    downloadBytes: 680 * 1000000000,
+    totalBytes: 1000 * 1000000000,
+    expiresAt:
+        DateTime.now().add(const Duration(days: 30)).millisecondsSinceEpoch ~/
+        1000,
+    updateIntervalSeconds: 3600,
+    webPageUrl: 'https://hikkari.net/pay#demo',
+    supportUrl: '',
+  );
+
   List<ProfileInfo> _dryProfiles = [
     ProfileInfo(
       name: 'dry-demo',
-      label: 'амстердам · демо',
+      label: 'амстердам',
       active: true,
       endpoint: 'demo.example.com:443',
-      protocol: 'vless',
+      protocol: 'vless-reality',
       autoEligible: true,
       capacity: _demoMetrics(87, 128, 0),
     ),
     ProfileInfo(
       name: 'dry-frankfurt',
-      label: 'франкфурт · демо',
+      label: 'франкфурт',
       active: false,
       endpoint: 'demo.example.com:443',
-      protocol: 'vless',
+      protocol: 'hysteria2',
       autoEligible: true,
       capacity: _demoMetrics(112, 74, 1.8),
     ),
-    const ProfileInfo(
-      name: 'dry-paris',
-      label: 'париж · демо',
+    ProfileInfo(
+      name: 'dry-riga',
+      label: 'рига-003',
       active: false,
       endpoint: 'demo.example.com:443',
-      protocol: 'vless',
+      protocol: 'vless-reality',
+      autoEligible: true,
+      subscription: _demoSubscription,
+    ),
+    ProfileInfo(
+      name: 'dry-nl',
+      label: 'нидерланды-001',
+      active: false,
+      endpoint: 'demo.example.com:443',
+      protocol: 'vless-xhttp',
+      autoEligible: true,
+      subscription: _demoSubscription,
+    ),
+    const ProfileInfo(
+      name: 'dry-paris',
+      label: 'париж',
+      active: false,
+      endpoint: 'demo.example.com:443',
+      protocol: 'vless-xhttp',
       autoEligible: true,
     ),
   ];
@@ -815,7 +859,7 @@ class AppState extends ChangeNotifier {
         _dryHealth = const HealthInfo(
           running: false,
           tunnelOK: false,
-          ip: '—',
+          ip: '-',
           status: 'connecting',
           message: '',
         );

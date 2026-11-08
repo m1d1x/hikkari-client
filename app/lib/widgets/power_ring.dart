@@ -3,6 +3,7 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
+import '../theme/tokens.dart';
 import 'power_mark_geometry.dart';
 
 /// What the power button is showing. Derived from the tunnel state by the
@@ -70,6 +71,11 @@ class _PowerRingState extends State<PowerRing> with TickerProviderStateMixin {
     vsync: this,
     duration: const Duration(milliseconds: 360),
   );
+  // Pointer over the button, on the shared hover timing.
+  late final AnimationController _hover = AnimationController(
+    vsync: this,
+    duration: AppDurations.hover,
+  );
   // 0 = off colours, 1 = accent.
   late final AnimationController _level = AnimationController(
     vsync: this,
@@ -79,6 +85,7 @@ class _PowerRingState extends State<PowerRing> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _hover.value = widget.hover ? 1 : 0;
     _apply(null, widget.phase);
   }
 
@@ -86,6 +93,9 @@ class _PowerRingState extends State<PowerRing> with TickerProviderStateMixin {
   void didUpdateWidget(PowerRing old) {
     super.didUpdateWidget(old);
     if (old.phase != widget.phase) _apply(old.phase, widget.phase);
+    if (old.hover != widget.hover) {
+      _hover.animateTo(widget.hover ? 1 : 0, curve: AppCurves.hover);
+    }
   }
 
   void _searching(bool on) {
@@ -141,6 +151,7 @@ class _PowerRingState extends State<PowerRing> with TickerProviderStateMixin {
     _look.dispose();
     _lookAmount.dispose();
     _level.dispose();
+    _hover.dispose();
     super.dispose();
   }
 
@@ -156,6 +167,7 @@ class _PowerRingState extends State<PowerRing> with TickerProviderStateMixin {
           _look,
           _lookAmount,
           _level,
+          _hover,
         ]),
         builder: (context, child) => CustomPaint(
           painter: _MarkPainter(
@@ -165,7 +177,7 @@ class _PowerRingState extends State<PowerRing> with TickerProviderStateMixin {
                 (Curves.easeInOut.transform(_look.value) * 2 - 1) *
                 Curves.easeOut.transform(_lookAmount.value),
             level: _level.value,
-            hover: widget.hover,
+            hover: _hover.value,
             accent: widget.accent,
             idleBorder: widget.idleBorder,
             idleIcon: widget.idleIcon,
@@ -178,16 +190,22 @@ class _PowerRingState extends State<PowerRing> with TickerProviderStateMixin {
   }
 }
 
-/// The power symbol and the eye, in units where the power arc has radius 1
-/// and the pupil sits at the origin.
+/// The power symbol and the eye, in mark units (0.3 of the ring's radius)
+/// with the pupil at the origin.
 abstract final class _Mark {
   static const samples = kMarkSamples;
 
-  /// Power symbol.
-  static const arcGapDeg = 44.0;
-  static const barTop = Offset(0, -1.16);
-  static const barBottom = Offset(0, -0.24);
-  static const stroke = 0.17;
+  /// Power symbol: Material's power_settings_new on its 24-unit grid, drawn
+  /// at 68 px (the size the button's icon had) — arc of radius 8 and width 2
+  /// round (12, 12), open ±40.5° about the top, the bar from y 3 to 13, all
+  /// ends cut flat. In mark units one grid unit is 68 / 24 px over the
+  /// painter's unit of 0.3 · 88 px.
+  static const _grid = (68 / 24) / (0.3 * 88);
+  static const arcRadius = 8 * _grid;
+  static const arcGapDeg = 40.5;
+  static const barTop = Offset(0, -9 * _grid);
+  static const barBottom = Offset(0, 1 * _grid);
+  static const stroke = 2 * _grid;
 
   /// Right half of the power arc, from the gap down to the bottom: becomes
   /// the lower lid from its right end round to its left end.
@@ -227,7 +245,7 @@ abstract final class _Mark {
       () {
         final a =
             (fromDeg + (toDeg - fromDeg) * i / (samples - 1)) * math.pi / 180;
-        return Offset(math.cos(a), math.sin(a));
+        return Offset(math.cos(a), math.sin(a)) * arcRadius;
       }(),
   ];
 }
@@ -310,7 +328,7 @@ class _MarkPainter extends CustomPainter {
   final double rays;
   final double look;
   final double level;
-  final bool hover;
+  final double hover;
   final Color accent;
   final Color idleBorder;
   final Color idleIcon;
@@ -321,8 +339,12 @@ class _MarkPainter extends CustomPainter {
     final r = size.shortestSide / 2;
 
     // Ring.
-    final idleRing = hover ? accent.withValues(alpha: 0.4) : idleBorder;
-    final litRing = accent.withValues(alpha: hover ? 0.85 : 0.6);
+    final idleRing = Color.lerp(
+      idleBorder,
+      accent.withValues(alpha: 0.4),
+      hover,
+    )!;
+    final litRing = accent.withValues(alpha: lerpDouble(0.6, 0.85, hover)!);
     final ringW = 1.5 + 1.5 * level;
     canvas.drawCircle(
       c,
@@ -335,7 +357,11 @@ class _MarkPainter extends CustomPainter {
 
     // Mark. One unit is sized so the rays' tips stay inside the ring.
     final unit = r * 0.3;
-    final idleMark = hover ? accent.withValues(alpha: 0.7) : idleIcon;
+    final idleMark = Color.lerp(
+      idleIcon,
+      accent.withValues(alpha: 0.7),
+      hover,
+    )!;
     final colour = Color.lerp(idleMark, accent, level)!;
     // The mark's parts overlap (arc halves, round ends, the bar's caps). They
     // are drawn opaque into one layer and the layer takes the colour's alpha,
@@ -383,7 +409,7 @@ class _MarkPainter extends CustomPainter {
   static const _rayCurve = Cubic(0.3, 0, 0.15, 1);
 
   // A stroke that is half of the power arc at morph 0 and a part of the eye
-  // at 1: even width with round ends turning into the logo's outline.
+  // at 1: even width with flat ends turning into the logo's outline.
   void _morphStroke(
     Canvas canvas,
     Paint fill,
@@ -405,12 +431,6 @@ class _MarkPainter extends CustomPainter {
       right.add(Offset.lerp(arc[i] - normal * w, tr[i], m)!);
     }
     _fill(canvas, fill, left, right);
-    // Round ends of the power arc, shrinking away as it becomes the eye.
-    final cap = (_Mark.stroke / 2) * (1 - m);
-    if (cap > 0) {
-      canvas.drawCircle((left.first + right.first) / 2, cap, fill);
-      canvas.drawCircle((left.last + right.last) / 2, cap, fill);
-    }
   }
 
   void _fill(Canvas canvas, Paint fill, List<Offset> left, List<Offset> right) {
@@ -425,7 +445,8 @@ class _MarkPainter extends CustomPainter {
     canvas.drawPath(path, fill);
   }
 
-  // The bar drops into the pupil: its ends meet while it thickens into a dot.
+  // The bar drops into the pupil: its ends meet while it thickens into a dot,
+  // and its flat ends round off on the way.
   void _pupil(Canvas canvas, Paint fill) {
     final m = Curves.easeInOut.transform(morph);
     final centre = _Mark.axis * (_Mark.lookReach * look);
@@ -439,8 +460,11 @@ class _MarkPainter extends CustomPainter {
         ..color = fill.color
         ..strokeWidth = w,
     );
-    canvas.drawCircle(top, w / 2, fill);
-    canvas.drawCircle(bottom, w / 2, fill);
+    final cap = w / 2 * m;
+    if (cap > 0) {
+      canvas.drawCircle(top, cap, fill);
+      canvas.drawCircle(bottom, cap, fill);
+    }
   }
 
   @override

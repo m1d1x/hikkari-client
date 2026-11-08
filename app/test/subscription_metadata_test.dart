@@ -68,16 +68,16 @@ void main() {
           ),
         ),
       );
-      expect(find.text('7 ГБ осталось'), findsOneWidget);
+      expect(find.text('7 ГБ'), findsOneWidget);
       expect(find.text('5 дней'), findsOneWidget);
       state.update(2, 4, 20, 12);
       await tester.pump();
-      expect(find.text('14 ГБ осталось'), findsOneWidget);
+      expect(find.text('14 ГБ'), findsOneWidget);
       expect(find.text('12 дней'), findsOneWidget);
-      expect(find.text('7 ГБ осталось'), findsNothing);
+      expect(find.text('7 ГБ'), findsNothing);
       state.update(20, 4, 20, -1);
       await tester.pump();
-      expect(find.text('0 ГБ осталось'), findsOneWidget);
+      expect(find.text('0 ГБ'), findsOneWidget);
       expect(find.text('истекла'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());

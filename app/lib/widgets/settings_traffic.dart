@@ -109,19 +109,39 @@ class _SettingsTrafficState extends State<SettingsTraffic>
     if (!_supported) return const SizedBox.shrink();
     final t = context.tokens;
     return Padding(
-      padding: const EdgeInsets.only(left: 88, top: 3),
+      padding: const EdgeInsets.only(top: 3),
       child: Tooltip(
         message:
             'Текущий трафик через клиент, включая прямые соединения по правилам. '
             'Это не замер пропускной способности.',
-        child: Text(
-          _speed ?? '↓ — · ↑ — Мбит/с',
-          style: TextStyle(
-            color: t.textMuted,
-            fontFamily: t.monoFamily,
-            fontSize: 11,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 104,
+              child: Text(
+                'потребление',
+                style: TextStyle(
+                  color: t.textMuted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Text(
+                  _speed ?? '↓ - · ↑ - Мбит/с',
+                  style: TextStyle(
+                    color: t.textMuted,
+                    fontFamily: t.monoFamily,
+                    fontSize: 11,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

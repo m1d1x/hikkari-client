@@ -328,7 +328,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
       setState(() => _adapterHealth = ComponentHealth.error);
       _appendLog(
         'ERR',
-        'прямой интернет: сайты мимо VPN не открываются, приложения в обходе работать не будут',
+        'прямой интернет: сайты мимо VPN не открываются, приложения, идущие напрямую, работать не будут',
       );
       return;
     }
@@ -346,13 +346,13 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
     if (tunnelUp) {
       _appendLog(
         'FIX',
-        'безопасный DNS ($names) заблокирован провайдером: браузеры в обходе получают адреса через VPN',
+        'безопасный DNS ($names) недоступен у провайдера: браузеры, идущие напрямую, получают адреса через VPN',
       );
     } else {
       setState(() => _dnsHealth = ComponentHealth.warning);
       _appendLog(
         'WARN',
-        'безопасный DNS ($names) заблокирован провайдером: без VPN браузер с этим DNS не откроет ни один сайт. Включите VPN или отключите «безопасный DNS» в настройках браузера',
+        'безопасный DNS ($names) недоступен у провайдера: без VPN браузер с этим DNS не откроет ни один сайт. Включите VPN или отключите «безопасный DNS» в настройках браузера',
       );
     }
   }
@@ -376,14 +376,14 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
     } else if (dpi == null) {
       _appendLog(
         'INFO',
-        'инструменты обхода блокировок: проверка не выполнена',
+        'сторонние сетевые фильтры: проверка не выполнена',
       );
     } else if (dpi.isEmpty) {
-      _appendLog('OK', 'инструменты обхода блокировок: не обнаружены');
+      _appendLog('OK', 'сторонние сетевые фильтры: не обнаружены');
     } else {
       _appendLog(
         'WARN',
-        'инструменты обхода блокировок: ${dpi.join(", ")}: «глубокий сброс» остановит их и переведёт в ручной запуск',
+        'сторонние сетевые фильтры: ${dpi.join(", ")}: «глубокий сброс» остановит их и переведёт в ручной запуск',
       );
     }
     final wfp = (rep['foreignWfp'] as List?)?.cast<String>();
@@ -467,7 +467,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
                 'Подменённые записи в файле hosts будут отключены (с резервной копией). VPN отключится, другие VPN могут потерять соединение.\n\n'
                 'Перезагрузка не нужна. Продолжить?'
           : 'Будет выполнен полный сброс сетевого стека Winsock и TCP/IP, а подменённые записи в файле hosts будут отключены (с резервной копией). '
-                'Инструменты обхода блокировок (winws, GoodbyeDPI, драйвер WinDivert) будут остановлены и переведены в ручной запуск: сами они не удаляются, но после перезагрузки не запустятся. VPN отключится.\n\n'
+                'Сторонние сетевые фильтры (например, winws и драйвер WinDivert) будут остановлены и переведены в ручной запуск: сами они не удаляются, но после перезагрузки не запустятся. VPN отключится.\n\n'
                 'Для применения изменений потребуется перезагрузка компьютера. Продолжить?',
       confirmLabel: 'сбросить стек',
     );
@@ -516,7 +516,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
       if (dpiStopped.isNotEmpty) {
         _appendLog(
           'FIX',
-          'инструменты обхода блокировок остановлены, запуск ручной: ${dpiStopped.join(", ")} (прежние настройки сохранены)',
+          'сторонние сетевые фильтры остановлены, запуск ручной: ${dpiStopped.join(", ")} (прежние настройки сохранены)',
         );
       }
       final dpiFailed = (res['dpiFailed'] as List?)?.cast<String>() ?? const [];
@@ -682,7 +682,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
                     ),
                     const SizedBox(width: 9),
                     Text(
-                      'диагностика и авто-фикс',
+                      'диагностика',
                       style: TextStyle(
                         color: t.text,
                         fontSize: 15,
@@ -707,7 +707,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
                     Expanded(
                       child: _StatusCard(
                         icon: Icons.dns_outlined,
-                        label: 'кэш dns / резолвер',
+                        label: 'резолвер',
                         health: _dnsHealth,
                       ),
                     ),
@@ -729,40 +729,6 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
                         icon: Icons.shield_outlined,
                         label: 'состояние ядра',
                         health: _coreHealth,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                // Unified Action buttons bar
-                Row(
-                  children: [
-                    Expanded(
-                      child: _DoctorActionButton(
-                        primary: true,
-                        icon: Icons.healing_rounded,
-                        label: 'починить сеть',
-                        busy: _isFixing,
-                        onPressed: _runSoftRepair,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _DoctorActionButton(
-                        icon: Icons.refresh_rounded,
-                        label: 'проверить',
-                        busy: _isDiagnosing,
-                        onPressed: _runDiagnostics,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _DoctorActionButton(
-                        destructive: true,
-                        icon: Icons.restart_alt_rounded,
-                        label: 'глубокий сброс',
-                        onPressed: _runDeepReset,
                       ),
                     ),
                   ],
@@ -859,7 +825,41 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
                   ),
                 ),
 
-                // Footer below console
+                // Action buttons bar under the log
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _DoctorActionButton(
+                        primary: true,
+                        icon: Icons.healing_rounded,
+                        label: 'починить сеть',
+                        busy: _isFixing,
+                        onPressed: _runSoftRepair,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _DoctorActionButton(
+                        icon: Icons.refresh_rounded,
+                        label: 'проверить',
+                        busy: _isDiagnosing,
+                        onPressed: _runDiagnostics,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _DoctorActionButton(
+                        destructive: true,
+                        icon: Icons.layers_clear_rounded,
+                        label: 'глубокий сброс',
+                        onPressed: _runDeepReset,
+                      ),
+                    ),
+                  ],
+                ),
+
+                // Footer below buttons
                 const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,

@@ -43,7 +43,7 @@ func (h *serviceHost) Start(ctx context.Context) error {
 	deadline := time.Now().Add(20 * time.Second)
 	for !listenersReady(h.ports) {
 		if time.Now().After(deadline) {
-			return fmt.Errorf("Xray не открыл локальные порты за 20 секунд; журнал службы — в логе движка")
+			return fmt.Errorf("Xray не открыл локальные порты за 20 секунд; журнал службы в логе движка")
 		}
 		select {
 		case <-ctx.Done():

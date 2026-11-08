@@ -164,7 +164,7 @@ func checkBundle() error {
 		serviceBin, updaterBin, coreBin, xrayBin,
 	} {
 		if err := rootOnly(p); err != nil {
-			return fmt.Errorf("%w — reinstall hikkari from the .pkg", err)
+			return fmt.Errorf("%w; reinstall hikkari from the .pkg", err)
 		}
 	}
 	return nil

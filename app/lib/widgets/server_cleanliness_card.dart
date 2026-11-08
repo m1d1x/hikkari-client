@@ -165,7 +165,7 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
     if (c.asname.isNotEmpty) parts.add(c.asname);
     if (c.isHosting) parts.add('датацентр');
     if (c.isMobile) parts.add('mobile');
-    return parts.isEmpty ? (c.ip.isEmpty ? '—' : c.ip) : parts.join(' · ');
+    return parts.isEmpty ? (c.ip.isEmpty ? '-' : c.ip) : parts.join(' · ');
   }
 
   // Бейдж с числовым индексом чистоты 0-100.
@@ -189,7 +189,7 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
   }
 
   Widget _details(NekkoTokens t, ServerCleanliness c) {
-    final fraud = c.fraudScore >= 0 ? '${c.fraudScore}/100' : '— (нет ключа)';
+    final fraud = c.fraudScore >= 0 ? '${c.fraudScore}/100' : 'нет ключа';
     final cf = [
       if (c.cfColo.isNotEmpty) c.cfColo,
       if (c.cfWarp.isNotEmpty) 'warp=${c.cfWarp}',
@@ -237,9 +237,9 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
             ),
           ),
           const SizedBox(height: 6),
-          _kv(t, 'IP', c.ip.isEmpty ? '—' : c.ip),
+          _kv(t, 'IP', c.ip.isEmpty ? '-' : c.ip),
           _kv(t, 'ASN', asnLine),
-          _kv(t, 'ISP', c.isp.isEmpty ? '—' : c.isp),
+          _kv(t, 'ISP', c.isp.isEmpty ? '-' : c.isp),
           _kv(
             t,
             'локация',
@@ -383,7 +383,7 @@ class _ServerCleanlinessCardState extends State<ServerCleanlinessCard> {
         ),
         Expanded(
           child: Text(
-            v.isEmpty ? '—' : v,
+            v.isEmpty ? '-' : v,
             style: TextStyle(
               color: t.text,
               fontSize: 11.5,

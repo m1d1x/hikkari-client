@@ -151,13 +151,13 @@ func (c *Checker) saveDirectIP(ip string) {
 }
 
 // ExternalIP returns the cached egress IP from the last background probe,
-// or "—" if we don't have one yet. Lock-free fast path — no I/O.
+// or "-" if we don't have one yet. Lock-free fast path — no I/O.
 func (c *Checker) ExternalIP() string {
 	c.mu.Lock()
 	ip := c.cached.IP
 	c.mu.Unlock()
 	if ip == "" {
-		return "—"
+		return "-"
 	}
 	return ip
 }

@@ -131,8 +131,9 @@ class CopyFlashState extends State<CopyFlash>
       final label = Opacity(
         opacity: labelT.clamp(0.0, 1.0),
         child: Transform.translate(
-          // -1.5: lift the lowercase label so it centres on the check.
-          offset: Offset((1 - labelBack) * -18.0, -1.5),
+          // The font's line box is centred on the x-height, so a lowercase
+          // label already centres on the check.
+          offset: Offset((1 - labelBack) * -18.0, 0),
           child: Transform.scale(
             scale: 0.8 + 0.2 * labelBack,
             alignment: Alignment.centerLeft,

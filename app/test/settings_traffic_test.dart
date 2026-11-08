@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:nekkobox/core/models.dart';
@@ -52,6 +53,9 @@ void main() {
   testWidgets('traffic appears only below connected status in settings', (
     tester,
   ) async {
+    final font = FontLoader('IBM Plex Mono')
+      ..addFont(rootBundle.load('assets/fonts/IBMPlexMono-Medium.ttf'));
+    await font.load();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.binding.setSurfaceSize(const Size(409, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -70,6 +74,11 @@ void main() {
     await tester.tap(find.byIcon(Icons.settings_outlined));
     await tester.pumpAndSettle();
     expect(find.byType(SettingsTraffic), findsOneWidget);
+    expect(tester.getSize(find.text('потребление')).height, lessThan(20));
+    expect(
+      tester.getTopLeft(find.text('потребление')).dx,
+      tester.getTopLeft(find.text('статус')).dx,
+    );
     expect(
       tester.getTopLeft(find.byType(SettingsTraffic)).dy,
       greaterThan(tester.getTopLeft(find.text('подключено')).dy),
@@ -101,15 +110,15 @@ void main() {
     );
     await tester.pump();
     expect(state.reads, 1);
-    expect(find.text('↓ — · ↑ — Мбит/с'), findsOneWidget);
+    expect(find.text('↓ - · ↑ - Мбит/с'), findsOneWidget);
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('↓ 0,0 · ↑ 0,0 Мбит/с'), findsOneWidget);
     state.fail = true;
     await tester.pump(const Duration(seconds: 1));
-    expect(find.text('↓ — · ↑ — Мбит/с'), findsOneWidget);
+    expect(find.text('↓ - · ↑ - Мбит/с'), findsOneWidget);
     state.fail = false;
     await tester.pump(const Duration(seconds: 1));
-    expect(find.text('↓ — · ↑ — Мбит/с'), findsOneWidget);
+    expect(find.text('↓ - · ↑ - Мбит/с'), findsOneWidget);
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('↓ 0,0 · ↑ 0,0 Мбит/с'), findsOneWidget);
 
@@ -119,7 +128,7 @@ void main() {
     expect(state.reads, pausedReads);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
-    expect(find.text('↓ — · ↑ — Мбит/с'), findsOneWidget);
+    expect(find.text('↓ - · ↑ - Мбит/с'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
     final closedReads = state.reads;

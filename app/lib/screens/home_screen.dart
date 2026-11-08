@@ -22,6 +22,18 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _logOpen = false;
+  final _powerArea = GlobalKey();
+
+  // The scroll body grows to its intrinsic height once that exceeds the
+  // viewport, so the flexible area above routing can shrink only down to the
+  // power control's intrinsic height. The difference is exact free space.
+  double _routingSpare() {
+    final area = _powerArea.currentContext?.findRenderObject() as RenderBox?;
+    if (area == null || !area.hasSize) return 0;
+    final spare =
+        area.size.height - area.getMaxIntrinsicHeight(area.size.width);
+    return spare > 0 ? spare : 0;
+  }
 
   @override
   void initState() {
@@ -66,7 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? LogOverlay(onClose: _closeLog)
                 : const SizedBox(width: double.infinity, height: 0),
           ),
-          const Expanded(
+          Expanded(
             child: CustomScrollView(
               slivers: [
                 SliverFillRemaining(
@@ -75,16 +87,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Expanded(
                         child: Align(
-                          alignment: Alignment(0, -0.22),
-                          child: PowerToggle(),
+                          key: _powerArea,
+                          alignment: const Alignment(0, -0.22),
+                          child: const PowerToggle(),
                         ),
                       ),
                       SafeArea(
                         top: false,
-                        child: Padding(
-                          padding: EdgeInsets.only(bottom: 16),
-                          child: RouteSection(),
-                        ),
+                        child: RouteSection(spareHeight: _routingSpare),
                       ),
                     ],
                   ),

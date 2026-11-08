@@ -1,15 +1,23 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';
 
 /// Shared smooth line for latency and throughput. Missing and failed
 /// measurements leave gaps; a single real measurement is drawn as one dot.
+///
+/// With [placeholderSeed] set, a profile with fewer than two measurements
+/// shows a faint placeholder wave instead of an empty slot: not data, only a
+/// shape, the same for the same seed. Real measurements replace it as soon
+/// as there are two.
 class Sparkline extends StatelessWidget {
   final List<PingSample> samples;
   final List<double?>? values;
   final Color color;
   final int windowSize;
   final double padding;
+  final String? placeholderSeed;
 
   const Sparkline({
     super.key,
@@ -18,6 +26,7 @@ class Sparkline extends StatelessWidget {
     required this.color,
     this.windowSize = 60,
     this.padding = 3,
+    this.placeholderSeed,
   }) : assert(windowSize > 1);
 
   @override
@@ -29,6 +38,7 @@ class Sparkline extends StatelessWidget {
         color: color,
         windowSize: windowSize,
         padding: padding,
+        placeholderSeed: placeholderSeed,
       ),
       size: Size.infinite,
     );
@@ -41,6 +51,7 @@ class _SparklinePainter extends CustomPainter {
   final Color color;
   final int windowSize;
   final double padding;
+  final String? placeholderSeed;
 
   _SparklinePainter({
     required this.samples,
@@ -48,12 +59,40 @@ class _SparklinePainter extends CustomPainter {
     required this.color,
     required this.windowSize,
     required this.padding,
+    required this.placeholderSeed,
   });
+
+  static const _placeholderAlpha = 0.35;
+
+  // A calm wave between 35% and 75% of the height, its phases taken from
+  // the seed so each profile keeps its own shape.
+  static List<double?> _placeholder(String seed, int n) {
+    final rnd = math.Random(seed.codeUnits.fold<int>(17, (h, c) => h * 31 + c));
+    final p1 = rnd.nextDouble() * math.pi * 2;
+    final p2 = rnd.nextDouble() * math.pi * 2;
+    final p3 = rnd.nextDouble() * math.pi * 2;
+    return [
+      for (var i = 0; i < n; i++)
+        0.55 +
+            0.11 * math.sin(i * 0.31 + p1) +
+            0.06 * math.sin(i * 0.83 + p2) +
+            0.03 * math.sin(i * 1.9 + p3),
+    ];
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
-    final data =
+    var data =
         values ?? samples.map((s) => s.ok ? s.rttMs.toDouble() : null).toList();
+    var normalized = values != null;
+    var color = this.color;
+    final seed = placeholderSeed;
+    if (seed != null &&
+        data.whereType<double>().where((v) => v.isFinite && v > 0).length < 2) {
+      data = _placeholder(seed, windowSize);
+      normalized = true;
+      color = color.withValues(alpha: color.a * _placeholderAlpha);
+    }
     if (data.isEmpty || size.width < 2 || size.height <= padding * 2) return;
     final slice = data.length > windowSize
         ? data.sublist(data.length - windowSize)
@@ -64,7 +103,7 @@ class _SparklinePainter extends CustomPainter {
         .toList();
     if (valid.isEmpty) return;
     final maxValue = valid.fold<double>(
-      values == null ? 80 : 1,
+      normalized ? 1 : 80,
       (a, b) => a > b ? a : b,
     );
     const strokeInset = 1.0;
@@ -75,7 +114,7 @@ class _SparklinePainter extends CustomPainter {
     for (var i = 0; i < slice.length; i++) {
       final value = slice[i];
       if (value == null || !value.isFinite || value <= 0) {
-        _draw(canvas, pts);
+        _draw(canvas, pts, color);
         pts.clear();
         continue;
       }
@@ -86,10 +125,10 @@ class _SparklinePainter extends CustomPainter {
         ),
       );
     }
-    _draw(canvas, pts);
+    _draw(canvas, pts, color);
   }
 
-  void _draw(Canvas canvas, List<_Pt> pts) {
+  void _draw(Canvas canvas, List<_Pt> pts, Color color) {
     if (pts.isEmpty) return;
     if (pts.length == 1) {
       canvas.drawCircle(
@@ -127,7 +166,8 @@ class _SparklinePainter extends CustomPainter {
       old.samples != samples ||
       old.values != values ||
       old.color != color ||
-      old.windowSize != windowSize;
+      old.windowSize != windowSize ||
+      old.placeholderSeed != placeholderSeed;
 }
 
 class _Pt {

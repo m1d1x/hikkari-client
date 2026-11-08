@@ -691,7 +691,7 @@ func prettyProtocol(p Profile) string {
 		return prettyConnection(*p.Connection)
 	}
 	if p.Config == nil {
-		return "—"
+		return "-"
 	}
 	t, _ := p.Config["type"].(string)
 	var s stack
@@ -710,7 +710,7 @@ func prettyProtocol(p Profile) string {
 		s.obfs, _ = obfs["type"].(string)
 	}
 	if t == "" {
-		return "—"
+		return "-"
 	}
 	return s.pretty(t)
 }

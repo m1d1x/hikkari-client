@@ -219,7 +219,7 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   SizedBox(
-                    width: 88,
+                    width: 104,
                     child: Text(
                       'движок',
                       style: TextStyle(
@@ -407,7 +407,7 @@ class _InfoRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 88,
+            width: 104,
             child: Text(
               label,
               style: TextStyle(
@@ -445,7 +445,7 @@ class _InfoRow extends StatelessWidget {
                         ? const _LoadingDots(key: ValueKey('loading'))
                         : value.isEmpty
                         ? Text(
-                            '—',
+                            '-',
                             key: const ValueKey('empty'),
                             style: TextStyle(
                               color: t.textFaint,

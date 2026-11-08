@@ -303,7 +303,7 @@ func (c *Checker) heldReport(left time.Duration) Report {
 		}
 	}
 	held.Running = true
-	held.Message = fmt.Sprintf("данные от %s, источник недоступен — повтор через %s",
+	held.Message = fmt.Sprintf("данные от %s, источник недоступен, повтор через %s",
 		held.CheckedAt, left.Round(time.Second))
 	return held
 }
@@ -649,8 +649,8 @@ func analyze(rep Report) (int, string, string, []Reason) {
 	if rep.IsHosting {
 		score -= 35
 		reasons = append(reasons, Reason{"high",
-			"Хостинг/датацентр IP — Cloudflare Turnstile почти всегда челленджит такие",
-			"Перейти на residential или mobile выход — это устраняет главную причину фрода."})
+			"Хостинг/датацентр IP: Cloudflare Turnstile почти всегда челленджит такие",
+			"Перейти на residential или mobile выход: это устраняет главную причину фрода."})
 	}
 	if rep.IsAbuser || abuserRank[rep.AbuserLabel] >= 3 {
 		score -= 25
@@ -660,7 +660,7 @@ func analyze(rep Report) (int, string, string, []Reason) {
 		}
 		reasons = append(reasons, Reason{"high",
 			"IP/подсеть в abuse-фидах (репутация: " + lbl + ")",
-			"Сменить IP/подсеть — с этого сервера уже спамили/абузили, репутация прилипла к диапазону."})
+			"Сменить IP/подсеть: с этого сервера уже спамили/абузили, репутация прилипла к диапазону."})
 	} else if abuserRank[rep.AbuserLabel] == 2 {
 		score -= 12
 		reasons = append(reasons, Reason{"med",
@@ -685,7 +685,7 @@ func analyze(rep Report) (int, string, string, []Reason) {
 	if isHighRiskASNCountry(rep.ASNCountry) && rep.ASNCountry != rep.Country {
 		score -= 8
 		reasons = append(reasons, Reason{"med",
-			fmt.Sprintf("ASN зарегистрирован в %s (гео IP — %s): CF повышает подозрительность",
+			fmt.Sprintf("ASN зарегистрирован в %s (гео IP %s): CF повышает подозрительность",
 				rep.ASNCountry, rep.Country),
 			"Выбрать провайдера с ASN в той же «спокойной» юрисдикции, что и гео."})
 	}
@@ -696,7 +696,7 @@ func analyze(rep Report) (int, string, string, []Reason) {
 
 	if rep.IsMobile {
 		score += 10
-		reasons = append(reasons, Reason{"good", "Мобильный оператор — такие IP читаются как очень чистые", ""})
+		reasons = append(reasons, Reason{"good", "Мобильный оператор: такие IP читаются как очень чистые", ""})
 	}
 
 	if score < 0 {
@@ -729,7 +729,7 @@ func analyze(rep Report) (int, string, string, []Reason) {
 
 	if verdict == "clean" && len(reasons) == 0 {
 		reasons = append(reasons, Reason{"good",
-			"Красных флагов не найдено — не датацентр, не в abuse-списках", ""})
+			"Красных флагов не найдено: не датацентр, не в abuse-списках", ""})
 	}
 
 	loc := rep.Country

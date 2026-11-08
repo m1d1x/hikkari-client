@@ -118,11 +118,11 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('диагностика и авто-фикс'), findsOneWidget);
+      expect(find.text('диагностика'), findsOneWidget);
       expect(find.text('сетевой доктор и восстановление стека'), findsNothing);
       expect(find.byIcon(Icons.close_rounded), findsNothing);
       expect(find.text('системный прокси'), findsOneWidget);
-      expect(find.text('кэш dns / резолвер'), findsOneWidget);
+      expect(find.text('резолвер'), findsOneWidget);
       expect(find.text('сетевые адаптеры'), findsOneWidget);
       expect(find.text('состояние ядра'), findsOneWidget);
       expect(find.text('починить сеть'), findsOneWidget);
@@ -277,7 +277,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
     await tester.pump(const Duration(milliseconds: 600));
 
-    expect(find.text('диагностика и авто-фикс'), findsOneWidget);
+    expect(find.text('диагностика'), findsOneWidget);
     // The sheet is gone, not hidden behind the dialog.
     expect(find.text('логи', skipOffstage: false), findsNothing);
 
@@ -285,7 +285,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
     await tester.pump(const Duration(milliseconds: 600));
-    expect(find.text('диагностика и авто-фикс'), findsNothing);
+    expect(find.text('диагностика'), findsNothing);
     expect(find.text('логи', skipOffstage: false), findsNothing);
   });
 
@@ -318,13 +318,13 @@ void main() {
     await tester.tapAt(const Offset(2, 2));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
-    expect(find.text('диагностика и авто-фикс'), findsOneWidget);
+    expect(find.text('диагностика'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 1));
     await tester.tapAt(const Offset(2, 2));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
-    expect(find.text('диагностика и авто-фикс'), findsNothing);
+    expect(find.text('диагностика'), findsNothing);
   });
 
   // The engine-backed path: dry run off, so calls reach the fake core.
@@ -386,7 +386,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final log = await logText(tester);
-    expect(log, contains('инструменты обхода блокировок: winws, windivert'));
+    expect(log, contains('сторонние сетевые фильтры: winws, windivert'));
     expect(log, contains('сторонние WFP-провайдеры: ProtonVPN'));
     expect(log, contains('не трогаем'));
   });
@@ -403,7 +403,7 @@ void main() {
     final log = await logText(tester);
     expect(
       log,
-      contains('инструменты обхода блокировок: проверка не выполнена'),
+      contains('сторонние сетевые фильтры: проверка не выполнена'),
     );
     expect(log, contains('сторонние WFP-провайдеры: проверка не выполнена'));
     expect(log, isNot(contains('не обнаружены')));
@@ -477,7 +477,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final log = await logText(tester);
-    expect(log, contains('инструменты обхода блокировок: не обнаружены'));
+    expect(log, contains('сторонние сетевые фильтры: не обнаружены'));
     expect(log, contains('сторонние WFP-провайдеры: не обнаружены'));
   });
 
@@ -532,7 +532,7 @@ void main() {
     await tester.pumpAndSettle();
 
     var log = await logText(tester);
-    expect(log, isNot(contains('инструменты обхода блокировок')));
+    expect(log, isNot(contains('сторонние сетевые фильтры')));
     expect(log, isNot(contains('WFP')));
     expect(log, contains('сторонние правила pf: mullvad'));
 

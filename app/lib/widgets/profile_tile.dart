@@ -7,7 +7,6 @@ import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
 import '../ui/nekko_toast.dart';
 import '../ui/nekko_dialog.dart';
-import '../ui/nekko_inline_edit_field.dart';
 import 'profile_flag_badge.dart';
 import 'profile_share_sheet.dart';
 import 'profile_summary_card.dart';
@@ -41,10 +40,6 @@ class _ProfileTileState extends State<ProfileTile> {
     final error = context.read<AppState>().lastError;
     if (error == null) return;
     NekkoToast.show(context, error);
-  }
-
-  Future<void> _rename(String v) async {
-    await context.read<AppState>().renameProfile(widget.profile.name, v);
   }
 
   Future<void> _confirmDelete() async {
@@ -118,24 +113,20 @@ class _ProfileTileState extends State<ProfileTile> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (widget.profile.autoEligible)
-            _kv(context, t, 'замеры', 'пробники в РФ')
-          else
-            _kv(
-              context,
-              t,
-              'аптайм',
-              pct < 0 ? '—' : '$pct%  ·  ${rtt < 0 ? "—" : "$rtt ms"}',
-            ),
+          _kv(
+            context,
+            t,
+            'аптайм',
+            pct < 0 ? '-' : '$pct%  ·  ${rtt < 0 ? "-" : "$rtt ms"}',
+          ),
           if (widget.profile.shownEndpoint.isNotEmpty)
             _kv(context, t, 'сервер', widget.profile.shownEndpoint, mono: true),
           _kv(
             context,
             t,
             'протокол',
-            widget.profile.protocol.isEmpty ? '—' : widget.profile.protocol,
+            widget.profile.protocol.isEmpty ? '-' : widget.profile.protocol,
           ),
-          _labelRow(context, t),
           Padding(
             padding: const EdgeInsets.only(top: 18),
             child: Row(
@@ -245,34 +236,6 @@ class _ProfileTileState extends State<ProfileTile> {
                 fontSize: 12,
                 fontFamily: mono ? t.monoFamily : null,
               ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _labelRow(BuildContext context, NekkoTokens t) {
-    return SizedBox(
-      height: _rowHeight,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // 71 = 80 − (рамка 1 + левый padding 8 внутри поля): компенсирует
-          // внутренний отступ инлайн-поля, чтобы имя встало по левому краю как
-          // остальные значения в строках выше.
-          SizedBox(
-            width: 71,
-            child: Text(
-              'профиль',
-              style: TextStyle(color: t.textMuted, fontSize: 12),
-            ),
-          ),
-          Expanded(
-            child: NekkoInlineEditField(
-              value: widget.profile.label,
-              onSubmitted: _rename,
-              height: 28,
             ),
           ),
         ],

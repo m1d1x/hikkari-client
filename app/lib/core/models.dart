@@ -329,11 +329,23 @@ String formatProfileLabel(String label) {
       'waw': 'варшава',
       'ber': 'берлин',
     };
-    final city = cityMap[code] ?? code;
+    final city = cityMap[code];
+    // A code that is not a city (a hoster's region, "eun17-2") stays the
+    // relay's own name: numbering it as a city would make a name up.
+    if (city == null) return '$code${m.group(2)}-${m.group(3)}';
     return '$city-$numStr';
   }
 
-  return lower;
+  // The provider's brand in front of a server name says nothing.
+  return lower.replaceFirst(RegExp(r'^hikkari\s+'), '');
+}
+
+/// A profile's protocol as the main screen captions it: "vless-reality" →
+/// "vless · reality". An unknown or unnamed protocol gets no caption.
+String protocolCaption(String protocol) {
+  final p = protocol.trim().toLowerCase();
+  if (p.isEmpty || p == 'other' || p == 'unknown') return '';
+  return p.split(RegExp(r'[-_\s]+')).where((w) => w.isNotEmpty).join(' · ');
 }
 
 /// Split-routing mode. Mirrors Go's `configfile.RoutingMode`.
@@ -672,6 +684,6 @@ class RelayCapacity {
       measuredAt <= DateTime.now().millisecondsSinceEpoch ~/ 1000 + 120 &&
       expiresAt > DateTime.now().millisecondsSinceEpoch ~/ 1000;
   String get label => fresh && mbps > 0
-      ? '${limited ? "≥ " : ""}${mbps.toStringAsFixed(mbps < 10 ? 1 : 0).replaceAll(".", ",")} mbps'
-      : '—';
+      ? '${mbps.toStringAsFixed(mbps < 10 ? 1 : 0).replaceAll(".", ",")} mbps'
+      : '-';
 }

@@ -170,7 +170,7 @@ func (m *ProcessManager) Start() error {
 		m.log.Logf("vpn.Start: failed to start sing-box: %v", err)
 		errStr := err.Error()
 		if strings.Contains(errStr, "Application Control") || strings.Contains(errStr, "blocked this file") {
-			return fmt.Errorf("Windows Smart App Control заблокировал sing-box.exe. Разблокируйте sing-box.exe в свойствах файла или добавьте папку программы в исключения Защитника Windows")
+			return fmt.Errorf("Windows Smart App Control не дал запустить sing-box.exe. Разрешите его в свойствах файла или добавьте папку программы в исключения Защитника Windows")
 		}
 		return fmt.Errorf("не удалось запустить sing-box: %w", err)
 	}

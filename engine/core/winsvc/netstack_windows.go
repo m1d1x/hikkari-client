@@ -96,7 +96,7 @@ func (n *netStack) Reset() (svcproto.NetworkReset, error) {
 	}
 	if err != nil {
 		fmt.Fprintln(&out, err)
-		failed = append(failed, fmt.Sprintf("DPI-инструменты не тронуты: %v", err))
+		failed = append(failed, fmt.Sprintf("сетевые фильтры не тронуты: %v", err))
 	}
 
 	for _, args := range [][]string{{"winsock", "reset"}, {"int", "ip", "reset"}} {
@@ -125,7 +125,7 @@ func (n *netStack) Reset() (svcproto.NetworkReset, error) {
 	if len(failed) > 0 {
 		// The caller gets only this message: say what did change.
 		if len(res.DPIStopped) > 0 {
-			failed = append(failed, "DPI-инструменты остановлены: "+strings.Join(res.DPIStopped, ", "))
+			failed = append(failed, "сетевые фильтры остановлены: "+strings.Join(res.DPIStopped, ", "))
 		}
 		return res, fmt.Errorf("сброс сетевого стека: %s", strings.Join(failed, "; "))
 	}

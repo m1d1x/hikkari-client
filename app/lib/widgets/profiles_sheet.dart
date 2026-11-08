@@ -6,7 +6,10 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../state/uptime_stats.dart';
 import '../theme/tokens.dart';
+import '../ui/nekko_context_menu.dart';
+import '../ui/nekko_dialog.dart';
 import '../ui/nekko_text_field.dart';
+import '../ui/nekko_toast.dart';
 import 'add_profile_dialog.dart';
 import 'profile_tile.dart';
 
@@ -288,37 +291,41 @@ class _ProfilesSheetState extends State<ProfilesSheet>
       // отдельный Row с baseline-выравниванием (у них разный fontSize).
       child: SizedBox(
         height: 34,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Text('профили', style: t.sectionTitle),
-                const SizedBox(width: 8),
-                Text(
-                  '$count',
-                  style: TextStyle(
-                    color: t.textMuted,
-                    fontSize: NekkoTokens.sizeSubtitle,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: t.monoFamily,
+        // Narrow window: «добавить» keeps only its icon, so the title, the
+        // add button and «авто» stay on one line.
+        child: LayoutBuilder(
+          builder: (context, box) => Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text('профили', style: t.sectionTitle),
+                  const SizedBox(width: 8),
+                  Text(
+                    '$count',
+                    style: TextStyle(
+                      color: t.textMuted,
+                      fontSize: NekkoTokens.sizeSubtitle,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: t.monoFamily,
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 12),
-            _addProfileButton(t),
-            const Spacer(),
-            _autoChip(t, s),
-          ],
+                ],
+              ),
+              const SizedBox(width: 12),
+              _addProfileButton(t, compact: box.maxWidth < 300),
+              const Spacer(),
+              _autoChip(t, s),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _addProfileButton(NekkoTokens t) {
+  Widget _addProfileButton(NekkoTokens t, {bool compact = false}) {
     return Tooltip(
       message: 'добавить профиль',
       child: Material(
@@ -341,17 +348,18 @@ class _ProfilesSheetState extends State<ProfilesSheet>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Icon(Icons.add, color: t.text, size: 14),
-                const SizedBox(width: 5),
-                Text(
-                  'добавить',
-                  style: TextStyle(
-                    color: t.text,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: t.monoFamily,
+                Icon(Icons.add, color: t.text, size: compact ? 16 : 14),
+                if (!compact) const SizedBox(width: 5),
+                if (!compact)
+                  Text(
+                    'добавить',
+                    style: TextStyle(
+                      color: t.text,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: t.monoFamily,
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -460,6 +468,40 @@ class _SubscriptionCard extends StatelessWidget {
     required this.onToggleProfile,
   });
 
+  void _menu(BuildContext context, Offset at) {
+    final renewUrl = info.renewUrl;
+    NekkoContextMenu.show(context, at, [
+      if (renewUrl != null)
+        NekkoMenuItem(
+          label: 'продлить',
+          onTap: () =>
+              launchUrl(renewUrl, mode: LaunchMode.externalApplication),
+        ),
+      NekkoMenuItem(
+        label: 'удалить',
+        destructive: true,
+        onTap: () => _confirmDelete(context),
+      ),
+    ]);
+  }
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final state = context.read<AppState>();
+    final ok = await NekkoDialog.confirm(
+      context,
+      title: 'удалить подписку?',
+      message: '${info.displayTitle}: профилей ${profiles.length}',
+      confirmLabel: 'удалить',
+    );
+    if (ok != true || !context.mounted) return;
+    for (final p in profiles) {
+      await state.deleteProfile(p.name);
+      if (state.lastError != null) break;
+    }
+    if (!context.mounted || state.lastError == null) return;
+    NekkoToast.show(context, state.lastError!);
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -484,12 +526,17 @@ class _SubscriptionCard extends StatelessWidget {
         : _daysLabel(daysLeft);
     final usedBytes = info.uploadBytes + info.downloadBytes;
     final renewUrl = info.renewUrl;
-    // Ending soon, ended, or out of traffic: the renewal is what to do next.
-    final renewDue =
-        (daysLeft != null && daysLeft <= 7) ||
-        (info.totalBytes > 0 && usedBytes >= info.totalBytes);
-    final trafficLabel = info.totalBytes > 0
-        ? '${_formatGigabytes((info.totalBytes - usedBytes).clamp(0, info.totalBytes))} ГБ осталось'
+    // Seven days or less, or 100 GB or less, left: the renewal is what to do
+    // next, so the button stays on screen. Otherwise the values themselves
+    // are the (hover) renew target.
+    final leftBytes = info.totalBytes > 0
+        ? (info.totalBytes - usedBytes).clamp(0, info.totalBytes)
+        : null;
+    final daysDue = daysLeft != null && daysLeft <= 7;
+    final trafficDue = leftBytes != null && leftBytes <= 100 * 1000000000;
+    final renewDue = daysDue || trafficDue;
+    final trafficLabel = leftBytes != null
+        ? '${_formatGigabytes(leftBytes)} ГБ'
         : usedBytes > 0
         ? '${_formatGigabytes(usedBytes)} ГБ'
         : '';
@@ -505,57 +552,75 @@ class _SubscriptionCard extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 13, 24, 7),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Tooltip(
-                      message: fullTitle,
-                      waitDuration: const Duration(milliseconds: 300),
-                      child: Text(
-                        fullTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: isHikkari ? t.primary : t.text,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (periodLabel.isNotEmpty)
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onSecondaryTapUp: (d) => _menu(context, d.globalPosition),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 10, 24, 4),
+                // Three columns: the title on the left, the period in the
+                // middle of the card, the traffic on the right. The two
+                // sides take equal width, so the period sits at the true
+                // centre whatever the title or traffic length.
+                child: Row(
+                  children: [
                     Expanded(
-                      child: Center(
-                        child: Text(
-                          periodLabel,
-                          style: TextStyle(
-                            color: t.textMuted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Tooltip(
+                          message: fullTitle,
+                          waitDuration: const Duration(milliseconds: 300),
+                          child: Text(
+                            fullTitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: isHikkari ? t.primary : t.text,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  if (trafficLabel.isNotEmpty)
+                    if (periodLabel.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: _HeaderValue(
+                          text: periodLabel,
+                          color: daysDue ? t.primary : t.textMuted,
+                          // With the static button up it is the one renew
+                          // target; the values stay plain.
+                          url: renewDue ? null : renewUrl,
+                        ),
+                      ),
                     Expanded(
-                      child: Text(
-                        trafficLabel,
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                          color: t.textSecondary,
-                          fontFamily: t.monoFamily,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (trafficLabel.isNotEmpty)
+                              Flexible(
+                                child: _HeaderValue(
+                                  text: trafficLabel,
+                                  color: trafficDue
+                                      ? t.primary
+                                      : t.textSecondary,
+                                  mono: true,
+                                  url: renewDue ? null : renewUrl,
+                                  gapAfter: renewUrl != null && renewDue
+                                      ? 10
+                                      : 0,
+                                ),
+                              ),
+                            if (renewUrl != null && renewDue)
+                              _RenewButton(url: renewUrl),
+                          ],
                         ),
                       ),
                     ),
-                  if (renewUrl != null) ...[
-                    const SizedBox(width: 12),
-                    _RenewButton(url: renewUrl, due: renewDue),
                   ],
-                ],
+                ),
               ),
             ),
             Padding(
@@ -579,46 +644,315 @@ class _SubscriptionCard extends StatelessWidget {
   }
 }
 
-/// Opens the landing's checkout for this subscription's next period. The
-/// token rides in the URL's fragment, which the browser never sends.
-class _RenewButton extends StatefulWidget {
-  final Uri url;
+/// A header value (period, traffic). With a renew target, hovering it puts
+/// the renew button in its place; the slot is sized for the wider of the two
+/// so nothing around it moves. A value that does not fit whole is left out
+/// rather than cut to «5 д…».
+class _HeaderValue extends StatefulWidget {
+  final String text;
+  final Color color;
+  final bool mono;
+  final Uri? url;
 
-  /// Ending, ended or spent: drawn in the accent colour.
-  final bool due;
+  /// Space after the value, dropped with it when it does not fit.
+  final double gapAfter;
 
-  const _RenewButton({required this.url, required this.due});
+  const _HeaderValue({
+    required this.text,
+    required this.color,
+    required this.url,
+    this.mono = false,
+    this.gapAfter = 0,
+  });
 
   @override
-  State<_RenewButton> createState() => _RenewButtonState();
+  State<_HeaderValue> createState() => _HeaderValueState();
 }
 
-class _RenewButtonState extends State<_RenewButton> {
+class _HeaderValueState extends State<_HeaderValue> {
   bool _hover = false;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final color = widget.due || _hover ? t.primary : t.textMuted;
+    final url = widget.url;
+    final style = TextStyle(
+      color: widget.color,
+      fontFamily: widget.mono ? t.monoFamily : null,
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+    );
+    final label = Text(widget.text, maxLines: 1, softWrap: false, style: style);
+    return LayoutBuilder(
+      builder: (context, box) {
+        final scaler = MediaQuery.textScalerOf(context);
+        final textWidth = _textWidth(widget.text, style, scaler);
+        final need = url == null
+            ? textWidth
+            : textWidth > _RenewButton.width(context)
+            ? textWidth
+            : _RenewButton.width(context);
+        if (need + widget.gapAfter > box.maxWidth) {
+          return const SizedBox.shrink();
+        }
+        if (url == null) {
+          return Padding(
+            padding: EdgeInsets.only(right: widget.gapAfter),
+            child: SizedBox(
+              height: _RenewButton.height,
+              child: Center(child: label),
+            ),
+          );
+        }
+        // The value rolls up and out, the button rolls in from below: one
+        // short vertical swap inside the slot, clipped to it.
+        const roll = Duration(milliseconds: 160);
+        const curve = Curves.easeOutCubic;
+        return MouseRegion(
+          onEnter: (_) => setState(() => _hover = true),
+          onExit: (_) => setState(() => _hover = false),
+          child: ClipRect(
+            child: SizedBox(
+              width: need,
+              height: _RenewButton.height,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  AnimatedSlide(
+                    duration: roll,
+                    curve: curve,
+                    offset: Offset(0, _hover ? -0.6 : 0),
+                    child: AnimatedOpacity(
+                      duration: roll,
+                      curve: curve,
+                      opacity: _hover ? 0 : 1,
+                      child: label,
+                    ),
+                  ),
+                  AnimatedSlide(
+                    duration: roll,
+                    curve: curve,
+                    offset: Offset(0, _hover ? 0 : 0.6),
+                    child: AnimatedOpacity(
+                      duration: roll,
+                      curve: curve,
+                      opacity: _hover ? 1 : 0,
+                      child: IgnorePointer(
+                        ignoring: !_hover,
+                        child: SizedBox(
+                          width: need,
+                          child: _RenewButton(url: url, hovered: _hover),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+double _textWidth(String text, TextStyle style, TextScaler scaler) =>
+    (TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+      maxLines: 1,
+    )..layout()).width;
+
+/// Opens the landing's checkout for this subscription's next period: static
+/// when the period or traffic is nearly spent, otherwise in place of a
+/// hovered value. The token rides in the URL's fragment, which the browser
+/// never sends.
+///
+/// Hover is the landing's primary button: the soft fill fades out and a
+/// dashed primary contour fades in and runs around the edge.
+class _RenewButton extends StatefulWidget {
+  final Uri url;
+
+  /// Shown in place of a hovered value: the pointer is already over it, so
+  /// it starts in the hover look rather than waiting for its own enter.
+  final bool hovered;
+
+  const _RenewButton({required this.url, this.hovered = false});
+
+  static const height = 26.0;
+  static const _padding = 10.0;
+  static const _style = TextStyle(fontSize: 12, fontWeight: FontWeight.w600);
+
+  /// The button's natural width, for slots that must fit it.
+  static double width(BuildContext context) =>
+      _textWidth(
+        'продлить',
+        _style.copyWith(fontFamily: context.tokens.monoFamily),
+        MediaQuery.textScalerOf(context),
+      ) +
+      2 * _padding;
+
+  @override
+  State<_RenewButton> createState() => _RenewButtonState();
+}
+
+class _RenewButtonState extends State<_RenewButton>
+    with SingleTickerProviderStateMixin {
+  // One lap of the dash pattern every 800 ms, as on the landing.
+  late final AnimationController _run = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 800),
+  );
+  bool _ownHover = false;
+
+  bool get _hover => _ownHover || widget.hovered;
+
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(_RenewButton old) {
+    super.didUpdateWidget(old);
+    _sync();
+  }
+
+  void _setHover(bool v) {
+    setState(() => _ownHover = v);
+    _sync();
+  }
+
+  // The contour only runs while it is visible.
+  void _sync() {
+    if (_hover) {
+      if (!_run.isAnimating) _run.repeat();
+    } else {
+      _run.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _run.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    const fade = Duration(milliseconds: 220);
+    const curve = Cubic(0.16, 1, 0.3, 1);
+    final radius = BorderRadius.circular(t.radius);
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
+      onEnter: (_) => _setHover(true),
+      onExit: (_) => _setHover(false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () =>
             launchUrl(widget.url, mode: LaunchMode.externalApplication),
-        child: Text(
-          'продлить',
-          style: TextStyle(
-            color: color,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
+        child: Stack(
+          children: [
+            AnimatedContainer(
+              duration: fade,
+              curve: curve,
+              height: _RenewButton.height,
+              padding: const EdgeInsets.symmetric(
+                horizontal: _RenewButton._padding,
+              ),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: t.primary.withValues(alpha: _hover ? 0 : 0.12),
+                borderRadius: radius,
+              ),
+              child: Text(
+                'продлить',
+                maxLines: 1,
+                softWrap: false,
+                style: _RenewButton._style.copyWith(
+                  color: t.primary,
+                  fontFamily: t.monoFamily,
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: AnimatedOpacity(
+                  duration: fade,
+                  curve: curve,
+                  opacity: _hover ? 1 : 0,
+                  child: CustomPaint(
+                    painter: _RunningDashes(
+                      run: _run,
+                      color: t.primary,
+                      radius: t.radius,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+/// A dashed rounded contour whose dashes run along the edge. The pattern is
+/// stretched to a whole number of dash and gap pairs, so the seam where the
+/// path closes never shows at any button width.
+class _RunningDashes extends CustomPainter {
+  final Animation<double> run;
+  final Color color;
+  final double radius;
+
+  _RunningDashes({required this.run, required this.color, required this.radius})
+    : super(repaint: run);
+
+  static const _dash = 5.0, _gap = 4.0, _stroke = 1.5;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromLTWH(
+      _stroke / 2,
+      _stroke / 2,
+      size.width - _stroke,
+      size.height - _stroke,
+    );
+    final path = Path()
+      ..addRRect(RRect.fromRectAndRadius(rect, Radius.circular(radius)));
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _stroke
+      ..strokeCap = StrokeCap.round;
+    for (final metric in path.computeMetrics()) {
+      final len = metric.length;
+      final pairs = (len / (_dash + _gap)).round().clamp(1, 1 << 20);
+      final period = len / pairs;
+      final dash = period * _dash / (_dash + _gap);
+      // Two pairs per lap, as the landing's −28 offset on its 14 pattern.
+      final shift = run.value * 2 * period;
+      for (var i = -1; i < pairs; i++) {
+        final start = i * period + shift;
+        final end = start + dash;
+        final a = start.clamp(0.0, len);
+        final b = end.clamp(0.0, len);
+        if (b > a) canvas.drawPath(metric.extractPath(a, b), paint);
+        // The part of a dash that runs past the end continues at the start.
+        if (end > len) {
+          canvas.drawPath(metric.extractPath(0, end - len), paint);
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RunningDashes old) =>
+      old.color != color || old.radius != radius || old.run != run;
 }
 
 String _daysLabel(int days) {

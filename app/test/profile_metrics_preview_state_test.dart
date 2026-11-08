@@ -45,7 +45,7 @@ void main() {
         routingPreview: true,
       );
       await state.start();
-      expect(state.profiles.length, 3);
+      expect(state.profiles.length, 5);
       expect(state.profiles.first.capacity!.rttMs, 87);
       expect(state.profiles.first.capacity!.history.length, 48);
       expect(state.profiles[1].capacity!.mbps, 74);

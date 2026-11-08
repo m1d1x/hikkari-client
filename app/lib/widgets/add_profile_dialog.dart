@@ -75,7 +75,7 @@ class AddProfileDialog extends StatelessWidget {
             icon: Icons.bolt_rounded,
             trailingIcon: Icons.open_in_new_rounded,
             title: 'подключить подписку hikkari',
-            subtitle: 'готовые серверы, автообход и движок протоколов',
+            subtitle: 'готовые серверы, автопереключение и движок протоколов',
             onTap: () => _openSubscriptionPurchase(context),
           ),
           const SizedBox(height: 10),

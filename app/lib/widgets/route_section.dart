@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -22,21 +23,138 @@ import 'service_presets.dart';
 /// to the settings sheet ([RouteSettingsSection]) — this section only
 /// shows a tooltip on the header explaining whichever mode is active.
 class RouteSection extends StatefulWidget {
-  const RouteSection({super.key});
+  const RouteSection({super.key, this.spareHeight});
+
+  /// Free height the page can still give this section before it starts to
+  /// scroll, as laid out right now. Without it the whole reveal is treated as
+  /// visible.
+  final double Function()? spareHeight;
 
   @override
   State<RouteSection> createState() => _RouteSectionState();
 }
 
+/// What a reveal shows on screen. Each share is the part of a block's natural
+/// height that fits above the bottom of the viewport, filled top-down:
+/// controls, then the manual card, then the catalog. The rest of a long list
+/// is below the fold and appears in one step once the motion has settled.
+///
+/// The section's bottom inset keeps a closed card off the window edge. When
+/// the reveal fills the screen, the last visible block takes that inset over
+/// as it grows ([edge]), so it reaches the edge exactly when the motion ends
+/// and the header still moves with every pixel of growth.
+@immutable
+class _RevealPlan {
+  const _RevealPlan({
+    required this.distance,
+    required this.edge,
+    required this.controls,
+    required this.manualGap,
+    required this.manual,
+    required this.presetsGap,
+    required this.presets,
+  });
+
+  static const all = _RevealPlan(
+    distance: 0,
+    edge: 0,
+    controls: 1,
+    manualGap: _islandGap,
+    manual: 1,
+    presetsGap: _islandGap,
+    presets: 1,
+  );
+
+  static const _islandGap = 12.0;
+
+  /// Fill [room] pixels of header travel, plus up to [inset] pixels of the
+  /// bottom inset, with blocks of the given natural heights.
+  factory _RevealPlan.fit({
+    required double room,
+    required double inset,
+    required double controls,
+    required double manual,
+    required double presets,
+  }) {
+    var left = room + inset;
+    double take(double size) {
+      final shown = left.clamp(0.0, size);
+      left -= shown;
+      return shown;
+    }
+
+    double share(double shown, double size) => size == 0 ? 1 : shown / size;
+    final controlsShown = take(controls);
+    final manualGap = take(_islandGap);
+    final manualShown = take(manual);
+    final presetsGap = take(_islandGap);
+    final presetsShown = take(presets);
+    final distance =
+        controlsShown + manualGap + manualShown + presetsGap + presetsShown;
+    return _RevealPlan(
+      distance: distance,
+      edge: (distance - room).clamp(0.0, inset),
+      controls: share(controlsShown, controls),
+      manualGap: manualGap,
+      manual: share(manualShown, manual),
+      presetsGap: presetsGap,
+      presets: share(presetsShown, presets),
+    );
+  }
+
+  /// Growth of the blocks between closed and the end of the motion.
+  final double distance;
+
+  /// Part of [distance] that replaces the bottom inset instead of moving the
+  /// header.
+  final double edge;
+  final double controls;
+  final double manualGap;
+  final double manual;
+  final double presetsGap;
+  final double presets;
+}
+
 class _RouteSectionState extends State<RouteSection>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _expandController;
+  // Visible progress: 0 closed, 1 when everything that fits is shown. Every
+  // block grows linearly with it, so the header follows the spring exactly.
+  late final AnimationController _reveal = AnimationController(vsync: this)
+    ..addListener(_onTick);
+  _RevealPlan _plan = _RevealPlan.all;
+  // Open and at rest: blocks take their natural height, including the part of
+  // a long catalog below the fold.
+  bool _settled = false;
+  // Growth that fits on screen from the closed state.
+  double _closedRoom = double.infinity;
+  double? _closedHeight;
+  ScrollPosition? _scroll;
+  double _target = 0;
+  // Content is sliding under the cursor: rows must not flash hover as they
+  // pass. Cleared once the card is within a pixel of rest, not after the
+  // spring's sub-pixel tail, so a click right after opening lands.
+  bool _passing = false;
+  final _controlsSize = GlobalKey();
+  final _manualSize = GlobalKey();
+  final _presetsSize = GlobalKey();
   bool _open = false;
   bool _headerHover = false;
   bool _presetsHover = false;
   bool _presetMenuOpen = false;
   String _tab = 'domains';
   final _input = TextEditingController();
+
+  // One instance per tab: rebuilding this section (the reveal changes state
+  // as it starts and settles) must not rebuild every catalog row. The catalog
+  // watches [AppState] itself.
+  static const _catalogs = {
+    'domains': ServicePresets(category: 'domains'),
+    'processes': ServicePresets(category: 'processes'),
+    'ips': ServicePresets(category: 'ips'),
+  };
+
+  // Keeps the closed card off the window edge; see [_RevealPlan.edge].
+  static const _bottomInset = 16.0;
 
   static const _placeholders = {
     'domains': 'example.com',
@@ -49,17 +167,14 @@ class _RouteSectionState extends State<RouteSection>
   };
 
   @override
-  void initState() {
-    super.initState();
-    _expandController = AnimationController(
-      duration: AppDurations.routingExpand,
-      vsync: this,
-    );
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scroll = Scrollable.maybeOf(context)?.position;
   }
 
   @override
   void dispose() {
-    _expandController.dispose();
+    _reveal.dispose();
     _input.dispose();
     super.dispose();
   }
@@ -68,15 +183,84 @@ class _RouteSectionState extends State<RouteSection>
 
   void _setOpen(bool value) {
     if (_open == value) return;
+    final current = context.size?.height ?? 0;
+    if (_reveal.isDismissed) _closedHeight = current;
+    final growth = current - (_closedHeight ?? current);
+    final overflow = _scroll?.hasContentDimensions ?? false
+        ? _scroll!.maxScrollExtent
+        : 0.0;
+    final spare = widget.spareHeight?.call() ?? double.infinity;
+    // From rest the plan is measured from the real layout: free space above,
+    // minus what already overflows, plus what this section has grown by.
+    // Mid-flight the current plan stays, so reversing keeps every height.
+    if (!_reveal.isAnimating) {
+      _closedRoom = spare - overflow + growth;
+      double height(GlobalKey key) => key.currentContext?.size?.height ?? 0;
+      _plan = _RevealPlan.fit(
+        // Closing a scrolled page also shows what is scrolled past the top.
+        room: _closedRoom + (value ? 0 : _scroll?.pixels ?? 0),
+        inset: _bottomInset,
+        controls: height(_controlsSize),
+        manual: height(_manualSize),
+        presets: height(_presetsSize),
+      );
+      _settled = false;
+    }
     setState(() => _open = value);
-    // Animate the visible factor itself. Retargeting starts at the current
-    // height, including when a click interrupts the previous transition.
-    // Scroll bounds follow layout; a competing animateTo would fight them.
-    _expandController.animateTo(
-      _open ? 1 : 0,
-      duration: AppDurations.routingExpand,
-      curve: AppCurves.fastInSlowOut,
-    );
+    _animateTo(value ? 1 : 0);
+  }
+
+  void _animateTo(double target) {
+    _target = target;
+    final left = (target - _reveal.value).abs() * _plan.distance;
+    if (left < .5) {
+      _reveal.value = target;
+      _onSettled(target);
+      return;
+    }
+    // A spring keeps the current velocity when a click reverses the motion.
+    final pixel = 1 / _plan.distance;
+    _passing = true;
+    _reveal
+        .animateWith(
+          SpringSimulation(
+            AppMotion.travelSpring(left),
+            _reveal.value,
+            target,
+            _reveal.velocity,
+            tolerance: Tolerance(distance: pixel / 2, velocity: pixel * 40),
+          ),
+        )
+        .then((_) => _onSettled(target));
+  }
+
+  void _onSettled(double target) {
+    if (!mounted) return;
+    setState(() {
+      _reveal.value = target;
+      _settled = target == 1;
+      _passing = false;
+    });
+  }
+
+  void _onTick() {
+    if (_passing &&
+        (_target - _reveal.value).abs() * _plan.distance < 1 &&
+        mounted) {
+      setState(() => _passing = false);
+    }
+    _keepScrollInBounds();
+  }
+
+  // Collapsing a scrolled page: the scroll offset shrinks with the content,
+  // so the viewport never sees out-of-range content and its spring-back.
+  void _keepScrollInBounds() {
+    final scroll = _scroll;
+    if (_open || scroll == null || scroll.pixels <= 0) return;
+    if (!_closedRoom.isFinite) return;
+    final limit = _reveal.value * (_plan.distance - _plan.edge) - _closedRoom;
+    final bound = limit > 0 ? limit : 0.0;
+    if (scroll.pixels > bound) scroll.jumpTo(bound);
   }
 
   void _togglePresetMenu() {
@@ -153,8 +337,17 @@ class _RouteSectionState extends State<RouteSection>
 
     final reversedItems = items.reversed.toList();
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+    return AnimatedBuilder(
+      animation: _reveal,
+      builder: (context, child) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          _settled ? _bottomInset : _bottomInset - _plan.edge * _reveal.value,
+        ),
+        child: child,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -163,14 +356,26 @@ class _RouteSectionState extends State<RouteSection>
             t,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [_head(t, s), _reveal(_tabHeight(_body(t, s)))],
+              children: [
+                _head(t, s),
+                _revealed(
+                  KeyedSubtree(
+                    key: _controlsSize,
+                    child: _tabHeight(_body(t, s)),
+                  ),
+                  () => _plan.controls,
+                ),
+              ],
             ),
           ),
           _itemsBlock(t, reversedItems),
           _expandingIsland(
             t,
             key: const ValueKey('route_presets_surface'),
-            child: _tabHeight(ServicePresets(category: _tab)),
+            measurementKey: _presetsSize,
+            gap: () => _plan.presetsGap,
+            share: () => _plan.presets,
+            child: _tabHeight(_catalogs[_tab]!),
           ),
         ],
       ),
@@ -185,19 +390,36 @@ class _RouteSectionState extends State<RouteSection>
     child: child,
   );
 
-  Widget _reveal(Widget child) => AnimatedBuilder(
-    animation: _expandController,
-    child: FadeTransition(opacity: _expandController, child: child),
-    builder: (context, child) => Offstage(
-      offstage: _expandController.value == 0,
-      child: ClipRect(
-        child: Align(
-          alignment: Alignment.topCenter,
-          heightFactor: _expandController.value,
-          child: child,
-        ),
+  // Visible part of a block: its share of the on-screen growth at the current
+  // progress, or all of it once open has settled.
+  double _shown(double share) => _settled ? 1 : share * _reveal.value;
+
+  // Content slides under the cursor while it moves; hover must not flicker
+  // across every row it passes. The header stays clickable to reverse.
+  Widget _revealed(Widget child, double Function() share) => AnimatedBuilder(
+    animation: _reveal,
+    child: IgnorePointer(
+      ignoring: _passing,
+      // Only the clip moves while revealing: the content keeps its recorded
+      // picture instead of repainting every row on every frame.
+      child: FadeTransition(
+        opacity: _reveal,
+        child: RepaintBoundary(child: child),
       ),
     ),
+    builder: (context, child) {
+      final shown = _shown(share());
+      return Offstage(
+        offstage: shown == 0,
+        child: ClipRect(
+          child: Align(
+            alignment: Alignment.topCenter,
+            heightFactor: shown,
+            child: child,
+          ),
+        ),
+      );
+    },
   );
 
   // Animate the surface with its contents: rounded borders follow the current
@@ -205,18 +427,30 @@ class _RouteSectionState extends State<RouteSection>
   Widget _expandingIsland(
     NekkoTokens t, {
     Key? key,
+    required GlobalKey measurementKey,
+    required double Function() gap,
+    required double Function() share,
     required Widget child,
   }) => AnimatedBuilder(
-    animation: _expandController,
+    animation: _reveal,
     // Reserve the final border inset before revealing. Animating a
     // decoration border also animates padding and can rewrap text mid-flight.
-    child: _reveal(Padding(padding: const EdgeInsets.all(1), child: child)),
+    child: _revealed(
+      Padding(
+        key: measurementKey,
+        padding: const EdgeInsets.all(1),
+        child: child,
+      ),
+      share,
+    ),
     builder: (context, child) {
-      final progress = _expandController.value;
+      final progress = _reveal.value;
       return Padding(
-        padding: EdgeInsets.only(top: 12 * progress),
+        padding: EdgeInsets.only(
+          top: _settled ? _RevealPlan._islandGap : gap() * progress,
+        ),
         child: Offstage(
-          offstage: progress == 0,
+          offstage: _shown(share()) == 0,
           child: Container(
             key: key,
             decoration: BoxDecoration(
@@ -262,12 +496,8 @@ class _RouteSectionState extends State<RouteSection>
                 child: const Text('маршрутизация'),
               ),
               const SizedBox(width: 6),
-              AnimatedRotation(
-                duration: AppDurations.routingExpand,
-                curve: _open
-                    ? AppCurves.fastInSlowOut
-                    : AppCurves.fastInSlowOut.flipped,
-                turns: _open ? 0.5 : 0,
+              RotationTransition(
+                turns: _reveal.drive(Tween(begin: 0, end: .5)),
                 child: TweenAnimationBuilder<Color?>(
                   tween: ColorTween(
                     end: _headerHover ? t.primary : t.textMuted,
@@ -465,6 +695,9 @@ class _RouteSectionState extends State<RouteSection>
     return _expandingIsland(
       t,
       key: const ValueKey('route_manual_surface'),
+      measurementKey: _manualSize,
+      gap: () => _plan.manualGap,
+      share: () => _plan.manual,
       child: _tabHeight(
         Column(
           mainAxisSize: MainAxisSize.min,
