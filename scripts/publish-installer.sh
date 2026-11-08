@@ -48,7 +48,7 @@ meta = dict(version=version, url=f'{base}/download/{filename}', sha256=digest.he
 pathlib.Path(root, f'latest-{platform}.json').write_text(json.dumps(meta)+'\n')
 PY
 # Preserve the server uploader identity, including an operator-run bootstrap.
-rsync_args=(-a --no-owner --no-group --delay-updates -e 'ssh -o BatchMode=yes')
+rsync_args=(-a --checksum --no-owner --no-group --delay-updates -e 'ssh -o BatchMode=yes')
 rsync "${rsync_args[@]}" "$tmp/download/" "$remote"download/ --include "$filename" --exclude '*'
 curl -fsS --retry 3 --max-time 300 "$base/download/$filename" -o "$tmp/public-installer"
 python3 - "$tmp" "$PLATFORM" <<'PY'
@@ -64,7 +64,7 @@ if p.stat().st_size != meta['size'] or digest.hexdigest() != meta['sha256']:
     raise SystemExit('public installer differs from the tested artifact')
 PY
 cp "$INSTALLER" "$tmp/download/$alias"
-rsync "${rsync_args[@]}" --checksum "$tmp/download/$alias" "$remote"download/
+rsync "${rsync_args[@]}" "$tmp/download/$alias" "$remote"download/
 curl -fsS --retry 3 --max-time 300 "$base/download/$alias" -o "$tmp/public-alias"
 cmp "$INSTALLER" "$tmp/public-alias"
 rsync "${rsync_args[@]}" "$tmp/download/latest-$PLATFORM.json" "$remote"download/

@@ -57,6 +57,10 @@ if '-e' in args:
     i = args.index('-e')
     del args[i:i+2]
 args = [a.removeprefix('local:') for a in args]
+# Reproduce same-second, same-length metadata replacements deterministically.
+for a in args:
+    if a.endswith('.json') and os.path.isfile(a):
+        os.utime(a, (1700000000, 1700000000))
 env = dict(os.environ, PATH=os.environ['PATH'].split(os.pathsep, 1)[1])
 sys.exit(subprocess.call([{real_rsync!r}, *args], env=env))
 ''')
@@ -75,11 +79,11 @@ sys.exit(subprocess.call([{real_rsync!r}, *args], env=env))
 
     def test_first_release_and_upgrade_replace_stable_url(self):
         result = self.publish()
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.channel('1.0.62')
         self.installer.write_bytes(b'next tested installer')
         result = self.publish('1.0.62')
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.web/'download/hikkari-setup.exe').read_bytes(), self.installer.read_bytes())
         self.assertTrue((self.web/'download/hikkari-setup-1.0.61.exe').exists())
         meta = json.loads((self.web/'download/latest-windows.json').read_text())
@@ -90,7 +94,7 @@ sys.exit(subprocess.call([{real_rsync!r}, *args], env=env))
         (self.web/'stable/macos').mkdir()
         (self.web/'stable/macos/latest.json').write_text('{"version":"1.0.61"}')
         result = subprocess.run(['bash', str(SCRIPT), str(self.installer), '1.0.61', 'macos'], env=self.env, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual((self.web/'download/hikkari.pkg').read_bytes(), self.installer.read_bytes())
         self.assertTrue((self.web/'download/hikkari-1.0.61.pkg').exists())
 
