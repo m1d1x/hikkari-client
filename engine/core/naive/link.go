@@ -1,4 +1,9 @@
 // Package naive defines the share-link contract used by the client and providers.
+//
+// It also carries Hikkari v1.01 (hikkari+v1://): the same Naive link and
+// credential, plus a datagram channel for UDP on the same host and port. The
+// core's hikkari outbound sends TCP over Naive and UDP over the datagram
+// channel, falling back to UDP-over-TCP inside Naive.
 package naive
 
 import (
@@ -13,15 +18,17 @@ type Link struct {
 	Host, Username, Password, ServerName, Label string
 	Port                                        int
 	QUIC                                        bool
+	// Hikkari is a hikkari+v1:// link: Naive for TCP, QUIC datagrams for UDP.
+	Hikkari bool
 }
 
 func Parse(u *url.URL) (Link, error) {
 	var l Link
 	scheme := strings.ToLower(u.Scheme)
-	if scheme != "naive+https" && scheme != "naive+quic" {
+	if scheme != "naive+https" && scheme != "naive+quic" && scheme != "hikkari+v1" {
 		return l, fmt.Errorf("naive: неподдерживаемая схема")
 	}
-	l.Host, l.Port, l.QUIC, l.Label = u.Hostname(), 443, scheme == "naive+quic", u.Fragment
+	l.Host, l.Port, l.QUIC, l.Hikkari, l.Label = u.Hostname(), 443, scheme == "naive+quic", scheme == "hikkari+v1", u.Fragment
 	if u.Port() != "" {
 		port, err := strconv.Atoi(u.Port())
 		if err != nil || port < 1 || port > 65535 {
@@ -63,6 +70,13 @@ func Parse(u *url.URL) (Link, error) {
 }
 
 func (l Link) Outbound() map[string]interface{} {
+	if l.Hikkari {
+		return map[string]interface{}{
+			"type": "hikkari", "server": l.Host, "server_port": l.Port,
+			"username": l.Username, "password": l.Password,
+			"tls": map[string]interface{}{"enabled": true, "server_name": l.ServerName},
+		}
+	}
 	return map[string]interface{}{
 		"type": "naive", "server": l.Host, "server_port": l.Port,
 		"username": l.Username, "password": l.Password, "quic": l.QUIC,
@@ -74,6 +88,9 @@ func (l Link) URI() string {
 	scheme := "naive+https"
 	if l.QUIC {
 		scheme = "naive+quic"
+	}
+	if l.Hikkari {
+		scheme = "hikkari+v1"
 	}
 	u := url.URL{Scheme: scheme, Host: net.JoinHostPort(l.Host, strconv.Itoa(l.Port)),
 		User: url.UserPassword(l.Username, l.Password), Fragment: l.Label}
@@ -87,9 +104,10 @@ func (l Link) URI() string {
 // importing a provider document must never silently discard TLS verification.
 func FromOutbound(o map[string]interface{}, label string) (Link, error) {
 	var l Link
-	if o["type"] != "naive" {
+	if o["type"] != "naive" && o["type"] != "hikkari" {
 		return l, fmt.Errorf("naive: неверный тип профиля")
 	}
+	l.Hikkari = o["type"] == "hikkari"
 	for key := range o {
 		switch key {
 		case "type", "tag", "server", "server_port", "username", "password", "quic", "tls":
@@ -111,7 +129,7 @@ func FromOutbound(o map[string]interface{}, label string) (Link, error) {
 	l.Password, _ = o["password"].(string)
 	l.ServerName, _ = tls["server_name"].(string)
 	l.Label = label
-	if value, ok := o["quic"]; ok {
+	if value, ok := o["quic"]; ok && !l.Hikkari {
 		var valid bool
 		l.QUIC, valid = value.(bool)
 		if !valid {

@@ -54,7 +54,7 @@ func expandSingBoxConfig(input string) (string, bool) {
 }
 
 func singBoxOutboundLink(o map[string]interface{}) (string, error) {
-	if field(o, "type") == "naive" {
+	if t := field(o, "type"); t == "naive" || t == "hikkari" {
 		l, err := naive.FromOutbound(o, field(o, "tag"))
 		if err != nil {
 			return "", err

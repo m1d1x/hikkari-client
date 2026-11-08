@@ -57,13 +57,13 @@ func ParseURI(uri string) (Draft, error) {
 	}
 	u, err := url.Parse(uri)
 	if err != nil {
-		if strings.HasPrefix(strings.ToLower(uri), "naive+") {
+		if lower := strings.ToLower(uri); strings.HasPrefix(lower, "naive+") || strings.HasPrefix(lower, "hikkari+") {
 			return Draft{}, fmt.Errorf("naive: неверная ссылка")
 		}
 		return Draft{}, fmt.Errorf("не удалось разобрать ссылку: %w", err)
 	}
 	switch strings.ToLower(u.Scheme) {
-	case "naive+https", "naive+quic":
+	case "naive+https", "naive+quic", "hikkari+v1":
 		l, err := naive.Parse(u)
 		if err != nil {
 			return Draft{}, err

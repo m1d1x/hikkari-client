@@ -28,7 +28,7 @@ func ExportURI(p profile.Profile) (string, error) {
 	}
 	typ, _ := p.Config["type"].(string)
 	switch strings.ToLower(typ) {
-	case "naive":
+	case "naive", "hikkari":
 		l, err := naive.FromOutbound(p.Config, p.Label)
 		if err != nil {
 			return "", err

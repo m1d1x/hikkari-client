@@ -21,7 +21,7 @@ void main() {
       );
       expect(ImportLink.supports('vpn://abc123'), isTrue);
       expect(ImportLink.supports('VPN://ABC123'), isTrue);
-      for (final scheme in ['naive+https', 'naive+quic']) {
+      for (final scheme in ['naive+https', 'naive+quic', 'hikkari+v1']) {
         final server = '$scheme://user:pass@proxy.example:443';
         final link = DeepLink.parse(
           'hikkari://import?url=${Uri.encodeComponent(server)}',

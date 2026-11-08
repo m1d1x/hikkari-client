@@ -45,6 +45,7 @@ final class ImportLink extends DeepLink {
     'tuic://',
     'naive+https://',
     'naive+quic://',
+    'hikkari+v1://',
     'vpn://',
   ];
 

@@ -35,7 +35,7 @@ const (
 	protoCheckURL   = "http://cp.cloudflare.com/generate_204"
 )
 
-var protoOutbounds = map[string]bool{"vless": true, "vmess": true, "trojan": true, "shadowsocks": true, "hysteria2": true, "tuic": true, "naive": true}
+var protoOutbounds = map[string]bool{"vless": true, "vmess": true, "trojan": true, "shadowsocks": true, "hysteria2": true, "tuic": true, "naive": true, "hikkari": true}
 
 type protoTarget struct {
 	Label    string                 `json:"label"`

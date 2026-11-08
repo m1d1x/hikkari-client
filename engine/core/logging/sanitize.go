@@ -16,7 +16,7 @@ var AppVersion = "dev"
 
 var (
 	// Config URIs: vless://, trojan://, vpn://, ss://
-	reConfigURI = regexp.MustCompile(`(?i)\b(?:naive\+(?:https|quic)|vless|vmess|trojan|tuic|hysteria2|hy2|vpn|ss)://[^\s"'<>]+`)
+	reConfigURI = regexp.MustCompile(`(?i)\b(?:naive\+(?:https|quic)|hikkari\+v1|vless|vmess|trojan|tuic|hysteria2|hy2|vpn|ss)://[^\s"'<>]+`)
 
 	// Labeled private keys (WireGuard / AmneziaWG)
 	reLabeledKey = regexp.MustCompile(`(?i)\b(private[_-]?key|preshared[_-]?key|psk)(\s*[:=]\s*["']?)[A-Za-z0-9+/_-]{43,44}={0,2}(["']?)`)
