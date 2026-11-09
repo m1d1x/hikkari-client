@@ -1,9 +1,10 @@
 // Package naive defines the share-link contract used by the client and providers.
 //
-// It also carries Hikkari v1.01 (hikkari+v1://): the same Naive link and
+// It also carries Hikkari v1 (hikkari+v1://): the same Naive link and
 // credential, plus a datagram channel for UDP on the same host and port. The
 // core's hikkari outbound sends TCP over Naive and UDP over the datagram
-// channel, falling back to UDP-over-TCP inside Naive.
+// channel, falling back to UDP-over-TCP inside Naive. dup=1 (v1.02): the relay
+// serves duplicated UDP, and a call rides both channels at once.
 package naive
 
 import (
@@ -20,6 +21,8 @@ type Link struct {
 	QUIC                                        bool
 	// Hikkari is a hikkari+v1:// link: Naive for TCP, QUIC datagrams for UDP.
 	Hikkari bool
+	// Dup is dup=1 on a hikkari+v1:// link: v1.02 duplicated UDP.
+	Dup bool
 }
 
 func Parse(u *url.URL) (Link, error) {
@@ -55,9 +58,17 @@ func Parse(u *url.URL) (Link, error) {
 		return l, fmt.Errorf("naive: неверные параметры ссылки")
 	}
 	for key, values := range q {
-		if (key != "sni" && key != "hikkari-node") || len(values) != 1 {
+		known := key == "sni" || key == "hikkari-node" || (key == "dup" && l.Hikkari)
+		if !known || len(values) != 1 {
 			return l, fmt.Errorf("naive: неподдерживаемые параметры ссылки")
 		}
+	}
+	switch q.Get("dup") {
+	case "":
+	case "1":
+		l.Dup = true
+	default:
+		return l, fmt.Errorf("naive: неверный параметр dup")
 	}
 	l.ServerName = q.Get("sni")
 	if l.ServerName == "" {
@@ -71,11 +82,15 @@ func Parse(u *url.URL) (Link, error) {
 
 func (l Link) Outbound() map[string]interface{} {
 	if l.Hikkari {
-		return map[string]interface{}{
+		o := map[string]interface{}{
 			"type": "hikkari", "server": l.Host, "server_port": l.Port,
 			"username": l.Username, "password": l.Password,
 			"tls": map[string]interface{}{"enabled": true, "server_name": l.ServerName},
 		}
+		if l.Dup {
+			o["udp"] = map[string]interface{}{"dup": true}
+		}
+		return o
 	}
 	return map[string]interface{}{
 		"type": "naive", "server": l.Host, "server_port": l.Port,
@@ -94,9 +109,14 @@ func (l Link) URI() string {
 	}
 	u := url.URL{Scheme: scheme, Host: net.JoinHostPort(l.Host, strconv.Itoa(l.Port)),
 		User: url.UserPassword(l.Username, l.Password), Fragment: l.Label}
+	q := url.Values{}
 	if l.ServerName != "" && l.ServerName != l.Host {
-		u.RawQuery = url.Values{"sni": {l.ServerName}}.Encode()
+		q.Set("sni", l.ServerName)
 	}
+	if l.Hikkari && l.Dup {
+		q.Set("dup", "1")
+	}
+	u.RawQuery = q.Encode()
 	return u.String()
 }
 
@@ -111,6 +131,14 @@ func FromOutbound(o map[string]interface{}, label string) (Link, error) {
 	for key := range o {
 		switch key {
 		case "type", "tag", "server", "server_port", "username", "password", "quic", "tls":
+		case "udp":
+			// Only v1.02's dup fits a link.
+			udp, ok := o["udp"].(map[string]interface{})
+			dup, isBool := udp["dup"].(bool)
+			if !l.Hikkari || !ok || len(udp) != 1 || !isBool {
+				return l, fmt.Errorf("naive: настройки профиля не помещаются в ссылку")
+			}
+			l.Dup = dup
 		default:
 			return l, fmt.Errorf("naive: настройки профиля не помещаются в ссылку")
 		}
