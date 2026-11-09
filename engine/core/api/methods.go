@@ -582,6 +582,9 @@ func (c *Core) AddProfileFromURI(uri string) (string, error) {
 				return "", err
 			}
 			source := &after.Subscriptions[index]
+			// Adding the link by hand asks for its servers: those deleted
+			// from it come back. Only the background sync keeps them away.
+			source.Hidden = nil
 			source.Info = subscriptionInfo(source.ID, imported.Metadata)
 			source.Capacity = nil
 			if subscription.IsHikkariURL(source.URL) && imported.Metadata != nil {

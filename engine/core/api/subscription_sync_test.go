@@ -144,13 +144,27 @@ func TestAutomaticSyncMetadataRuntimeAndHiddenServers(t *testing.T) {
 			t.Fatal("deleted server resurrected")
 		}
 	}
-	// Reimport remains one subscription with stable IDs and hidden exclusions.
+	// Adding the link again by hand is one subscription with stable IDs, and
+	// it brings the deleted server back: the user asked for its servers.
+	kept := map[string]bool{}
+	for _, p := range profiles {
+		kept[p.Name] = true
+	}
 	if _, err := c.AddProfileFromURI(server.URL); err != nil {
 		t.Fatal(err)
 	}
 	pf, _ = c.profiles.Read()
-	if len(pf.Subscriptions) != 1 || pf.Subscriptions[0].ID != id || len(pf.Profiles) != 2 {
+	if len(pf.Subscriptions) != 1 || pf.Subscriptions[0].ID != id {
 		t.Fatal("reimport duplicated subscription")
+	}
+	if len(pf.Profiles) != 3 || len(pf.Subscriptions[0].Hidden) != 0 {
+		t.Fatalf("reimport did not bring the deleted server back: %+v", pf.Profiles)
+	}
+	for _, p := range pf.Profiles {
+		delete(kept, p.Name)
+	}
+	if len(kept) != 0 {
+		t.Fatalf("reimport renamed the servers it kept: %v", kept)
 	}
 	// Local reads cannot cause HTTP requests and cannot expose credential URL.
 	before := requests.Load()
