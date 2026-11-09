@@ -104,6 +104,34 @@ func run(ctx context.Context, in io.Reader, out io.Writer, withConfig bool) erro
 	if subURL == "" {
 		return errors.New("no subscription URL on stdin")
 	}
+	decode := func(link string) (struct {
+		Draft singbox.Draft
+		Key   string
+		Node  string
+	}, error) {
+		d, err := singbox.ParseURI(link)
+		return struct {
+			Draft singbox.Draft
+			Key   string
+			Node  string
+		}{d, capacity.Key(link), capacityNode(link)}, err
+	}
+	if !isFetchURL(subURL) {
+		// One share link instead of a subscription (vless://…): a lab relay
+		// that no subscription serves, measured by ops matrix all the same.
+		one, err := decode(subURL)
+		if err != nil {
+			return errors.New("share link: " + strings.ReplaceAll(err.Error(), subURL, "[link]"))
+		}
+		e, err := entryOf(one.Draft)
+		if err != nil {
+			return err
+		}
+		if withConfig {
+			e.Config, e.CapacityKey, e.Node = one.Draft.Config, one.Key, one.Node
+		}
+		return json.NewEncoder(out).Encode([]Entry{e})
+	}
 	imported, err := subscription.Fetch(ctx, subURL, "", func(link string) (struct {
 		Draft singbox.Draft
 		Key   string
@@ -158,4 +186,11 @@ func capacityNode(link string) string {
 		return ""
 	}
 	return strings.TrimPrefix(parsed.Query().Get("hikkari-node"), "n:")
+}
+
+// isFetchURL says whether the line is a subscription to fetch rather than one
+// share link.
+func isFetchURL(line string) bool {
+	u, err := url.Parse(line)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https")
 }

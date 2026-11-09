@@ -105,3 +105,28 @@ func TestRunAWGEndpointWithTunnelDNS(t *testing.T) {
 		}
 	}
 }
+
+func TestRunTakesOneShareLink(t *testing.T) {
+	link := "vless://" + testUUID + "@203.0.113.7:443?security=reality&sni=example.com&pbk=" + testPBK + "&sid=ab12&fp=chrome&type=tcp&flow=xtls-rprx-vision#lab\n"
+	var out bytes.Buffer
+	if err := run(context.Background(), strings.NewReader(link), &out, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), testUUID) || strings.Contains(out.String(), testPBK) {
+		t.Fatalf("output leaks a secret: %s", out.String())
+	}
+	var entries []Entry
+	if err := json.Unmarshal(out.Bytes(), &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Label != "lab" || entries[0].Host != "203.0.113.7" || entries[0].Security != "reality" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	out.Reset()
+	if err := run(context.Background(), strings.NewReader(link), &out, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"fingerprint":"chrome"`) {
+		t.Fatalf("no outbound with --with-config: %s", out.String())
+	}
+}
