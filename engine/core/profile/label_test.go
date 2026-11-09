@@ -61,3 +61,22 @@ func TestProtocolLabelNamesTheWholeStack(t *testing.T) {
 		t.Errorf("awg = %q", got)
 	}
 }
+
+func TestLabelCountryReadsTheExitFlagOfTheLink(t *testing.T) {
+	link := func(fragment string) Profile {
+		return Profile{Connection: &Connection{URI: "hikkari+v1://u:p@203.0.113.1:8443?sni=exit.example#" + fragment}}
+	}
+	for fragment, want := range map[string]string{
+		"%F0%9F%87%B3%F0%9F%87%B1%20hikkari%20unl1-2%20через%20вход": "nl",
+		"🇩🇪 hikkari fra1-1": "de",
+		"hikkari unl1-2":    "",
+		"":                  "",
+	} {
+		if got := LabelCountry(link(fragment)); got != want {
+			t.Errorf("LabelCountry(#%s) = %q, want %q", fragment, got, want)
+		}
+	}
+	if got := LabelCountry(Profile{}); got != "" {
+		t.Errorf("a profile without a link: %q", got)
+	}
+}

@@ -656,7 +656,12 @@ func (c *Core) ProfileCountries() (map[string]string, error) {
 		wg.Add(1)
 		go func(p profile.Profile) {
 			defer wg.Done()
-			code := geoip.Resolve(profile.PeerHost(p))
+			// The link's own flag names where the traffic exits: a cascade
+			// dials an entry in Russia, which geoip would show instead.
+			code := profile.LabelCountry(p)
+			if code == "" {
+				code = geoip.Resolve(profile.PeerHost(p))
+			}
 			mu.Lock()
 			out[p.Name] = code
 			mu.Unlock()
