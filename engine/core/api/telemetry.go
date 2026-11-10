@@ -140,7 +140,7 @@ func contractProto(slug string) string {
 		if has("reality") {
 			return "vless-reality"
 		}
-	case "vmess", "trojan", "hysteria2":
+	case "vmess", "trojan", "hysteria2", "naive", "hikkari":
 		return parts[0]
 	case "shadowsocks", "ss":
 		return "shadowsocks"

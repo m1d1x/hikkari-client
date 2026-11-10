@@ -30,7 +30,7 @@ type fieldSpec struct {
 
 var (
 	engines = []string{"singbox", "xray"}
-	protos  = []string{"vless-reality", "vless-xhttp", "vmess", "trojan", "shadowsocks", "hysteria2", "other"}
+	protos  = []string{"vless-reality", "vless-xhttp", "vmess", "trojan", "shadowsocks", "hysteria2", "naive", "hikkari", "other"}
 )
 
 var eventSpecs = map[string]map[string]fieldSpec{

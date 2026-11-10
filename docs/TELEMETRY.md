@@ -77,7 +77,7 @@
 | `cta` | нажата кнопка оплаты/доната | `kind` (`subscribe` \| `renew` \| `donate`) |
 
 - `engine`: `singbox` | `xray`. `proto`: `vless-reality` | `vless-xhttp` | `vmess` | `trojan` | `shadowsocks` |
-  `hysteria2` | `other`.
+  `hysteria2` | `naive` | `hikkari` | `other`.
 - Счётчики — только корзинами из таблицы, точные числа не шлём.
 
 ## 5. Ошибки

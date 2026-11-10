@@ -70,7 +70,7 @@ func TestTelemetryCallsKeepToTheContract(t *testing.T) {
 func TestContractProtoFoldsEveryStack(t *testing.T) {
 	cases := map[string]string{
 		"vless-reality-tcp": "vless-reality", "vless-reality-xhttp": "vless-xhttp", "vless-ws": "other",
-		"vmess-ws": "vmess", "trojan": "trojan", "hysteria2": "hysteria2", "shadowsocks": "shadowsocks", "": "other",
+		"vmess-ws": "vmess", "trojan": "trojan", "hysteria2": "hysteria2", "shadowsocks": "shadowsocks", "naive": "naive", "hikkari": "hikkari", "": "other",
 	}
 	for slug, want := range cases {
 		if got := contractProto(slug); got != want {
