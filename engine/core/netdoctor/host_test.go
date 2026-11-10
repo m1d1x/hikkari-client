@@ -202,3 +202,50 @@ func TestWithoutPinningTheSystemResolverStaysImplicit(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 }
+
+// lesha-001, 10.11: «починить сеть» probed while the network blinked, the
+// selection came out unreachable and named no resolver, and the core read the
+// system setting, which points at itself. Direct lookups looped: 40 thousand
+// queries and 67 answers in ten seconds.
+func TestAnUnreachableSelectionNeverLeavesDirectLookupsOnTheSystemSetting(t *testing.T) {
+	env := &fakeEnv{pins: true, cs: []Candidate{wifi}, bestIdx: wifi.Index, reachOK: map[int]bool{}}
+	s := selectHost(env)
+	if s.Iface != IfaceUnreachable {
+		t.Fatalf("%+v", s)
+	}
+	for _, sel := range []Selection{s, {}} {
+		got := sel.DirectResolver()
+		if PinsSystemResolver && got != FallbackDNS {
+			t.Fatalf("pinning platform: DirectResolver of %+v = %q, want the fallback", sel, got)
+		}
+		if !PinsSystemResolver && got != "" {
+			t.Fatalf("DirectResolver of %+v = %q, want the system setting", sel, got)
+		}
+	}
+}
+
+func TestADirectResolverTheProbeNamedIsKept(t *testing.T) {
+	if got := (Selection{DirectDNS: "192.168.1.1"}).DirectResolver(); got != "192.168.1.1" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestOnlyASelectionThatReachedSomethingDescribesTheNetwork(t *testing.T) {
+	cases := map[string]bool{IfaceAuto: true, IfacePinned: true, IfaceUnreachable: false, IfaceUnchecked: false, "": false}
+	for iface, want := range cases {
+		if got := (Selection{Iface: iface}).Reached(); got != want {
+			t.Fatalf("Reached(%q) = %v, want %v", iface, got, want)
+		}
+	}
+}
+
+func TestPinLineShowsTheResolverTheCoreGets(t *testing.T) {
+	line := Selection{Iface: IfaceUnreachable}.PinLine()
+	want := "pin=none"
+	if PinsSystemResolver {
+		want = "pin=public"
+	}
+	if !strings.HasPrefix(line, want+" ") {
+		t.Fatalf("got %q, want prefix %q", line, want)
+	}
+}

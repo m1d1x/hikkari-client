@@ -24,9 +24,11 @@ import (
 // and reconnects on the same network do not re-probe and cannot flip it.
 
 // selectHostLocked refreshes c.host before a connect. A selection made on
-// the current network is reused. Callers hold operationMu, tunnel down.
+// the current network is reused, unless it found nothing reachable: that one
+// says nothing about the network, and the next connect probes again. Callers
+// hold operationMu, tunnel down.
 func (c *Core) selectHostLocked() {
-	if c.host.Probed && c.host.Network != "" && c.host.Network == netdoctor.CurrentNetwork() {
+	if c.host.Probed && c.host.Reached() && c.host.Network != "" && c.host.Network == netdoctor.CurrentNetwork() {
 		if c.logger != nil {
 			c.logger.Logf("[netdoctor] selection reused: %s %s", c.host.LogLine(), c.host.PinLine())
 		}

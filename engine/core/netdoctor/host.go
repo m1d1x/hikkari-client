@@ -105,6 +105,23 @@ type Details struct {
 // Default reports whether the selection leaves the core on its defaults.
 func (s Selection) Default() bool { return s.DirectInterface == "" && s.DirectDNS == "" }
 
+// Reached reports whether the probe found an interface that carries traffic.
+// Only such a selection describes the network: an unreachable one is a moment
+// (the network blinked, routes were still settling) and must not be kept for it.
+func (s Selection) Reached() bool { return s.Iface == IfaceAuto || s.Iface == IfacePinned }
+
+// DirectResolver is the resolver the core's direct lookups must use. Where the
+// service points the system setting at the core (PinsSystemResolver), the core
+// must never be left to read that setting: its direct lookups would come back
+// to itself and loop. A selection that named none (unprobed, offline) gets the
+// fallback, which works wherever there is internet at all.
+func (s Selection) DirectResolver() string {
+	if s.DirectDNS == "" && PinsSystemResolver {
+		return FallbackDNS
+	}
+	return s.DirectDNS
+}
+
 // LogLine is the anonymized one-line summary for the engine log.
 // PinLine says what the selection did with direct lookups: an empty pin where
 // the resolver has to be pinned leaves the core reading the system setting,
@@ -112,8 +129,8 @@ func (s Selection) Default() bool { return s.DirectInterface == "" && s.DirectDN
 // choice, which a foreign VPN changes. No addresses.
 func (s Selection) PinLine() string {
 	pin := "none"
-	if s.DirectDNS != "" {
-		pin = resolverKind(s.DirectDNS)
+	if r := s.DirectResolver(); r != "" {
+		pin = resolverKind(r)
 	}
 	best := s.Details.BestIface
 	if best == "" {
@@ -292,9 +309,9 @@ func resolverKind(ip string) string {
 }
 
 // pinnedResolver names the resolver direct lookups use while the system
-// setting points at the core: the first IPv4 one of the network that answers.
-// Offline nothing answers, and the fallback stands in until the network change
-// that follows restarts the tunnel and probes again.
+// setting points at the core: the first IPv4 one of the network that answers,
+// else the fallback. With no reachable interface there is no network resolver
+// to name, and DirectResolver supplies the fallback.
 func pinnedResolver(env hostEnv, c *Candidate) string {
 	for _, s := range c.DNS {
 		if ip := net.ParseIP(s); ip != nil && ip.To4() != nil && resolverWorks(env, c.Index, []string{s}) {
