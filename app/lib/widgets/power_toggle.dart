@@ -287,16 +287,26 @@ class _PowerToggleState extends State<PowerToggle> {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TweenAnimationBuilder<Color?>(
-                    tween: ColorTween(end: _profileHover ? t.primary : t.text),
-                    duration: const Duration(milliseconds: 150),
-                    builder: (_, color, __) => Text(
-                      label,
-                      style: TextStyle(
-                        color: color,
-                        fontFamily: t.monoFamily,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
+                  // The reserved ms slot is as wide as a four-digit rtt, so a
+                  // long profile name gives way (ellipsis) instead of pushing
+                  // the row past a narrow window.
+                  Flexible(
+                    child: TweenAnimationBuilder<Color?>(
+                      tween: ColorTween(
+                        end: _profileHover ? t.primary : t.text,
+                      ),
+                      duration: const Duration(milliseconds: 150),
+                      builder: (_, color, __) => Text(
+                        label,
+                        maxLines: 1,
+                        softWrap: false,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: color,
+                          fontFamily: t.monoFamily,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
@@ -313,17 +323,30 @@ class _PowerToggleState extends State<PowerToggle> {
                             : t.textMuted.withValues(alpha: 0.4),
                       ),
                     ),
-                  ],
-                  if (active != null && !dead) ...[
                     const SizedBox(width: 9),
-                    Text(
-                      rttText,
-                      style: TextStyle(
-                        color: t.textMuted,
-                        fontFamily: t.monoFamily,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    // Постоянный слот под ms: «…» при прогреве и «57 ms»
+                    // после — разной ширины, и без слота hero-строка
+                    // (mainAxisSize.min) меняет ширину, блок переоцентровы-
+                    // вается и лейбл с графиком съезжают вправо, пока
+                    // строка с флагом под ними стоит на месте — выглядит
+                    // как дёрганье. Слот меряется по самому широкому
+                    // варианту; dead показывает пустой слот.
+                    SizedBox(
+                      width: _rttSlotWidth(t, MediaQuery.textScalerOf(context)),
+                      child: dead
+                          ? null
+                          : Text(
+                              rttText,
+                              maxLines: 1,
+                              softWrap: false,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: t.textMuted,
+                                fontFamily: t.monoFamily,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                     ),
                   ],
                   const SizedBox(width: 6),
@@ -383,4 +406,24 @@ class _PowerToggleState extends State<PowerToggle> {
       ),
     );
   }
+
+  // Width of the reserved ms slot in the hero row — the widest caption the
+  // row can show (a four-digit rtt). Measured, not hard-coded, so a font or
+  // text-scaler change keeps the slot exact. «…» while checking and an empty
+  // slot when dead occupy the same width, so the row — and the block it
+  // sizes — never re-centres mid-session.
+  static double _rttSlotWidth(NekkoTokens t, TextScaler scaler) => (TextPainter(
+    text: TextSpan(
+      text: '8888 ms',
+      style: TextStyle(
+        color: t.textMuted,
+        fontFamily: t.monoFamily,
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+    textScaler: scaler,
+    maxLines: 1,
+  )..layout()).width;
 }

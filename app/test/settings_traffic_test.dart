@@ -45,12 +45,13 @@ class _State extends AppState {
   Future<TrafficCounters?> trafficCounters() async {
     reads++;
     if (fail) throw StateError('core stopped');
+    if (!connected) return null;
     return counters;
   }
 }
 
 void main() {
-  testWidgets('traffic appears only below connected status in settings', (
+  testWidgets('traffic row stays mounted and shows a dash when disconnected', (
     tester,
   ) async {
     final font = FontLoader('IBM Plex Mono')
@@ -85,12 +86,19 @@ void main() {
     );
     expect(tester.takeException(), isNull);
     state.disconnect();
-    await tester.pump();
-    expect(find.byType(SettingsTraffic), findsNothing);
+    await tester.pump(const Duration(seconds: 1));
+    // The row stays; with nothing to measure the dash placeholder carries it.
+    expect(find.byType(SettingsTraffic), findsOneWidget);
+    expect(find.text('↓ - · ↑ - Мбит/с'), findsOneWidget);
+    // Sampling continues while the sheet is open…
     final reads = state.reads;
     await tester.pump(const Duration(seconds: 3));
-    expect(state.reads, reads);
+    expect(state.reads, greaterThan(reads));
+    // …and stops once the sheet is gone.
     await tester.pumpWidget(const SizedBox());
+    final closedReads = state.reads;
+    await tester.pump(const Duration(seconds: 3));
+    expect(state.reads, closedReads);
   });
 
   testWidgets('settings counters stop when hidden and reset after errors', (

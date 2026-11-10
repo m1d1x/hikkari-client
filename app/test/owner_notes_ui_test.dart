@@ -359,14 +359,14 @@ void main() {
       expect(find.text('логи'), findsOneWidget);
       expect(find.text('диагностика'), findsOneWidget);
       expect(find.text('поддержать'), findsOneWidget);
-      expect(find.text('hikkari v$kFallbackClientVersion'), findsOneWidget);
+      expect(find.text('v$kFallbackClientVersion'), findsOneWidget);
 
       // Updating installed version updates the footer label.
       state.debugSetUpdate(
         const UpdateStatus(state: 'idle', installed: '1.0.9'),
       );
       await tester.pumpAndSettle();
-      expect(find.text('hikkari v1.0.9'), findsOneWidget);
+      expect(find.text('v1.0.9'), findsOneWidget);
 
       // Tapping «поддержать» opens https://hikkari.net.
       await tester.ensureVisible(find.text('поддержать'));
@@ -375,8 +375,8 @@ void main() {
       expect(launchedDonate, Uri.parse('https://hikkari.net'));
 
       // Tapping the version label opens https://hikkari.net/changelog.
-      await tester.ensureVisible(find.text('hikkari v1.0.9'));
-      await tester.tap(find.text('hikkari v1.0.9'));
+      await tester.ensureVisible(find.text('v1.0.9'));
+      await tester.tap(find.text('v1.0.9'));
       await tester.pumpAndSettle();
       expect(launchedDonate, Uri.parse('https://hikkari.net/changelog'));
     },

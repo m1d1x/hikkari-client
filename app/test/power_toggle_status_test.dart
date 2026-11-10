@@ -6,6 +6,7 @@ import 'package:nekkobox/theme/app_theme.dart';
 import 'package:nekkobox/widgets/morphing_word.dart';
 import 'package:nekkobox/widgets/power_ring.dart';
 import 'package:nekkobox/widgets/power_toggle.dart';
+import 'package:nekkobox/widgets/profile_flag_badge.dart';
 import 'package:provider/provider.dart';
 
 class _QuietCore extends NekkoboxCore {
@@ -74,6 +75,46 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1500));
     expect(_word(tester), isNull);
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('the hero row keeps its width while the rtt swaps «…» for a number', (
+    tester,
+  ) async {
+    final state = AppState(_QuietCore(), dryRun: true);
+    addTearDown(state.dispose);
+    await tester.runAsync(state.start);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AppState>.value(
+        value: state,
+        child: MaterialApp(
+          theme: buildAppTheme(),
+          home: const Scaffold(body: Center(child: PowerToggle())),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(ProfileFlagBadge), findsOneWidget);
+
+    // The warm-up window swaps the rtt caption «NN ms» for the narrower
+    // «…». The hero row is mainAxisSize.min inside a centred block, so
+    // without a reserved slot the row re-centres and the label slides
+    // sideways while the flag row under it stays pinned — the profile
+    // block visibly shears mid-enable.
+    double labelLeft() => tester.getTopLeft(find.text('амстердам')).dx;
+    double flagLeft() => tester.getTopLeft(find.byType(ProfileFlagBadge)).dx;
+
+    final labelWithNumber = labelLeft();
+    final flagWithNumber = flagLeft();
+
+    await tester.tap(find.byType(PowerRing));
+    await tester.pump(const Duration(milliseconds: 800));
+    await tester.pump(const Duration(milliseconds: 2500));
+    await tester.pump(const Duration(milliseconds: 1000));
+    expect(find.text('…'), findsOneWidget);
+
+    expect(labelLeft(), labelWithNumber);
+    expect(flagLeft(), flagWithNumber);
   });
 
   Widget word(String? text) => MaterialApp(

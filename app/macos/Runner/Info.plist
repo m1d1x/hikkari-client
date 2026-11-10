@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Impeller compiles its shaders at build time. Skia compiled Metal
+	     pipelines on first use and stalled the first animations after launch
+	     for up to 160 ms a frame. Windows already runs on Impeller. -->
+	<key>FLTEnableImpeller</key>
+	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>

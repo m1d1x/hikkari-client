@@ -844,7 +844,7 @@ class _RenewButtonState extends State<_RenewButton>
   Widget build(BuildContext context) {
     final t = context.tokens;
     const fade = Duration(milliseconds: 220);
-    const curve = Cubic(0.16, 1, 0.3, 1);
+    const curve = AppCurves.hover;
     final radius = BorderRadius.circular(t.radius);
     return MouseRegion(
       cursor: SystemMouseCursors.click,

@@ -6,8 +6,12 @@ import 'package:flutter/physics.dart';
 /// System animation curves.
 abstract final class AppCurves {
   /// Shared hover easing for buttons, labels, and icons.
-  /// Snappy responsive start with smooth fluid deceleration.
-  static const Curve hover = Cubic(0.16, 1.0, 0.3, 1.0);
+  ///
+  /// A linear crossfade — the same glide the routing header's title and the
+  /// header icons take. Ease-out curves at hover durations (140 ms) spend
+  /// almost the whole change in the first two frames, which reads as a snap,
+  /// not a transition.
+  static const Curve hover = Curves.linear;
 
   /// Snappy start with smooth deceleration ("fast in, slow out").
   /// Matches standard fluid desktop curve cubic-bezier(0.16, 1, 0.3, 1).

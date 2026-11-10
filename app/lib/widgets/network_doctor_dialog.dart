@@ -374,10 +374,7 @@ class _NetworkDoctorDialogState extends State<NetworkDoctorDialog> {
     if (_isMac) {
       // The tools the deep reset stops are Windows drivers: nothing to report.
     } else if (dpi == null) {
-      _appendLog(
-        'INFO',
-        'сторонние сетевые фильтры: проверка не выполнена',
-      );
+      _appendLog('INFO', 'сторонние сетевые фильтры: проверка не выполнена');
     } else if (dpi.isEmpty) {
       _appendLog('OK', 'сторонние сетевые фильтры: не обнаружены');
     } else {

@@ -168,8 +168,8 @@ class _SettingsSheetState extends State<_SettingsSheet> {
     final installed = state.updateStatus.installed.trim();
     final rawVersion = installed.isEmpty ? kFallbackClientVersion : installed;
     final versionLabel = rawVersion.startsWith('v')
-        ? 'hikkari $rawVersion'
-        : 'hikkari v$rawVersion';
+        ? rawVersion
+        : 'v$rawVersion';
     final statusLabel = switch (status) {
       'ok' => 'подключено',
       'connecting' => 'подключаюсь',
@@ -212,54 +212,46 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                 ),
               ),
               const SizedBox(height: 14),
-              _InfoRow(label: 'статус', value: statusLabel, loading: false),
-              if (status == 'ok' && state.isRunning) const SettingsTraffic(),
-              const SizedBox(height: 8),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 104,
-                    child: Text(
-                      'движок',
-                      style: TextStyle(
-                        color: t.textMuted,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: IgnorePointer(
-                      ignoring: context.watch<AppState>().switchingEngine,
-                      child: Opacity(
-                        opacity: context.watch<AppState>().switchingEngine
-                            ? 0.6
-                            : 1,
-                        child: NekkoSegmented(
-                          selected: context.watch<AppState>().engineId,
-                          onChanged: (id) =>
-                              context.read<AppState>().switchEngine(id),
-                          segments: [
-                            const NekkoSegment('sing-box', 'sing-box'),
-                            NekkoSegment(
-                              'xray',
-                              'xray',
-                              enabled: xrayAvailable,
-                              hint: xrayAvailable
-                                  ? null
-                                  : 'Xray на Windows пока недоступен',
-                            ),
-                          ],
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+              // The engine picker leads the sheet: centred, label-less — the
+              // pills say what they are, and a hover tooltip names the
+              // setting for anyone who needs the word.
+              Center(
+                child: LayoutBuilder(
+                  builder: (context, constraints) => SizedBox(
+                    width: constraints.maxWidth < 280
+                        ? constraints.maxWidth
+                        : 280,
+                    child: Tooltip(
+                      message: 'движок туннеля',
+                      waitDuration: const Duration(milliseconds: 400),
+                      child: IgnorePointer(
+                        ignoring: state.switchingEngine,
+                        child: Opacity(
+                          opacity: state.switchingEngine ? 0.6 : 1,
+                          child: NekkoSegmented(
+                            selected: state.engineId,
+                            onChanged: (id) => state.switchEngine(id),
+                            segments: [
+                              const NekkoSegment('sing-box', 'sing-box'),
+                              NekkoSegment(
+                                'xray',
+                                'xray',
+                                enabled: xrayAvailable,
+                                hint: xrayAvailable
+                                    ? null
+                                    : 'Xray на Windows пока недоступен',
+                              ),
+                            ],
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
-              if (context.watch<AppState>().lastError case final error?)
+              if (state.lastError case final error?)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(
@@ -269,16 +261,16 @@ class _SettingsSheetState extends State<_SettingsSheet> {
                     style: TextStyle(color: t.bad, fontSize: 11),
                   ),
                 ),
-              const SizedBox(height: 5),
-              _InfoRow(
-                label: 'ip',
-                value: ip,
-                loading: context.watch<AppState>().switchingEngine,
-              ),
+              const SizedBox(height: 14),
+              _InfoRow(label: 'статус', value: statusLabel, loading: false),
+              // Consumption stays visible always; the dash placeholder
+              // carries the row when there is nothing to measure.
+              const SettingsTraffic(),
+              _InfoRow(label: 'ip', value: ip, loading: state.switchingEngine),
               _InfoRow(
                 label: 'сообщение',
                 value: msg,
-                loading: context.watch<AppState>().switchingEngine,
+                loading: state.switchingEngine,
               ),
               const SizedBox(height: 16),
               Divider(height: 1, color: t.border),

@@ -7,8 +7,8 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 
-/// A local counter reader, mounted only in the settings sheet while connected.
-/// No sampling survives closing the sheet or putting the app in the background.
+/// A local counter reader, mounted only in the settings sheet. No sampling
+/// survives closing the sheet or putting the app in the background.
 class SettingsTraffic extends StatefulWidget {
   const SettingsTraffic({super.key});
 
@@ -23,7 +23,6 @@ class _SettingsTrafficState extends State<SettingsTraffic>
   TrafficCounters? _previous;
   int _previousAt = 0;
   String? _speed;
-  bool _supported = true;
   bool _reading = false;
   bool _foreground = true;
   int _generation = 0;
@@ -82,7 +81,6 @@ class _SettingsTrafficState extends State<SettingsTraffic>
       _previous = next;
       _previousAt = at;
       setState(() {
-        _supported = next != null;
         _speed = speed;
       });
     } catch (_) {
@@ -106,10 +104,9 @@ class _SettingsTrafficState extends State<SettingsTraffic>
 
   @override
   Widget build(BuildContext context) {
-    if (!_supported) return const SizedBox.shrink();
     final t = context.tokens;
     return Padding(
-      padding: const EdgeInsets.only(top: 3),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Tooltip(
         message:
             'Текущий трафик через клиент, включая прямые соединения по правилам. '
