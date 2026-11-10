@@ -76,6 +76,20 @@ func ProbeDirectPath(fetch func(url string) error) DirectPath {
 	return res
 }
 
+// DirectInternet reports whether any ordinary site answers through fetch: the
+// short form of ProbeDirectPath, for a check that runs on its own.
+func DirectInternet(fetch func(url string) error) bool {
+	answered := make(chan bool, len(directSites))
+	for _, site := range directSites {
+		go func() { answered <- fetch(site) == nil }()
+	}
+	ok := false
+	for range directSites {
+		ok = <-answered || ok
+	}
+	return ok
+}
+
 // FetchDirect is fetch for a machine with the tunnel down: an ordinary request
 // over the system's own network. It ignores the system proxy, which the doctor
 // judges separately.

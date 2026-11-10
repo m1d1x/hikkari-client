@@ -295,6 +295,9 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		}
 		run(c.measureTunnelDown)
 		run(backend.Baseline)
+		if meter := c.downtimeMeter(); meter != nil {
+			run(func() { meter.Run(ctx) })
+		}
 		if core, ok := backend.(engine.CoreSupervision); ok {
 			run(func() { c.superviseCore(ctx, core) })
 		}
