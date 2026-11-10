@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -67,7 +68,12 @@ func TestTheKeyIsKeptForTheInstall(t *testing.T) {
 		t.Fatal("ids must hold across restarts")
 	}
 	st, err := os.Stat(filepath.Join(dir, destKeyFile))
-	if err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("key file: %v %v", st, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows has no owner-only mode bits: the key sits in the user's own
+	// profile directory there.
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
+		t.Fatalf("key file mode %v, want 0600", st.Mode().Perm())
 	}
 }
