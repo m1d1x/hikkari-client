@@ -231,18 +231,20 @@ func boundDialer(idx int, timeout time.Duration) *net.Dialer {
 			if err != nil {
 				return err
 			}
-			return serr
+			if serr != nil {
+				return fmt.Errorf("%w: %v", errBind, serr)
+			}
+			return nil
 		},
 	}
 }
 
-func (macEnv) reach(idx int, target string) bool {
+func (macEnv) reach(idx int, target string) error {
 	conn, err := boundDialer(idx, reachTimeout).Dial("tcp4", net.JoinHostPort(target, "53"))
 	if err != nil {
-		return false
+		return err
 	}
-	_ = conn.Close()
-	return true
+	return conn.Close()
 }
 
 func (macEnv) resolve(idx int, server, domain string) bool {

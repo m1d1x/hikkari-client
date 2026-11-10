@@ -3,7 +3,10 @@ package netdoctor
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"net"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -17,6 +20,7 @@ type fakeEnv struct {
 	failOnce map[string]bool // server fails the first round only
 	rounds   map[string]int
 	probed   []string // targets touched
+	reachErr error    // why a failed reach failed; a plain error when nil
 }
 
 func (f *fakeEnv) candidates() ([]Candidate, error) {
@@ -26,9 +30,15 @@ func (f *fakeEnv) candidates() ([]Candidate, error) {
 	return f.cs, nil
 }
 func (f *fakeEnv) best(string) (int, error) { return f.bestIdx, nil }
-func (f *fakeEnv) reach(idx int, target string) bool {
+func (f *fakeEnv) reach(idx int, target string) error {
 	f.probed = append(f.probed, target)
-	return f.reachOK[idx]
+	if f.reachOK[idx] {
+		return nil
+	}
+	if f.reachErr != nil {
+		return f.reachErr
+	}
+	return errors.New("no handshake")
 }
 func (f *fakeEnv) resolve(idx int, server, domain string) bool {
 	f.probed = append(f.probed, server)
@@ -247,5 +257,65 @@ func TestPinLineShowsTheResolverTheCoreGets(t *testing.T) {
 	}
 	if !strings.HasPrefix(line, want+" ") {
 		t.Fatalf("got %q, want prefix %q", line, want)
+	}
+}
+
+// lesha-001, 10.11: «починить сеть» probed en0 3.4 s after the tunnel stopped and
+// it failed; the line could not say whether the network blinked or the path was
+// not there. The reason now goes into the line, without addresses.
+func TestAFailedProbeSaysWhyItFailed(t *testing.T) {
+	env := &fakeEnv{cs: []Candidate{wifi}, bestIdx: wifi.Index, reachOK: map[int]bool{}, reachErr: &net.OpError{Op: "dial", Err: syscall.ENETUNREACH}}
+	s := selectHost(env)
+	if s.Details.BestErr != "net_unreachable" {
+		t.Fatalf("%+v", s.Details)
+	}
+	if !strings.Contains(s.LogLine(), "best=physical:fail(net_unreachable)") {
+		t.Fatalf("got %q", s.LogLine())
+	}
+}
+
+func TestAProbeThatPassedCarriesNoReason(t *testing.T) {
+	env := &fakeEnv{cs: []Candidate{wifi}, bestIdx: wifi.Index, reachOK: map[int]bool{wifi.Index: true}, dnsOK: map[string]bool{"192.168.1.1": true}}
+	s := selectHost(env)
+	if s.Details.BestErr != "" || !strings.Contains(s.LogLine(), "best=physical:ok ") {
+		t.Fatalf("%+v %q", s.Details, s.LogLine())
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+func TestReachErrorClasses(t *testing.T) {
+	cases := map[string]error{
+		"timeout":          &net.OpError{Op: "dial", Err: timeoutErr{}},
+		"refused":          &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED},
+		"host_unreachable": &net.OpError{Op: "dial", Err: syscall.EHOSTUNREACH},
+		"net_down":         &net.OpError{Op: "dial", Err: syscall.ENETDOWN},
+		"no_address":       &net.OpError{Op: "dial", Err: syscall.EADDRNOTAVAIL},
+		"bind":             fmt.Errorf("%w: invalid argument", errBind),
+		"other":            errors.New("something else"),
+	}
+	for want, err := range cases {
+		if got := reachErrClass(err); got != want {
+			t.Fatalf("reachErrClass(%v) = %q, want %q", err, got, want)
+		}
+	}
+	// Winsock codes on Windows.
+	if got := reachErrClass(&net.OpError{Op: "dial", Err: syscall.Errno(10051)}); got != "net_unreachable" {
+		t.Fatalf("WSAENETUNREACH: got %q", got)
+	}
+}
+
+// A real probe through an interface that does not exist fails with a reason,
+// not a bare false.
+func TestARealProbeOnAMissingInterfaceHasAReason(t *testing.T) {
+	if !PinsSystemResolver {
+		t.Skip("macOS probe")
+	}
+	if got := reachErrClass(macEnvReach(1<<20, "127.0.0.1")); got == "" || got == "other" {
+		t.Fatalf("got %q", got)
 	}
 }

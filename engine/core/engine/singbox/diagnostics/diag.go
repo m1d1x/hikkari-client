@@ -62,6 +62,8 @@ type Runner struct {
 	voiceAt     time.Time // last voice round
 	voiceBusy   bool      // a voice round is running
 	voiceMobile bool      // the last voice round found a mobile network
+
+	destKey destKey // see dest.go
 }
 
 type physIface struct {
@@ -443,9 +445,9 @@ func (r *Runner) connections(everyFlow bool) {
 			udp++
 		}
 		if everyFlow || detailedFlow(c.Metadata.Network, proc, c.Metadata.Host, listed) {
-			r.log.Logf("[diag:conn] %s %s:%s → %s:%s host=%q proc=%q chains=%v rule=%q(%s) up=%d down=%d start=%s",
+			r.log.Logf("[diag:conn] %s %s:%s → %s:%s dst=%s host=%q proc=%q chains=%v rule=%q(%s) up=%d down=%d start=%s",
 				c.Metadata.Network, c.Metadata.SourceIP, c.Metadata.SourcePort,
-				c.Metadata.DestIP, c.Metadata.DestPort, c.Metadata.Host, proc,
+				c.Metadata.DestIP, c.Metadata.DestPort, r.dest(c.Metadata.DestIP), c.Metadata.Host, proc,
 				c.Chains, c.Rule, c.RulePayload, c.Upload, c.Download, c.Start)
 		}
 	}

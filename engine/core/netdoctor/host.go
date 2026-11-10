@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -91,6 +92,9 @@ type Details struct {
 	// BestIface names the interface the OS picks. Only for the tester log.
 	BestIface string `json:"-"`
 	BestOK    bool   `json:"bestOk"`
+	// BestErr classifies why the OS's choice failed the probe (reachErrClass):
+	// a blink of the network and a path that is not there read differently.
+	BestErr string `json:"bestErr,omitempty"`
 	// OthersReached counts the other candidates that completed a handshake
 	// (probing stops at the first, so it is 0 or 1).
 	OthersReached int `json:"othersReached"`
@@ -152,9 +156,17 @@ func (s Selection) LogLine() string {
 	}
 	return "direct iface=" + s.Iface + " dns=" + s.DNS +
 		" cand=" + strconv.Itoa(d.Candidates) + "(phys=" + strconv.Itoa(d.Physical) + ",virt=" + strconv.Itoa(d.Virtual) + ")" +
-		" best=" + d.BestKind + ":" + okFail(d.BestOK) +
+		" best=" + d.BestKind + ":" + okFail(d.BestOK) + bestErr(d) +
 		" others=" + strconv.Itoa(d.OthersReached) + "/" + strconv.Itoa(d.OthersTried) +
 		" resolvers=" + kinds + " sys=" + okFail(d.SystemDNSOK) + " fb=" + okFail(d.FallbackOK)
+}
+
+// bestErr is the reason the OS's choice failed, in parentheses, or nothing.
+func bestErr(d Details) string {
+	if d.BestOK || d.BestErr == "" {
+		return ""
+	}
+	return "(" + d.BestErr + ")"
 }
 
 func okFail(ok bool) string {
@@ -181,8 +193,9 @@ type hostEnv interface {
 	candidates() ([]Candidate, error)
 	// best is the interface the OS routes target through.
 	best(target string) (int, error)
-	// reach completes a TCP handshake to target:53 bound to interface idx.
-	reach(idx int, target string) bool
+	// reach completes a TCP handshake to target:53 bound to interface idx;
+	// the error says why it did not.
+	reach(idx int, target string) error
 	// resolve sends one A query for domain to server, bound to idx.
 	resolve(idx int, server, domain string) bool
 	sleep(time.Duration)
@@ -242,13 +255,17 @@ func selectHost(env hostEnv) Selection {
 // pickInterface returns the interface direct traffic should use and whether
 // it differs from the one the OS (and so the core's auto-detect) picks.
 func pickInterface(env hostEnv, cs []Candidate, d *Details) (*Candidate, bool) {
-	reaches := func(c *Candidate) bool {
+	// reaches tries the targets in turn; why the last one failed is kept.
+	reaches := func(c *Candidate) (bool, string) {
+		why := ""
 		for _, t := range ProbeTargets {
-			if env.reach(c.Index, t) {
-				return true
+			err := env.reach(c.Index, t)
+			if err == nil {
+				return true, ""
 			}
+			why = reachErrClass(err)
 		}
-		return false
+		return false, why
 	}
 	bestIdx := -1
 	if idx, err := env.best(ProbeTargets[0]); err == nil {
@@ -260,10 +277,12 @@ func pickInterface(env hostEnv, cs []Candidate, d *Details) (*Candidate, bool) {
 	for i := range cs {
 		if cs[i].Index == bestIdx {
 			d.BestKind = kindOf(cs[i])
-			if reaches(&cs[i]) {
+			ok, why := reaches(&cs[i])
+			if ok {
 				d.BestOK = true
 				return &cs[i], false
 			}
+			d.BestErr = why
 			break
 		}
 	}
@@ -276,7 +295,7 @@ func pickInterface(env hostEnv, cs []Candidate, d *Details) (*Candidate, bool) {
 	sort.SliceStable(others, func(i, j int) bool { return others[i].Metric < others[j].Metric })
 	for _, c := range others {
 		d.OthersTried++
-		if reaches(c) {
+		if ok, _ := reaches(c); ok {
 			d.OthersReached++
 			// The OS's own choice was not among the candidates (no
 			// gateway) or failed: the core must be told explicitly.
@@ -401,3 +420,50 @@ func answered(resp []byte, id uint16) bool {
 		flags&0x000f == 0 && // RCODE NOERROR
 		binary.BigEndian.Uint16(resp[6:]) > 0 // ANCOUNT
 }
+
+// reachErrClass names why a probe handshake failed, without addresses:
+// timeout (nothing came back), refused (the target answered with a reset),
+// net_unreachable / host_unreachable / net_down (the system has no path),
+// no_address (the interface has no address to send from), bind (the socket
+// could not be bound to the interface), other.
+func reachErrClass(err error) string {
+	var ne net.Error
+	var en syscall.Errno
+	if errors.As(err, &en) {
+		// Winsock reports its own codes, which syscall's names do not match.
+		switch en {
+		case 10061: // WSAECONNREFUSED
+			return "refused"
+		case 10051: // WSAENETUNREACH
+			return "net_unreachable"
+		case 10065: // WSAEHOSTUNREACH
+			return "host_unreachable"
+		case 10050: // WSAENETDOWN
+			return "net_down"
+		case 10049: // WSAEADDRNOTAVAIL
+			return "no_address"
+		}
+	}
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "refused"
+	case errors.Is(err, syscall.ENETUNREACH):
+		return "net_unreachable"
+	case errors.Is(err, syscall.EHOSTUNREACH):
+		return "host_unreachable"
+	case errors.Is(err, syscall.ENETDOWN):
+		return "net_down"
+	case errors.Is(err, syscall.EADDRNOTAVAIL):
+		return "no_address"
+	case errors.As(err, &ne) && ne.Timeout():
+		return "timeout"
+	case errors.Is(err, errBind):
+		return "bind"
+	}
+	return "other"
+}
+
+// errBind marks a probe socket the system would not bind to the interface.
+var errBind = errors.New("bind to interface")
