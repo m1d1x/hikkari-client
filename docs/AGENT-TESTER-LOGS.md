@@ -25,6 +25,7 @@ scripts/ops testers
 | `probe_load` | `scripts/ops load 001` | раунд `diag:load` сейчас, по всем профилям тестера, ждёт до 15 мин; Windows, клиент с 1.0.33 |
 | `probe_voice` | `scripts/ops probe-voice 001` | звонок на пробу сейчас: 30 с датаграмм через туннель (на Windows ещё с карты), ждёт до 4 мин; туннель включён, клиент новее 1.0.59 |
 | `provoke_targets` | `scripts/ops provoke 001 --targets ru-spb=1.2.3.4:443,ams3=5.6.7.8:443` | опыт 0 каскада: стимулы, которые ТСПУ режет, с карты к 1–3 приёмникам `EDGE_PROTO=provoke` разом, ждёт до 4 мин; Windows, клиент с `provoke_targets` |
+| `hikkari` | `scripts/ops hikkari --side client --who 001 --metric dup.` | наблюдаемость Hikkari v1.04: ряды того, что видели сессии, у релея и у клиента |
 | `voice` | `scripts/ops voice --last 7d` | датасет голоса `voice_runs` всех тестеров с вердиктом `ok`/`audible`; также `--who`, `--proto`, `--rows 1` |
 | `errors` | `scripts/ops errors --window 24h` | группы ошибок клиентов; также `7d`, `30d` |
 | `tickets`, `ticket` | `scripts/ops tickets`, `scripts/ops ticket 4` | обращения в поддержку |
@@ -109,6 +110,10 @@ SSH-туннель и токен инструмент поднимает сам:
   (`stall` — поток замолчал, `got` около 16384 — обрыв по объёму), половина приёмника `srv_hello`, `srv_out`, `srv_in`,
   `srv_udp`. Хелло дошло (`srv_hello=1`), а `hs` не `ok`: рукопожатие срезали за приёмником или на обратном пути. Стимул
   засчитывается, только если его режут к приёмнику за границей того же раунда. Разбор: `plans/2026-11-05-ru-cascade.md`.
+- `hikkari` (ядро hk.8 и новее): что видели сессии профиля Hikkari, раз в 10 минут и при остановке ядра, строка
+  `hikkari period s=<секунды> <json>`: `quic.datagram`, `quic.voice` (rtt, потери на 1000 `loss_pm`), `dup` (ответы вниз:
+  какая копия пришла первой, `only_stream` спасла копия по Naive), `calls` (звонки детектора, `short` и `one_sided`
+  вероятно ложные). Hub складывает их в `hikkari_obs` рядом со сводкой релея, ряды отдаёт инструмент `hikkari`.
 - `gap`: клиент потерял строки. Не делай выводов о тишине в этом промежутке.
 
 IP, ключи, UUID и токены вычищены на клиенте и заменены на `[REDACTED_*]`. Домены и процессы сохранены.

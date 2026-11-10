@@ -191,9 +191,23 @@ func (l *Logger) PipeLines(tag string, r io.ReadCloser) {
 		flush()
 		lastCore = core
 		count = 1
-		l.Logf("[%s] %s", tag, ln)
+		l.Logf("[%s] %s", lineTag(tag, ln), ln)
 	}
 	flush()
+}
+
+// hikkariPeriod starts what the core's Hikkari outbound writes about its
+// sessions (Hikkari v1.04, sing-box-lx patch "hikkari 0013"): counts and
+// distributions only, no address, destination or key.
+const hikkariPeriod = "hikkari period s="
+
+// lineTag files the core's Hikkari periods under their own source, so the
+// hub and the agent find them as `--src hikkari`.
+func lineTag(tag, line string) string {
+	if strings.Contains(line, hikkariPeriod) {
+		return "hikkari"
+	}
+	return tag
 }
 
 // Close releases the underlying file. Safe to call multiple times.
