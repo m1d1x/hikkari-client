@@ -64,11 +64,30 @@ func (c *Core) watchRoute(ctx context.Context) {
 			c.health.RecheckEgress()
 			c.uptime.Nudge()
 		}
+		c.watchUDPRoute()
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// watchUDPRoute logs the moves of auto mode's UDP group, which carries calls
+// apart from the TCP group; only the log follows it.
+func (c *Core) watchUDPRoute() {
+	current := ""
+	if observer, ok := c.backend.(engine.UDPRouteObserver); ok && c.backend.IsRunning() {
+		if auto, err := c.profiles.AutoMode(); err == nil && auto {
+			current = observer.RoutedUDPProfile()
+		}
+	}
+	c.routedMu.Lock()
+	previous := c.routedUDP
+	c.routedUDP = current
+	c.routedMu.Unlock()
+	if current != previous && previous != "" && current != "" {
+		c.logger.Logf("[route] auto-udp moved %q -> %q", previous, current)
 	}
 }
 

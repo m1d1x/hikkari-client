@@ -272,6 +272,11 @@ const (
 	// sing-box auto-picks the lowest-latency live profile every interval.
 	AutoTag = "auto"
 
+	// AutoUDPTag is auto mode's group for UDP: only the profiles that carry
+	// UDP as datagrams, chosen by a UDP probe (see autoUDPOutbound). Present
+	// only while auto mode is on and at least one such profile is in it.
+	AutoUDPTag = "auto-udp"
+
 	kindEndpoint = "endpoint"
 	kindOutbound = "outbound"
 )
@@ -291,6 +296,7 @@ var systemOutboundTags = map[string]bool{
 var managedGroupTags = map[string]bool{
 	SelectorTag: true,
 	AutoTag:     true,
+	AutoUDPTag:  true,
 }
 
 // RebuildActive loads every known profile into config.json under a single
@@ -385,6 +391,9 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 				return fmt.Errorf("нет доступных серверов подписки hikkari для авто")
 			}
 			preserved = append(preserved, autoOutbound(autoTags))
+			if udpTags := datagramTags(specs); len(udpTags) > 0 {
+				preserved = append(preserved, autoUDPOutbound(udpTags))
+			}
 		}
 	}
 	cfg["outbounds"] = preserved
@@ -645,6 +654,63 @@ func autoOutbound(profileTags []interface{}) map[string]interface{} {
 		"interval":     autoProbeInterval,
 		"idle_timeout": "30m",
 	}
+}
+
+// autoUDPProbe is what auto mode's UDP group probes its members with: a STUN
+// binding request through each one (core patch 0012). Cloudflare's STUN by
+// address: a member carries the probe's datagram as it is, and a name would
+// have to be resolved through the tunnel, where the core answers with a fake
+// address. The client's own voice probe (diagnostics/voice.go) asks the same
+// server.
+const autoUDPProbe = "stun://162.159.207.0:3478"
+
+// autoUDPOutbound builds auto mode's group for UDP. One group for TCP and UDP
+// chose by an HTTP probe over TCP and held profiles that carry UDP inside TCP
+// (VLESS, Naive); a call on such a profile waits for every lost segment.
+// tamila-001, 09.11: Discord's UDP followed the group onto vless-xhttp, 135
+// silences over 60 ms in 30 s against none directly. This group holds only
+// profiles with datagrams of their own and picks by a UDP probe. Failover as
+// the TCP group: a live call stays on its profile until the profile stops
+// answering, and an established flow is never moved.
+func autoUDPOutbound(profileTags []interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"tag":          AutoUDPTag,
+		"type":         "urltest",
+		"mode":         "failover",
+		"outbounds":    profileTags,
+		"url":          autoUDPProbe,
+		"interval":     autoProbeInterval,
+		"idle_timeout": "30m",
+	}
+}
+
+// datagramTags are the auto profiles that carry UDP as datagrams: WireGuard
+// and AmneziaWG endpoints, Hysteria2, TUIC, Shadowsocks, and Hikkari unless
+// its datagram channel is off (then UDP rides its Naive channel). VLESS,
+// VMess, Trojan, Naive and the rest carry UDP inside a stream.
+func datagramTags(specs []ProfileSpec) []interface{} {
+	var tags []interface{}
+	for _, p := range specs {
+		if !p.ExcludeFromAuto && carriesDatagrams(p) {
+			tags = append(tags, p.Tag)
+		}
+	}
+	return tags
+}
+
+func carriesDatagrams(p ProfileSpec) bool {
+	if p.Kind == kindEndpoint {
+		return true
+	}
+	switch p.Config["type"] {
+	case "hysteria2", "hysteria", "tuic", "shadowsocks":
+		return true
+	case "hikkari":
+		udp, _ := p.Config["udp"].(map[string]interface{})
+		disabled, _ := udp["disabled"].(bool)
+		return !disabled
+	}
+	return false
 }
 
 // NeedsSelectorMigration reports whether config.json is in the pre-selector

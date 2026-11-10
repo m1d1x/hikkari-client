@@ -145,12 +145,63 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 
 	route["rules"] = out
 	route["final"] = finalTag
+	routeUDPByDatagrams(cfg, route, head)
 
 	var bypass RouteList
 	if ruleOutbound == "direct" {
 		bypass = list
 	}
 	applyBypassDNS(cfg, bypass)
+}
+
+// routeUDPByDatagrams sends to auto mode's UDP group the UDP that would go to
+// the auto group: every rule ending at the auto group gets a UDP twin ahead of
+// it, and UDP left over at the end goes there instead of route.final. Rules
+// sending traffic direct or refusing it stay ahead and keep UDP as before. Run
+// after the rules are compiled; the twins are dropped with them on the next
+// compile.
+func routeUDPByDatagrams(cfg, route map[string]interface{}, head string) {
+	if head != AutoTag || !hasOutbound(cfg, AutoUDPTag) {
+		return
+	}
+	rules, _ := route["rules"].([]interface{})
+	out := make([]interface{}, 0, len(rules)+2)
+	for _, r := range rules {
+		m, ok := r.(map[string]interface{})
+		if !ok || m["outbound"] != AutoTag {
+			out = append(out, r)
+			continue
+		}
+		switch m["network"] {
+		case nil:
+			twin := make(map[string]interface{}, len(m)+1)
+			for k, v := range m {
+				twin[k] = v
+			}
+			twin["network"] = "udp"
+			twin["outbound"] = AutoUDPTag
+			out = append(out, twin, m)
+		case "udp":
+			m["outbound"] = AutoUDPTag
+			out = append(out, m)
+		default:
+			out = append(out, m)
+		}
+	}
+	if route["final"] == AutoTag {
+		out = append(out, map[string]interface{}{"network": "udp", "outbound": AutoUDPTag})
+	}
+	route["rules"] = out
+}
+
+func hasOutbound(cfg map[string]interface{}, tag string) bool {
+	obs, _ := cfg["outbounds"].([]interface{})
+	for _, ob := range obs {
+		if m, _ := ob.(map[string]interface{}); m != nil && m["tag"] == tag {
+			return true
+		}
+	}
+	return false
 }
 
 // ruZoneRules send the Russian internet direct (core/ruzone): our exits refuse

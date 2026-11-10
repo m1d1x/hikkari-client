@@ -164,6 +164,13 @@ type RouteObserver interface {
 	LastDelay(profileID string) (ok bool, rttMs int, known bool)
 }
 
+// UDPRouteObserver is optional: the profile auto mode sends new UDP flows
+// through, when the engine keeps a group of its own for UDP. "" when there is
+// none or the engine is not answering.
+type UDPRouteObserver interface {
+	RoutedUDPProfile() string
+}
+
 // LegacyProfileSource is optional and used once when upgrading an install
 // whose profiles existed only inside an engine-native configuration file.
 type LegacyProfileSource interface {

@@ -297,6 +297,16 @@ func (b *Backend) RoutedProfile() string {
 	return strings.TrimPrefix(group.Now, "p-")
 }
 
+// RoutedUDPProfile asks auto mode's UDP group which profile it holds; "" when
+// the config has no such group (no profile with datagrams of its own).
+func (b *Backend) RoutedUDPProfile() string {
+	group, err := b.control.Proxy(configfile.AutoUDPTag)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimPrefix(group.Now, "p-")
+}
+
 // ReceivedBytes keeps only the connections whose chain passes through the
 // profile: the core's totals also count everything routed direct, which says
 // nothing about the tunnel.

@@ -94,6 +94,8 @@ type Core struct {
 	// routed is the profile traffic goes through, kept by watchRoute.
 	routedMu sync.RWMutex
 	routed   string
+	// routedUDP is the profile auto mode's UDP group holds, kept by watchRoute.
+	routedUDP string
 
 	customServicesMu   sync.RWMutex
 	customServicesPath string
