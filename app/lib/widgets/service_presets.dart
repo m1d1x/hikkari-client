@@ -1,6 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
 import 'package:provider/provider.dart';
 
+import '../core/models.dart';
 import '../core/routing_presets.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
@@ -158,6 +161,57 @@ const _serviceAliases = <String, List<String>>{
   'yandex-market': ['яндекс маркет', 'маркет'],
 };
 
+/// What a catalog's reveal needs from the card it sits in.
+///
+/// [spare] is how far the card can still rise before the page scrolls: the
+/// reveal spends that on growing in layout, so the card moves up with the
+/// rows. [tail] is laid-out height at the bottom of the catalog the reveal
+/// has not shown yet; the card's surface clips to it, so a catalog that opens
+/// on a scrolled page does not show its empty surface first. [edge] is how
+/// far past the spare the card's bottom must travel to leave the window,
+/// inset and rounded corners included.
+class CatalogRevealScope extends InheritedWidget {
+  final ValueNotifier<double> tail;
+
+  /// How much of [edge] the reveal has taken at this frame. The card's
+  /// bottom inset gives up that much, so the bottom edge leaves the window
+  /// over the same motion as the card rises, not after it.
+  final ValueNotifier<double> taken;
+  final double Function() spare;
+  final double edge;
+  const CatalogRevealScope({
+    super.key,
+    required this.tail,
+    required this.taken,
+    required this.spare,
+    this.edge = 0,
+    required super.child,
+  });
+
+  static CatalogRevealScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<CatalogRevealScope>();
+
+  @override
+  bool updateShouldNotify(CatalogRevealScope old) => old.tail != tail;
+}
+
+/// Clips a surface by [CatalogRevealScope.tail]; repaints without a rebuild.
+class CatalogTailClipper extends CustomClipper<Rect> {
+  final ValueListenable<double> tail;
+  CatalogTailClipper(this.tail) : super(reclip: tail);
+
+  @override
+  Rect getClip(Size size) => Rect.fromLTWH(
+    0,
+    0,
+    size.width,
+    (size.height - tail.value).clamp(0.0, size.height),
+  );
+
+  @override
+  bool shouldReclip(CatalogTailClipper old) => old.tail != tail;
+}
+
 /// Ready-made groups share the rules list, but keep their own engine choices.
 class ServicePresets extends StatefulWidget {
   final String category;
@@ -167,14 +221,189 @@ class ServicePresets extends StatefulWidget {
   State<ServicePresets> createState() => _ServicePresetsState();
 }
 
-class _ServicePresetsState extends State<ServicePresets> {
+class _ServicePresetsState extends State<ServicePresets>
+    with SingleTickerProviderStateMixin {
   final _searchCtl = TextEditingController();
   String _query = '';
+  // The catalog hides behind one minimalist row until tapped; the expansion
+  // state belongs to this per-tab instance, so each category tab remembers
+  // its own.
+  late final AnimationController _expand = AnimationController(vsync: this)
+    ..addListener(_onTick);
+  // Expansion and the reveal's phase are notifiers, not state: a tap, a
+  // header hover or the motion settling must not rebuild a hundred rows.
+  final _open = ValueNotifier<bool>(false);
+  bool get _expanded => _open.value;
+  final _phase = ValueNotifier<int>(0);
+  // Natural height of the hidden body. It stays laid out under the clip, so
+  // the key reads its full size even while collapsed — the same way the
+  // routing card measures its blocks.
+  final GlobalKey _bodyKey = GlobalKey();
+  // The reveal animates only the part of the body between its top and the
+  // window bottom; the rest is below the fold either way.
+  double _share = 1;
+  bool _settled = true;
+  // Opening a body taller than the room on screen: it takes its full height
+  // in layout at the tap and only the paint clip travels. The scroll extent
+  // is final from the first frame, so the scrollbar settles with the click
+  // instead of jumping when the motion ends, and the viewport stays put.
+  bool _paintOnly = false;
 
   @override
   void dispose() {
+    _expand.dispose();
+    _open.dispose();
+    _phase.dispose();
     _searchCtl.dispose();
     super.dispose();
+  }
+
+  double get _windowBottom =>
+      MediaQuery.sizeOf(context).height - MediaQuery.of(context).padding.bottom;
+
+  void _toggleExpanded() {
+    _open.value = !_open.value;
+    // Mid-flight the current plan stays, so reversing keeps the clip exactly
+    // where it is.
+    if (!_expand.isAnimating) _plan();
+    _animateTo(_expanded ? 1 : 0);
+  }
+
+  // Both directions travel only pixels the user can see; a catalog of a
+  // hundred rows is mostly below the fold, and spending the spring on
+  // invisible pixels leaves the visible rows to snap at one end of the motion.
+  void _plan() {
+    _settled = false;
+    _paintOnly = false;
+    _share = 1;
+    _edgeTaken = 0;
+    _phase.value++;
+    final natural = _bodyKey.currentContext?.size?.height ?? 0;
+    if (natural <= 0) return;
+    final edge = _scope?.edge ?? 0;
+    final scroll = Scrollable.maybeOf(context)?.position;
+    final atTop =
+        scroll != null && scroll.hasContentDimensions && scroll.pixels < .5;
+    // How far the card rises (opening) or settles back (closing) before the
+    // page stops scrolling: free height above it while closed.
+    double? spare;
+    if (_expanded) {
+      spare = _scope?.spare() ?? double.infinity;
+      if (spare <= 0) spare = null;
+    } else if (atTop && _scope != null) {
+      // Open, the page overflows by what the body adds past that free
+      // height; closed, the body is gone.
+      spare = scroll.maxScrollExtent > 0
+          ? (natural - scroll.maxScrollExtent).clamp(0.0, natural)
+          : double.infinity;
+    }
+    if (spare != null) {
+      // The card's top moves by the spare and its bottom edge by the edge,
+      // both in proportion over one motion: rows grow under the rising
+      // header while the bottom edge slides off the window. Closing starts
+      // from the same picture: the body cut to that travel and the edge
+      // hanging past the window is exactly what an open card shows there.
+      final travel = (spare + edge).clamp(0.0, natural);
+      _share = travel / natural;
+      _edgeTaken = (travel - spare).clamp(0.0, edge);
+    } else if (_expanded) {
+      // The page already scrolls and stays where it is: the body takes its
+      // full height at the tap and the clip sweeps down the visible part.
+      _share = _room(natural) / natural;
+      _paintOnly = _share < 1;
+    } else {
+      // A scrolled page: cut what is below the fold (invisible, and the
+      // offset stays in range), then shrink the rest.
+      _share = _room(natural) / natural;
+    }
+    _publishTail();
+  }
+
+  // Part of the card's bottom edge this motion carries past the window.
+  double _edgeTaken = 0;
+
+  // Pixels of the body between its top and the window bottom.
+  double _room(double natural) {
+    final body = _bodyKey.currentContext?.findRenderObject() as RenderBox?;
+    if (body == null || !body.hasSize) return natural;
+    final top = body.localToGlobal(Offset.zero).dy;
+    return (_windowBottom - top).clamp(0.0, natural);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _scope = CatalogRevealScope.maybeOf(context);
+  }
+
+  CatalogRevealScope? _scope;
+
+  void _onTick() {
+    _publishTail();
+    _keepScrollInBounds();
+  }
+
+  // The surface under the catalog hides what the paint clip hides.
+  void _publishTail() {
+    final scope = _scope;
+    if (scope == null) return;
+    scope.taken.value = _settled ? 0 : _edgeTaken * _expand.value;
+    if (_settled || !_paintOnly) {
+      scope.tail.value = 0;
+      return;
+    }
+    final natural = _bodyKey.currentContext?.size?.height ?? 0;
+    scope.tail.value = natural * (1 - _expand.value * _share);
+  }
+
+  // The viewport never follows the reveal. Collapsing only keeps the offset
+  // within the shrinking content once the page gets shorter than the window.
+  void _keepScrollInBounds() {
+    if (!_expand.isAnimating || _expanded) return;
+    final scroll = Scrollable.maybeOf(context)?.position;
+    if (scroll == null || !scroll.hasContentDimensions) return;
+    if (scroll.pixels > scroll.maxScrollExtent + .01) {
+      scroll.jumpTo(scroll.maxScrollExtent);
+    }
+  }
+
+  // The same motion as the routing card's reveal: a critically damped spring
+  // over the on-screen pixel travel that keeps its velocity when a tap
+  // reverses it mid-flight.
+  void _animateTo(double target) {
+    final natural = _bodyKey.currentContext?.size?.height ?? 0;
+    final distance = natural * _share;
+    final left = (target - _expand.value).abs() * distance;
+    if (distance <= 0 || left < .5) {
+      _expand.value = target;
+      _settled = true;
+      _paintOnly = false;
+      _phase.value++;
+      _publishTail();
+      return;
+    }
+    final pixel = 1 / distance;
+    _settled = false;
+    _expand
+        .animateWith(
+          SpringSimulation(
+            AppMotion.travelSpring(left),
+            _expand.value,
+            target,
+            _expand.velocity,
+            tolerance: Tolerance(distance: pixel / 2, velocity: pixel * 40),
+          ),
+        )
+        .then((_) {
+          // The spring stops within tolerance; the clip and the Offstage need
+          // the exact end value, and a settled body takes its full height.
+          if (!mounted) return;
+          _expand.value = target;
+          _settled = true;
+          _paintOnly = false;
+          _phase.value++;
+          _publishTail();
+        });
   }
 
   bool _matchesQuery(ServicePreset s, String platform, String q) {
@@ -198,53 +427,63 @@ class _ServicePresetsState extends State<ServicePresets> {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
+    // Only what the catalog shows: AppState also carries status that
+    // changes every second, and each rebuild walks every row.
+    // The core hands back a fresh catalog object every second; compare
+    // what it shows.
+    context.select<AppState, (Object?, String?, bool, RoutingMode)>(
+      (s) => (s.presets?.view, s.presetError, s.presetsBusy, s.routing.mode),
+    );
+    final state = context.read<AppState>();
     final catalog = state.presets;
     final t = context.tokens;
-    if (catalog == null) {
-      return Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                state.presetError == null
-                    ? 'загрузка готовых списков…'
-                    : 'не удалось загрузить готовые списки',
-                style: TextStyle(color: t.textMuted, fontSize: 11),
-              ),
-            ),
-            if (state.presetError != null)
-              IconButton(
-                onPressed: state.refreshPresetState,
-                tooltip: 'повторить',
-                icon: const Icon(Icons.refresh, size: 16),
-              ),
-          ],
-        ),
-      );
-    }
-    final q = _query.trim().toLowerCase();
-    final allCategoryServices = catalog.services
-        .where((s) => _rules(s, catalog.platform, widget.category).isNotEmpty)
-        .toList();
-    final services = allCategoryServices
-        .where((s) => _matchesQuery(s, catalog.platform, q))
-        .toList();
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'преднастроенные',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: t.textSecondary,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
+          // One minimalist row stands in for the whole catalog until
+          // tapped; the search and the groups live in the expandable body.
+          _PresetsHeader(expanded: _open, onTap: _toggleExpanded),
+          _body(t, state, catalog),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(NekkoTokens t, AppState state, RoutingPresets? catalog) {
+    final Widget content;
+    if (catalog == null) {
+      content = Row(
+        children: [
+          Expanded(
+            child: Text(
+              state.presetError == null
+                  ? 'загрузка готовых списков…'
+                  : 'не удалось загрузить готовые списки',
+              style: TextStyle(color: t.textMuted, fontSize: 11),
             ),
           ),
+          if (state.presetError != null)
+            IconButton(
+              onPressed: state.refreshPresetState,
+              tooltip: 'повторить',
+              icon: const Icon(Icons.refresh, size: 16),
+            ),
+        ],
+      );
+    } else {
+      final q = _query.trim().toLowerCase();
+      final allCategoryServices = catalog.services
+          .where((s) => _rules(s, catalog.platform, widget.category).isNotEmpty)
+          .toList();
+      final services = allCategoryServices
+          .where((s) => _matchesQuery(s, catalog.platform, q))
+          .toList();
+      content = Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
           const SizedBox(height: 10),
           Divider(height: 1, thickness: 1, color: t.border),
           const SizedBox(height: 10),
@@ -308,9 +547,132 @@ class _ServicePresetsState extends State<ServicePresets> {
               style: TextStyle(color: t.warn, fontSize: 10),
             ),
         ],
+      );
+    }
+    // Same reveal as the routing card's blocks: the clip travels while the
+    // content fades, and the whole body stays mounted until fully hidden.
+    return AnimatedBuilder(
+      animation: Listenable.merge([_expand, _phase]),
+      child: FadeTransition(
+        opacity: _expand,
+        child: RepaintBoundary(
+          child: KeyedSubtree(key: _bodyKey, child: content),
+        ),
+      ),
+      builder: (context, child) {
+        // In motion the clip travels the on-screen share only; settled, the
+        // body takes its full natural height (the fold's part appears in one
+        // step, invisible below the viewport edge).
+        final factor = _settled ? _expand.value : _expand.value * _share;
+        final Widget clipped = _paintOnly
+            ? ClipRect(clipper: _TopShare(factor), child: child)
+            : ClipRect(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: factor,
+                  child: child,
+                ),
+              );
+        return Offstage(
+          offstage: factor == 0,
+          // The clip edge sweeps past a resting cursor; without this each
+          // row flashes its hover action as it appears. The row under the
+          // cursor lights up once the motion settles.
+          child: IgnorePointer(ignoring: !_settled, child: clipped),
+        );
+      },
+    );
+  }
+}
+
+class _PresetsHeader extends StatefulWidget {
+  final ValueListenable<bool> expanded;
+  final VoidCallback onTap;
+  const _PresetsHeader({required this.expanded, required this.onTap});
+
+  @override
+  State<_PresetsHeader> createState() => _PresetsHeaderState();
+}
+
+class _PresetsHeaderState extends State<_PresetsHeader> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: ValueListenableBuilder<bool>(
+          valueListenable: widget.expanded,
+          builder: (context, expanded, _) => Semantics(
+            button: true,
+            expanded: expanded,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              child: Row(
+                children: [
+                  // Balances the chevron so the label stays centered.
+                  const SizedBox(width: 22),
+                  Expanded(
+                    child: TweenAnimationBuilder<Color?>(
+                      tween: ColorTween(
+                        end: _hover ? t.primary : t.textSecondary,
+                      ),
+                      duration: AppDurations.hover,
+                      curve: AppCurves.hover,
+                      builder: (_, color, _) => Text(
+                        'преднастроенные',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  AnimatedRotation(
+                    turns: expanded ? .5 : 0,
+                    duration: AppDurations.routingDetails,
+                    curve: AppCurves.fastInSlowOut,
+                    child: TweenAnimationBuilder<Color?>(
+                      tween: ColorTween(end: _hover ? t.primary : t.textFaint),
+                      duration: AppDurations.hover,
+                      curve: AppCurves.hover,
+                      builder: (_, color, _) => Icon(
+                        Icons.keyboard_arrow_down,
+                        size: 16,
+                        color: color,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
+}
+
+/// Paints the top [share] of a child laid out at its full height.
+class _TopShare extends CustomClipper<Rect> {
+  final double share;
+  const _TopShare(this.share);
+
+  @override
+  Rect getClip(Size size) =>
+      Rect.fromLTWH(0, 0, size.width, size.height * share);
+
+  @override
+  bool shouldReclip(_TopShare old) => old.share != share;
 }
 
 List<String> _rules(ServicePreset service, String platform, String category) =>

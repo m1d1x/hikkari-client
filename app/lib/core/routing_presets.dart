@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'models.dart';
 
 class ServicePreset {
@@ -57,6 +59,16 @@ class RoutingPresets {
   final List<ServicePreset> services;
   final Map<String, Map<String, bool>> choices;
 
+  /// What the catalog shows (services, platform, selections) as read from
+  /// the core. The core is polled every second and hands back a fresh object
+  /// each time; widgets that list every service compare this instead of the
+  /// object so an unchanged catalog does not rebuild. Empty when the object
+  /// was built by hand, which then compares by identity.
+  final String viewSignature;
+
+  /// Equal for two reads that show the same catalog.
+  Object get view => viewSignature.isEmpty ? this : viewSignature;
+
   const RoutingPresets({
     required this.syncEnabled,
     this.tester = false,
@@ -69,6 +81,7 @@ class RoutingPresets {
     required this.version,
     required this.services,
     required this.choices,
+    this.viewSignature = '',
   });
 
   factory RoutingPresets.fromJson(Map<String, dynamic> json) {
@@ -90,6 +103,11 @@ class RoutingPresets {
         (mode, entries) =>
             MapEntry(mode, Map<String, bool>.from(entries as Map)),
       ),
+      viewSignature: jsonEncode([
+        json['platform'],
+        json['catalog'],
+        json['choices'],
+      ]),
     );
   }
 

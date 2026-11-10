@@ -10,6 +10,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekkobox/core/nekkobox_core.dart';
 import 'package:nekkobox/core/app_discovery.dart';
+import 'package:nekkobox/core/models.dart';
+import 'package:nekkobox/core/routing_document.dart';
 import 'package:nekkobox/state/app_state.dart';
 import 'package:nekkobox/screens/home_screen.dart';
 import 'package:nekkobox/theme/app_theme.dart';
@@ -87,6 +89,7 @@ Future<AppState> showPresets(
   WidgetTester tester,
   PresetCore core, {
   bool settings = false,
+  bool expand = true,
 }) async {
   final state = AppState(core);
   await state.refreshPresetState();
@@ -106,6 +109,10 @@ Future<AppState> showPresets(
       ),
     ),
   );
+  if (!settings && expand) {
+    await tester.tap(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+  }
   return state;
 }
 
@@ -293,6 +300,10 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('маршрутизация'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('преднастроенные'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('Обновлять пресеты'), findsNothing);
@@ -501,12 +512,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(y(), closeTo(openY, .01));
 
-    // Collapsing a page scrolled into the catalog: content and offset shrink
-    // together until the card is back at the bottom.
-    scroll.jumpTo(80);
+    // Collapsing a scrolled page: content and offset shrink together until
+    // the card is back at the bottom. The depth stays well inside what the
+    // open layout justifies, so the first collapse frame glides instead of
+    // clamping the offset.
+    scroll.jumpTo(40);
     await tester.pump();
     final scrolledY = y();
-    expect(scrolledY, closeTo(openY - 80, .01));
+    expect(scrolledY, closeTo(openY - 40, .01));
     await tester.tap(header);
     await tester.pump();
     expect(y(), closeTo(scrolledY, .01));
@@ -538,8 +551,11 @@ void main() {
       double height() => tester.getSize(section).height;
       await tester.tap(find.text('маршрутизация'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
       final domainsHeight = height();
-      final top = tester.getTopLeft(section).dy;
       await tester.tap(find.text('ip'));
       await tester.pump();
       expect(
@@ -557,6 +573,11 @@ void main() {
         closeTo(midway, .01),
         reason: 'retarget from the current height',
       );
+      await tester.ensureVisible(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
+      final top = tester.getTopLeft(section).dy;
       var previous = height();
       for (var i = 0; i < 30; i++) {
         await tester.pump(const Duration(milliseconds: 16));
@@ -569,6 +590,10 @@ void main() {
       await tester.tap(find.text('ip'));
       await tester.pumpAndSettle();
       expect(height(), lessThan(domainsHeight));
+      await tester.ensureVisible(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
       expect(
         find.text('нет готовых правил для этой категории'),
         findsOneWidget,
@@ -576,6 +601,10 @@ void main() {
       await tester.tap(find.text('домены'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 64));
+      await tester.pumpAndSettle();
+      // Switching back remounts the domains catalog collapsed; the reopen
+      // check below uses this as the section's reference height.
+      final domainsCollapsedHeight = height();
       // Closing drops what is below the fold at once, down to the page's
       // bottom padding strip at the edge; the card itself stays put.
       double visibleHeight() => tester
@@ -595,8 +624,14 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.tap(find.text('маршрутизация'));
       await tester.pumpAndSettle();
-      expect(height(), closeTo(domainsHeight, .01));
+      expect(height(), closeTo(domainsCollapsedHeight, .01));
       // A nested group's own animation must not be chased by the tab viewport.
+      await tester.ensureVisible(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('steam'));
+      await tester.pumpAndSettle();
       await tester.tap(
         find.text('steam'),
         buttons: kSecondaryMouseButton,
@@ -720,17 +755,23 @@ void main() {
       final closed = height();
       await tester.tap(find.text('маршрутизация'));
       await tester.pumpAndSettle();
-      final opened = height();
       await tester.tap(find.text('приложения'));
       await tester.pumpAndSettle();
       expect(height(), greaterThan(closed));
       await tester.tap(find.text('домены'));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('преднастроенные'));
+      await tester.pumpAndSettle();
+      final opened = height();
       await tester.enterText(
         find.byType(EditableText).first,
         'draft.example.com',
       );
       expect(height(), closeTo(opened, .01));
+      await tester.ensureVisible(find.text('steam'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('steam'), buttons: kSecondaryMouseButton);
       await tester.pumpAndSettle();
       expect(height(), greaterThan(opened));
@@ -883,6 +924,8 @@ void main() {
         ),
       ),
     );
+    await tester.tap(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
     expect(find.text('2 файла'), findsOneWidget);
     await tester.tap(find.text('steam'), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
@@ -1207,6 +1250,143 @@ void main() {
       state.dispose();
     },
   );
+
+  testWidgets('preset catalog starts collapsed and opens by tap', (
+    tester,
+  ) async {
+    final core = PresetCore();
+    final state = await showPresets(tester, core, expand: false);
+    expect(find.text('преднастроенные'), findsOneWidget);
+    expect(find.text('steam'), findsNothing);
+    expect(find.byKey(const ValueKey('preset_search_field')), findsNothing);
+    await tester.tap(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    expect(find.text('steam'), findsOneWidget);
+    expect(find.byKey(const ValueKey('preset_search_field')), findsOneWidget);
+    await tester.tap(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    expect(find.text('steam'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
+  testWidgets('catalog reveal reverses in place and ignores passing hover', (
+    tester,
+  ) async {
+    final core = PresetCore();
+    final state = await showPresets(tester, core, expand: false);
+    final section = find.byType(ServicePresets);
+    final header = find.text('преднастроенные');
+    await tester.tap(header);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    final midOpen = tester.getSize(section).height;
+    // Rows sliding in must not take hover while the body is in motion.
+    expect(
+      find.ancestor(
+        of: find.text('steam'),
+        matching: find.byWidgetPredicate(
+          (w) => w is IgnorePointer && w.ignoring,
+        ),
+      ),
+      findsWidgets,
+    );
+    await tester.tap(header, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    // Reversing keeps the clip where it was instead of jumping.
+    expect(
+      (tester.getSize(section).height - midOpen).abs(),
+      lessThan(midOpen * .25),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('steam'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
+  testWidgets('polling an unchanged catalog does not rebuild its rows', (
+    tester,
+  ) async {
+    final core = PresetCore();
+    final state = await showPresets(tester, core);
+    // The core hands back a fresh object on every poll.
+    final widgetBefore = tester.widget(find.text('steam'));
+    await state.refreshPresetState();
+    await tester.pump();
+    expect(tester.widget(find.text('steam')), same(widgetBefore));
+    // A real change still reaches the rows.
+    core.selected = false;
+    await state.refreshPresetState();
+    await tester.pump();
+    expect(tester.widget(find.text('steam')), isNot(same(widgetBefore)));
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
+  testWidgets('manual list caption explains the active mode and tab', (
+    tester,
+  ) async {
+    final state = AppState(_ModeCore());
+    addTearDown(state.dispose);
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          theme: buildAppTheme(),
+          home: const Scaffold(
+            body: SingleChildScrollView(child: RouteSection()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('маршрутизация'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('добавьте сюда домены, которые должны идти мимо vpn'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('приложения'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('добавьте сюда приложения, которые должны идти мимо vpn'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('ip'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('добавьте сюда ip, которые должны идти мимо vpn'),
+      findsOneWidget,
+    );
+    await state.setRoutingMode(RoutingMode.proxy);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('добавьте сюда ip, которые должны идти только через vpn'),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+}
+
+class _ModeCore extends PresetCore {
+  var manual = const RoutingState.initial();
+  @override
+  Future<RoutingApplicationSnapshot> routingStatus() async =>
+      RoutingApplicationSnapshot(
+        sequence: 0,
+        revision: 0,
+        appliedRevision: 0,
+        status: RoutingApplicationPhase.idle,
+        error: '',
+        appliedAt: 0,
+        preview: false,
+        manual: manual,
+        effective: manual,
+      );
+  @override
+  Future<void> setRoutingMode(RoutingMode mode) async =>
+      manual = manual.copyWith(mode: mode);
 }
 
 class DiscoveryCore extends NekkoboxCore {

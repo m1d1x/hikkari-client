@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -137,6 +138,10 @@ class _RouteSectionState extends State<RouteSection>
   final _controlsSize = GlobalKey();
   final _manualSize = GlobalKey();
   final _presetsSize = GlobalKey();
+  final _presetsTail = ValueNotifier<double>(0);
+  // Part of the bottom inset, and past it, that the catalog's reveal has
+  // taken over; see [CatalogRevealScope.edge].
+  final _presetsEdge = ValueNotifier<double>(0);
   bool _open = false;
   bool _headerHover = false;
   bool _presetsHover = false;
@@ -144,13 +149,24 @@ class _RouteSectionState extends State<RouteSection>
   String _tab = 'domains';
   final _input = TextEditingController();
 
-  // One instance per tab: rebuilding this section (the reveal changes state
-  // as it starts and settles) must not rebuild every catalog row. The catalog
-  // watches [AppState] itself.
+  // One instance per tab: keys keep each category's element and state
+  // separate, so switching tabs mounts a fresh catalog instead of reusing
+  // the previous tab's expansion and search. Rebuilding this section (the
+  // reveal changes state as it starts and settles) must not rebuild every
+  // catalog row. The catalog watches [AppState] itself.
   static const _catalogs = {
-    'domains': ServicePresets(category: 'domains'),
-    'processes': ServicePresets(category: 'processes'),
-    'ips': ServicePresets(category: 'ips'),
+    'domains': ServicePresets(
+      key: ValueKey('routing_presets_domains'),
+      category: 'domains',
+    ),
+    'processes': ServicePresets(
+      key: ValueKey('routing_presets_processes'),
+      category: 'processes',
+    ),
+    'ips': ServicePresets(
+      key: ValueKey('routing_presets_ips'),
+      category: 'ips',
+    ),
   };
 
   // Keeps the closed card off the window edge; see [_RevealPlan.edge].
@@ -175,6 +191,8 @@ class _RouteSectionState extends State<RouteSection>
   @override
   void dispose() {
     _reveal.dispose();
+    _presetsTail.dispose();
+    _presetsEdge.dispose();
     _input.dispose();
     super.dispose();
   }
@@ -279,6 +297,23 @@ class _RouteSectionState extends State<RouteSection>
     }
   }
 
+  // Empty manual list: the caption says what the list is for, in the words
+  // of the active mode and the noun of the active tab, instead of a bare
+  // hint that reads as clutter.
+  String _manualCaption(AppState s) {
+    if (!s.routing.enabled) {
+      return 'маршрутизация выключена: весь трафик идёт через vpn';
+    }
+    final noun = switch (_tab) {
+      'domains' => 'домены',
+      'ips' => 'ip',
+      _ => 'приложения',
+    };
+    return s.routing.mode == RoutingMode.bypass
+        ? 'добавьте сюда $noun, которые должны идти мимо vpn'
+        : 'добавьте сюда $noun, которые должны идти только через vpn';
+  }
+
   Future<void> _add() async {
     final v = _input.text.trim();
     if (v.isEmpty) return;
@@ -338,15 +373,20 @@ class _RouteSectionState extends State<RouteSection>
     final reversedItems = items.reversed.toList();
 
     return AnimatedBuilder(
-      animation: _reveal,
+      animation: Listenable.merge([_reveal, _presetsEdge]),
       builder: (context, child) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          16,
-          8,
-          16,
-          _settled ? _bottomInset : _bottomInset - _plan.edge * _reveal.value,
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        // The inset goes negative while the catalog's reveal carries the
+        // card's bottom edge past the window: the card then hangs below
+        // the section by that much instead of making the page scroll.
+        child: _BottomInset(
+          inset:
+              (_settled
+                  ? _bottomInset
+                  : _bottomInset - _plan.edge * _reveal.value) -
+              _presetsEdge.value,
+          child: child,
         ),
-        child: child,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -368,14 +408,22 @@ class _RouteSectionState extends State<RouteSection>
               ],
             ),
           ),
-          _itemsBlock(t, reversedItems),
+          _itemsBlock(t, s, reversedItems),
           _expandingIsland(
             t,
             key: const ValueKey('route_presets_surface'),
             measurementKey: _presetsSize,
             gap: () => _plan.presetsGap,
             share: () => _plan.presets,
-            child: _tabHeight(_catalogs[_tab]!),
+            tail: _presetsTail,
+            child: CatalogRevealScope(
+              tail: _presetsTail,
+              taken: _presetsEdge,
+              spare: _presetsSpare,
+              // The bottom inset, then the rounded corners and the border.
+              edge: _bottomInset + t.radiusLg + 1,
+              child: _tabHeight(_catalogs[_tab]!),
+            ),
           ),
         ],
       ),
@@ -430,6 +478,7 @@ class _RouteSectionState extends State<RouteSection>
     required GlobalKey measurementKey,
     required double Function() gap,
     required double Function() share,
+    ValueNotifier<double>? tail,
     required Widget child,
   }) => AnimatedBuilder(
     animation: _reveal,
@@ -451,25 +500,37 @@ class _RouteSectionState extends State<RouteSection>
         ),
         child: Offstage(
           offstage: _shown(share()) == 0,
-          child: Container(
-            key: key,
-            decoration: BoxDecoration(
-              color: t.surface,
-              borderRadius: BorderRadius.circular(t.radiusLg),
-            ),
-            foregroundDecoration: BoxDecoration(
-              border: Border.all(
-                color: t.border.withValues(alpha: t.border.a * progress),
+          child: _clipTail(
+            tail,
+            Container(
+              key: key,
+              decoration: BoxDecoration(
+                color: t.surface,
+                borderRadius: BorderRadius.circular(t.radiusLg),
               ),
-              borderRadius: BorderRadius.circular(t.radiusLg),
+              foregroundDecoration: BoxDecoration(
+                border: Border.all(
+                  color: t.border.withValues(alpha: t.border.a * progress),
+                ),
+                borderRadius: BorderRadius.circular(t.radiusLg),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: child,
             ),
-            clipBehavior: Clip.antiAlias,
-            child: child,
           ),
         ),
       );
     },
   );
+
+  // Free height above the card: the page does not scroll until it is used.
+  double _presetsSpare() => widget.spareHeight?.call() ?? double.infinity;
+
+  // A catalog that opens taller than the window lays out at full height at
+  // the tap; the surface shows only what its reveal has reached.
+  Widget _clipTail(ValueNotifier<double>? tail, Widget child) => tail == null
+      ? child
+      : ClipRect(clipper: CatalogTailClipper(tail), child: child);
 
   // Header: title + chevron + master switch. Tap anywhere on the row
   // toggles collapse — except the action and switch, which absorb their taps.
@@ -636,7 +697,7 @@ class _RouteSectionState extends State<RouteSection>
           const SizedBox(width: 6),
           _PresetActionIcon(
             key: const ValueKey('reset_routing_button_pill'),
-            icon: Icons.restart_alt_rounded,
+            icon: Icons.refresh_rounded,
             tooltip: 'сбросить к стандартным',
             onTap: () => _resetRules(context),
           ),
@@ -691,7 +752,7 @@ class _RouteSectionState extends State<RouteSection>
     child: child,
   );
 
-  Widget _itemsBlock(NekkoTokens t, List<String> items) {
+  Widget _itemsBlock(NekkoTokens t, AppState s, List<String> items) {
     return _expandingIsland(
       t,
       key: const ValueKey('route_manual_surface'),
@@ -726,7 +787,7 @@ class _RouteSectionState extends State<RouteSection>
                   vertical: 15,
                 ),
                 child: Text(
-                  'добавьте домен, приложение или ip выше',
+                  _manualCaption(s),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: t.textFaint, fontSize: 11),
                 ),
@@ -1165,8 +1226,8 @@ class _PresetActionPillState extends State<_PresetActionPill> {
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: AppDurations.fast,
-          curve: AppCurves.fastInSlowOut,
+          duration: AppDurations.hover,
+          curve: AppCurves.hover,
           height: 34,
           decoration: BoxDecoration(
             color: _hovered ? t.surface2 : t.bg,
@@ -1180,15 +1241,15 @@ class _PresetActionPillState extends State<_PresetActionPill> {
             children: [
               TweenAnimationBuilder<Color?>(
                 tween: ColorTween(end: color),
-                duration: AppDurations.fast,
-                curve: AppCurves.fastInSlowOut,
+                duration: AppDurations.hover,
+                curve: AppCurves.hover,
                 builder: (_, c, __) => Icon(widget.icon, size: 14, color: c),
               ),
               const SizedBox(width: 7),
               TweenAnimationBuilder<Color?>(
                 tween: ColorTween(end: color),
-                duration: AppDurations.fast,
-                curve: AppCurves.fastInSlowOut,
+                duration: AppDurations.hover,
+                curve: AppCurves.hover,
                 builder: (_, c, __) => Text(
                   widget.label,
                   style: TextStyle(
@@ -1241,8 +1302,8 @@ class _PresetActionIconState extends State<_PresetActionIcon> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: AppDurations.fast,
-            curve: AppCurves.fastInSlowOut,
+            duration: AppDurations.hover,
+            curve: AppCurves.hover,
             width: 34,
             height: 34,
             decoration: BoxDecoration(
@@ -1255,14 +1316,76 @@ class _PresetActionIconState extends State<_PresetActionIcon> {
             child: Center(
               child: TweenAnimationBuilder<Color?>(
                 tween: ColorTween(end: color),
-                duration: AppDurations.fast,
-                curve: AppCurves.fastInSlowOut,
+                duration: AppDurations.hover,
+                curve: AppCurves.hover,
                 builder: (_, c, __) => Icon(widget.icon, size: 15, color: c),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Bottom space under the section that may be negative: the child keeps its
+/// full height and paints past the section's own bottom.
+class _BottomInset extends SingleChildRenderObjectWidget {
+  const _BottomInset({required this.inset, required super.child});
+
+  final double inset;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderBottomInset(inset);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderBottomInset render) {
+    render.inset = inset;
+  }
+}
+
+class _RenderBottomInset extends RenderProxyBox {
+  _RenderBottomInset(this._inset);
+
+  double _inset;
+  set inset(double value) {
+    if (value == _inset) return;
+    _inset = value;
+    markNeedsLayout();
+  }
+
+  double _extend(double height) => height + _inset > 0 ? height + _inset : 0;
+
+  @override
+  double computeMinIntrinsicHeight(double width) =>
+      _extend(super.computeMinIntrinsicHeight(width));
+
+  @override
+  double computeMaxIntrinsicHeight(double width) =>
+      _extend(super.computeMaxIntrinsicHeight(width));
+
+  @override
+  Size computeDryLayout(BoxConstraints constraints) {
+    final content = child?.getDryLayout(constraints.loosen()) ?? Size.zero;
+    return constraints.constrain(Size(content.width, _extend(content.height)));
+  }
+
+  @override
+  void performLayout() {
+    final content = child;
+    if (content == null) {
+      size = constraints.smallest;
+      return;
+    }
+    // The child sizes to its content whatever the section is stretched to;
+    // the section adds the inset below it.
+    content.layout(
+      constraints.copyWith(minHeight: 0, maxHeight: double.infinity),
+      parentUsesSize: true,
+    );
+    size = constraints.constrain(
+      Size(content.size.width, _extend(content.size.height)),
     );
   }
 }
