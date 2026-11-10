@@ -7,6 +7,7 @@ import (
 	"NekkoVPN/core/downtime"
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/netdoctor"
+	"NekkoVPN/core/rureach"
 )
 
 // downtimeMeter counts the minutes the tunnel is on and carries nothing
@@ -62,4 +63,35 @@ func (c *Core) directInternet(ctx context.Context) (ok, checked bool) {
 	}
 	timeout := int(netdoctor.DirectProbeTimeout / time.Millisecond)
 	return netdoctor.DirectInternet(func(url string) error { return prober.ProbeDirect(url, timeout) }), true
+}
+
+// ruReachProber measures a tester's own network to Russian sites
+// (core/rureach), next to the downtime minutes it explains.
+func (c *Core) ruReachProber() *rureach.Prober {
+	presetManager := c.presets
+	return rureach.New(rureach.Sources{
+		Enabled: func() bool { return presetManager.Snapshot().Tester },
+		Fetch:   c.fetchDirectTimed,
+		Logf:    func(format string, args ...any) { c.logger.Logf(format, args...) },
+	})
+}
+
+// fetchDirectTimed asks url over the direct path and times the answer:
+// through the core while it runs, straight from the machine while it does not.
+func (c *Core) fetchDirectTimed(ctx context.Context, url string) (int, bool, error) {
+	if ctx.Err() != nil {
+		return 0, false, ctx.Err()
+	}
+	if !c.backend.IsRunning() {
+		start := time.Now()
+		err := netdoctor.FetchDirect(url)
+		return int(time.Since(start) / time.Millisecond), true, err
+	}
+	timer, ok := c.backend.(engine.DirectTimer)
+	prober, can := c.backend.(engine.DirectProber)
+	if !ok || !can || !prober.CanProbeDirect() {
+		return 0, false, nil
+	}
+	ms, err := timer.DelayDirect(url, int(rureach.Timeout/time.Millisecond))
+	return ms, true, err
 }

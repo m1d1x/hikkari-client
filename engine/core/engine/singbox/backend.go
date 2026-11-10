@@ -234,6 +234,11 @@ func (b *Backend) ProbeDirect(url string, timeoutMs int) error {
 	return err
 }
 
+// DelayDirect implements engine.DirectTimer.
+func (b *Backend) DelayDirect(url string, timeoutMs int) (int, error) {
+	return b.control.Delay("direct", url, timeoutMs)
+}
+
 // SetTesterGate implements engine.TesterGated.
 func (b *Backend) SetTesterGate(tester func() bool) {
 	b.tester = tester

@@ -298,6 +298,8 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		if meter := c.downtimeMeter(); meter != nil {
 			run(func() { meter.Run(ctx) })
 		}
+		ruReach := c.ruReachProber()
+		run(func() { ruReach.Run(ctx) })
 		if core, ok := backend.(engine.CoreSupervision); ok {
 			run(func() { c.superviseCore(ctx, core) })
 		}

@@ -92,6 +92,12 @@ type DirectProber interface {
 	ProbeDirect(url string, timeoutMs int) error
 }
 
+// DirectTimer is optional: a DirectProber that also says how long the answer
+// took, in milliseconds.
+type DirectTimer interface {
+	DelayDirect(url string, timeoutMs int) (int, error)
+}
+
 // CoreState is what the owner of a core separate from the GUI knows about it.
 type CoreState struct {
 	// Supervised: the owner reports the rest. An older one, kept for a moment
