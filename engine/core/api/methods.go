@@ -207,9 +207,14 @@ func (c *Core) stopForRestart(reason string) (resultErr error) {
 	finish := c.traceCoreTransition(reason+"/stop", "")
 	defer func() { finish(resultErr) }()
 	if core, ok := c.backend.(engine.CoreSupervision); ok {
-		return core.StopForRestart()
+		resultErr = core.StopForRestart()
+	} else {
+		resultErr = c.backend.Stop()
 	}
-	return c.backend.Stop()
+	if resultErr == nil {
+		c.health.MarkRestarting()
+	}
+	return resultErr
 }
 func (c *Core) IsRunning() bool { return c.backend.IsRunning() }
 

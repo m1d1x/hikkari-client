@@ -56,8 +56,8 @@ func TestApplyRouting_Disabled_ClearsOurRules(t *testing.T) {
 	state := RoutingState{Enabled: false, Mode: ModeBypass}
 	ApplyRouting(cfg, state, SelectorTag)
 
-	if got, want := ruleCount(cfg), 3; got != want {
-		t.Fatalf("rules: got %d, want %d (prelude + icmp + Russian zone)", got, want)
+	if got, want := ruleCount(cfg), 4; got != want {
+		t.Fatalf("rules: got %d, want %d (prelude + icmp + egress probe + Russian zone)", got, want)
 	}
 	if finalTag(cfg) != SelectorTag {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), SelectorTag)
@@ -81,11 +81,11 @@ func TestApplyRouting_BypassMode_EmitsDirectRules(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), SelectorTag)
 	}
 	rules := rulesOf(cfg)
-	// prelude + icmp + 3 of ours + 2 for Secure DNS + Russian zone
-	if len(rules) != 8 {
-		t.Fatalf("rules: got %d, want 8", len(rules))
+	// prelude + icmp + egress probe + 3 of ours + 2 for Secure DNS + Russian zone
+	if len(rules) != 9 {
+		t.Fatalf("rules: got %d, want 9", len(rules))
 	}
-	for _, r := range rules[2:] {
+	for _, r := range rules[3:] {
 		if _, secureDNS := r["port"]; secureDNS {
 			continue
 		}
@@ -110,10 +110,10 @@ func TestApplyRouting_ProxyMode_PointsAtHeadAndFinalDirect(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), "direct")
 	}
 	rules := rulesOf(cfg)
-	if len(rules) != 6 { // prelude + icmp + 1 ours + Russian zone + 2 for Secure DNS
-		t.Fatalf("rules: got %d, want 6", len(rules))
+	if len(rules) != 7 { // prelude + icmp + egress probe + 1 ours + Russian zone + 2 for Secure DNS
+		t.Fatalf("rules: got %d, want 7", len(rules))
 	}
-	last := rules[2]
+	last := rules[3]
 	if ob, _ := last["outbound"].(string); ob != SelectorTag {
 		t.Fatalf("rule outbound: got %q, want %q", ob, SelectorTag)
 	}
@@ -500,4 +500,43 @@ func TestRealIPv6RulesRunFirst(t *testing.T) {
 	}, route["rules"].([]interface{})...)
 	route["rules"] = healRealIPv6Rules(route["rules"].([]interface{}))
 	check(t, stale)
+}
+
+// The health probe asks the echo services where the tunnel exits. Where only
+// listed sites use the VPN they went direct, read the ISP address, and the
+// window reported "трафик уходит мимо туннеля" on a working tunnel. They go
+// through the tunnel in every mode, ahead of the user's own lists.
+func TestEgressProbeGoesThroughTheTunnelInEveryMode(t *testing.T) {
+	for _, state := range []RoutingState{
+		{Enabled: true, Mode: ModeProxy, Proxy: RouteList{Domains: []string{"youtube.com"}}},
+		{Enabled: true, Mode: ModeBypass, Bypass: RouteList{Domains: []string{"ipify.org"}, Processes: []string{"nekkobox"}}},
+		{Enabled: false, Mode: ModeProxy},
+	} {
+		cfg := freshCfg()
+		ApplyRouting(cfg, state, AutoTag)
+		rules := rulesOf(cfg)
+		probe := -1
+		for i, r := range rules {
+			if r["domain"] != nil {
+				probe = i
+				break
+			}
+		}
+		if probe < 0 {
+			t.Fatalf("%s: no egress probe rule in %v", state.Mode, rules)
+		}
+		r := rules[probe]
+		if r["outbound"] != AutoTag || r["network"] != "tcp" {
+			t.Fatalf("%s: probe rule %v", state.Mode, r)
+		}
+		hosts, _ := r["domain"].([]interface{})
+		if len(hosts) == 0 || hosts[0] != "api.ipify.org" {
+			t.Fatalf("%s: probe hosts %v", state.Mode, hosts)
+		}
+		for _, earlier := range rules[:probe] {
+			if earlier["outbound"] == "direct" && (earlier["domain_suffix"] != nil || earlier["process_name"] != nil) {
+				t.Fatalf("%s: a user rule %v runs before the probe", state.Mode, earlier)
+			}
+		}
+	}
 }

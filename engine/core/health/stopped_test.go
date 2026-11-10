@@ -1,6 +1,9 @@
 package health
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 type nopLogger struct{}
 
@@ -36,5 +39,43 @@ func TestAPassFromBeforeTheStopDoesNotUndoIt(t *testing.T) {
 	<-done
 	if got := c.Probe(); got.Status != "off" {
 		t.Fatalf("stale pass overwrote the stop: %+v", got)
+	}
+}
+
+// A change of rules restarts the core in a few seconds, faster than the pass
+// loop can see it down. Seen in the field: the probe right after such a restart
+// left through the ISP before the new TUN routes were in, and the window said
+// "трафик уходит мимо туннеля". The new core gets the start grace, and the
+// window keeps "ok" through it instead of flashing "connecting".
+func TestARestartGetsTheStartGraceWithoutLeavingOK(t *testing.T) {
+	c := New(t.TempDir()+"/ip", nopLogger{}, nil, func() bool { return true })
+	c.directIP = "203.0.113.9"
+	ok := Info{Running: true, TunnelOK: true, Status: "ok", IP: "198.51.100.7"}
+	c.cached = ok
+	c.lastRunning = true
+	c.upSince = time.Now().Add(-time.Hour)
+	c.lastEgressAt = time.Now()
+
+	c.MarkRestarting()
+	c.refresh()
+
+	if got := c.Probe(); got != ok {
+		t.Fatalf("restart within the grace: %+v", got)
+	}
+	if time.Since(c.upSince) > time.Second {
+		t.Fatalf("upSince not reset by the restart: %s ago", time.Since(c.upSince))
+	}
+	if c.restarting {
+		t.Fatal("the restart was seen through but is still pending")
+	}
+}
+
+// A first start is not a restart: it shows "connecting" through the grace.
+func TestAFirstStartStillShowsConnecting(t *testing.T) {
+	c := New(t.TempDir()+"/ip", nopLogger{}, nil, func() bool { return true })
+	c.cached = Info{Status: "off", Message: offMessage}
+	c.refresh()
+	if got := c.Probe(); got.Status != "connecting" {
+		t.Fatalf("first start: %+v", got)
 	}
 }

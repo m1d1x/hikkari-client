@@ -55,6 +55,14 @@ func TestAdaptersImplementTheSameRoutingIntent(t *testing.T) {
 					if suffixes, _ := rule["domain_suffix"].([]interface{}); len(suffixes) == len(ruzone.Domains()) && rule["ip_cidr"] != nil {
 						continue
 					}
+					// The health probe's echo services go through the tunnel in
+					// every mode: they measure its exit.
+					if rule["domain"] != nil && rule["network"] == "tcp" {
+						if rule["outbound"] != "vpn" {
+							t.Fatal(rule)
+						}
+						continue
+					}
 					if rule["outbound"] != string(policy.Target) {
 						t.Fatal(rule)
 					}

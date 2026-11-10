@@ -2,6 +2,7 @@ package configfile
 
 import (
 	"NekkoVPN/core/autotunnel"
+	"NekkoVPN/core/health"
 	"NekkoVPN/core/routing"
 	"NekkoVPN/core/ruzone"
 	"errors"
@@ -95,7 +96,9 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 	}
 	list := policy.Rules
 
-	var userRules []interface{}
+	// The egress probe first, ahead of every list: it measures the tunnel's
+	// exit, so through the tunnel is the only place it can ask from.
+	userRules := egressProbeRules(head)
 	if state.Enabled && ruleOutbound != "" {
 		appendRule := func(key string, vals []string) {
 			if len(vals) == 0 {
@@ -252,6 +255,25 @@ func secureDNSRules(head string) []interface{} {
 	tunnel := match()
 	tunnel["outbound"] = head
 	return []interface{}{reject, tunnel}
+}
+
+// egressProbeRules send the health probe's echo services (health.EchoHosts)
+// through the tunnel in every mode. Where unlisted sites go direct, the probe
+// would otherwise read the ISP address and report a leak on a working tunnel.
+// A person opening one of these sites sees the VPN's address in any mode, which
+// is what such a site is opened for.
+func egressProbeRules(head string) []interface{} {
+	hosts := health.EchoHosts()
+	if head == "" || len(hosts) == 0 {
+		return nil
+	}
+	// TCP only: the probe is HTTPS, and a UDP-less rule gets no twin to auto
+	// mode's UDP group (routeUDPByDatagrams).
+	return []interface{}{map[string]interface{}{
+		"domain":   toAnySlice(hosts),
+		"network":  "tcp",
+		"outbound": head,
+	}}
 }
 
 // AutoTunnelTag is the rule set tag of the hosts that stay silent on the

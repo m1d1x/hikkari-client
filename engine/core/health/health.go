@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -116,6 +117,12 @@ type Checker struct {
 	lastEgressAt time.Time // when the egress IP was last fetched
 	lastRunning  bool      // core liveness seen by the previous pass
 	upSince      time.Time // when the core was last seen coming up
+
+	// restarting: MarkRestarting stopped the core with a start to follow, and
+	// the checker has not seen it up again. restarted: the core came up from
+	// such a restart and is still within startupGrace.
+	restarting bool
+	restarted  bool
 }
 
 func New(directIPPath string, log Logger, vpnHosts VPNHostProvider, running ...func() bool) *Checker {
@@ -218,6 +225,22 @@ func (c *Checker) MarkStopped() {
 	c.cached = Info{Status: "off", Message: offMessage}
 }
 
+// MarkRestarting is called once the core is down with a start to follow: a
+// change of rules, profiles or network restarts it in a few seconds. The pass
+// loop polls every 2s and can miss a down that short, so without this the new
+// core is not seen as a fresh start: no startupGrace, and an egress probe sent
+// before its TUN routes are in leaves through the ISP and reads as a leak. A
+// pass already in flight measures the old core or the gap, so it is dropped.
+// The window keeps showing the tunnel as it was: a restart that comes back is
+// not a disconnect.
+func (c *Checker) MarkRestarting() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.generation++
+	c.lastRunning = false
+	c.restarting = true
+}
+
 func (c *Checker) refresh() {
 	c.mu.Lock()
 	generation := c.generation
@@ -268,8 +291,14 @@ func (c *Checker) probeOnce() Info {
 	c.lastRunning = hi.Running
 	if flipped && hi.Running {
 		c.upSince = time.Now()
+		c.restarted = c.restarting
+		c.restarting = false
 	}
 	upFor := time.Since(c.upSince)
+	restarted := c.restarted && hi.Running && upFor < startupGrace
+	if !restarted {
+		c.restarted = false
+	}
 	due := flipped || time.Since(c.lastEgressAt) >= EgressInterval
 	c.mu.Unlock()
 	if flipped {
@@ -278,6 +307,9 @@ func (c *Checker) probeOnce() Info {
 	// The engine adapter answers before the TUN routes are in place; an egress
 	// probe in that window leaves through the ISP and reads as a leak.
 	if hi.Running && upFor < startupGrace {
+		if restarted && cached.Status == "ok" {
+			return cached
+		}
 		hi.Status = "connecting"
 		hi.Message = "поднимаю туннель"
 		return hi
@@ -499,6 +531,23 @@ var echoServices = []string{
 	"https://ipv4.icanhazip.com",
 	"https://checkip.amazonaws.com",
 	"https://ifconfig.me/ip",
+}
+
+// EchoHosts are the host names of echoServices. The probe asks "what address
+// does the tunnel exit from", so the routing compiler sends these names through
+// the tunnel whatever the user's lists say: in the mode where only listed sites
+// use the VPN, an unlisted echo service went direct, answered with the ISP
+// address, and the window reported a leak on a tunnel that was fine.
+func EchoHosts() []string {
+	hosts := make([]string, 0, len(echoServices))
+	for _, svc := range echoServices {
+		u, err := url.Parse(svc)
+		if err != nil || u.Hostname() == "" {
+			continue
+		}
+		hosts = append(hosts, u.Hostname())
+	}
+	return hosts
 }
 
 // egressProbeBudget caps the whole probe, however many services it has to
