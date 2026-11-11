@@ -11,7 +11,7 @@ on:
 env:
   # The core: our fork m1d1x/sing-box-lx, branch hikkari = upstream lx tag
   # (v1.14.3-lx.21) plus our patches, one commit each; tagged <lx tag>-hk.N.
-  SING_BOX_LX_TAG: v1.14.3-lx.21-hk.8
+  SING_BOX_LX_TAG: v1.14.3-lx.21-hk.9
   # libcronet.dll for Naive, from the fork's release of that tag (copied
   # unchanged from Leadaxe/sing-box-lx v1.14.3-lx.21, see its notes).
   LIBCRONET_SHA256: 3217c6260fbca5f16072e0b79735742f40109a63bb0ff88fd6b96dd6b54a2928
