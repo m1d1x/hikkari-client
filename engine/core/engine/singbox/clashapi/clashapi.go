@@ -179,6 +179,25 @@ func (c *Client) Connections() ([]Connection, error) {
 	return out.Connections, err
 }
 
+// Stalls are the core's own timing of the tunnel's stalls since it started
+// (sing-box-lx hikkari 0015): per bound in ms, how many lasted at least that
+// and their whole length.
+type Stalls struct {
+	BoundsMS []int64 `json:"bounds_ms"`
+	Count    []int64 `json:"count"`
+	MS       []int64 `json:"ms"`
+}
+
+// Stalls reads the stall totals from the connections snapshot; nil when the
+// core does not time stalls.
+func (c *Client) Stalls() (*Stalls, error) {
+	var out struct {
+		Stalls *Stalls `json:"hikkariStalls"`
+	}
+	err := c.getJSON("/connections", &out)
+	return out.Stalls, err
+}
+
 func (c *Client) getJSON(path string, out interface{}) error {
 	return c.getJSONContext(context.Background(), path, out)
 }

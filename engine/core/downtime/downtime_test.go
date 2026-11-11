@@ -19,6 +19,8 @@ type rig struct {
 	internet bool
 	probes   int
 	lines    []string
+	// stalls are the core's totals; nil is a core that does not time them.
+	stalls *StallTotals
 }
 
 func newRig(t *testing.T) *rig {
@@ -31,6 +33,12 @@ func newRig(t *testing.T) *rig {
 		Internet: func(context.Context) (bool, bool) {
 			r.probes++
 			return r.internet, true
+		},
+		Stalls: func() (StallTotals, bool) {
+			if r.stalls == nil {
+				return StallTotals{}, false
+			}
+			return *r.stalls, true
 		},
 		Logf: func(format string, args ...any) { r.lines = append(r.lines, fmt.Sprintf(format, args...)) },
 	})
@@ -232,5 +240,66 @@ func TestFlushEveryTenMinutes(t *testing.T) {
 	}
 	if got := r.states(); got != strings.Repeat("i", 12) {
 		t.Fatalf("states %q", got)
+	}
+}
+
+func flowing(r *rig) func(int) { return flowingWith(r, nil) }
+
+// flowingWith is a flowing minute in which the core's totals become stalls
+// halfway through.
+func flowingWith(r *rig, stalls *StallTotals) func(int) {
+	return func(i int) {
+		r.conns = []Conn{{ID: "a", Up: uint64(1000 + i), Down: uint64(1000 + i)}}
+		if i == 6 && stalls != nil {
+			r.stalls = stalls
+		}
+	}
+}
+
+// stallLines closes the run and returns its stalls lines.
+func (r *rig) stallLines() []string {
+	r.states()
+	var out []string
+	for _, l := range r.lines {
+		if strings.HasPrefix(l, "[downtime] stalls ") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func TestEachMinuteCarriesTheStallsTheCoreTimedInIt(t *testing.T) {
+	r := newRig(t)
+	r.stalls = &StallTotals{BoundsMS: []int64{300, 1000, 3000}, Count: []int64{5, 1, 0}, MS: []int64{4000, 1500, 0}}
+	r.minute(flowing(r)) // the first minute of a core has no base
+	r.minute(flowing(r)) // nothing new
+	r.minute(flowingWith(r, &StallTotals{BoundsMS: []int64{300, 1000, 3000}, Count: []int64{7, 2, 0}, MS: []int64{5600, 2700, 0}}))
+	from := r.clock.Unix()/60*60 - 180
+	want := fmt.Sprintf("[downtime] stalls from=%d bounds=300,1000,3000 v=-;.;2:1600,1:1200,0:0", from)
+	if got := r.stallLines(); len(got) != 1 || got[0] != want {
+		t.Fatalf("want %q, got %q", want, got)
+	}
+}
+
+func TestAnOlderCoreWritesNoStallsLine(t *testing.T) {
+	r := newRig(t)
+	r.minute(flowing(r))
+	r.minute(flowing(r))
+	if got := r.stallLines(); len(got) != 0 {
+		t.Fatalf("a core without stalls wrote %q", got)
+	}
+}
+
+func TestARestartedCoreStartsItsStallsOver(t *testing.T) {
+	r := newRig(t)
+	r.stalls = &StallTotals{BoundsMS: []int64{300, 1000, 3000}, Count: []int64{9, 3, 1}, MS: []int64{9000, 6000, 3100}}
+	r.minute(flowing(r))
+	r.minute(flowing(r))
+	// The core came back with its totals from zero: not a minute of minus nine.
+	r.minute(flowingWith(r, &StallTotals{BoundsMS: []int64{300, 1000, 3000}, Count: []int64{1, 0, 0}, MS: []int64{400, 0, 0}}))
+	r.minute(flowingWith(r, &StallTotals{BoundsMS: []int64{300, 1000, 3000}, Count: []int64{2, 0, 0}, MS: []int64{750, 0, 0}}))
+	got := r.stallLines()
+	if len(got) != 1 || !strings.HasSuffix(got[0], " v=-;.;-;1:350,0:0,0:0") {
+		t.Fatalf("got %q", got)
 	}
 }

@@ -293,6 +293,15 @@ func (b *Backend) DirectConnections() ([]autotunnel.Conn, error) {
 	return out, nil
 }
 
+// TunnelStalls implements engine.TunnelStalls.
+func (b *Backend) TunnelStalls() (boundsMS, count, ms []int64, ok bool, err error) {
+	stalls, err := b.control.Stalls()
+	if err != nil || stalls == nil {
+		return nil, nil, nil, false, err
+	}
+	return stalls.BoundsMS, stalls.Count, stalls.MS, true, nil
+}
+
 // RoutedProfile asks the auto group which profile it holds.
 func (b *Backend) RoutedProfile() string {
 	group, err := b.control.Proxy(configfile.AutoTag)

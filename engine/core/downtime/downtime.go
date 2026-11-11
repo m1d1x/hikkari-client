@@ -17,10 +17,20 @@
 // The minutes go to the log every flushEvery and when the tunnel goes off, one
 // line per run of minutes: "[downtime] minutes from=<unix> states=oooid-o".
 // The hub reads them from testers' logs into its own table.
+//
+// A minute measures pauses only as fine as its looks, 5 seconds. The core
+// times shorter ones itself (sing-box-lx hikkari 0015): a stall runs from the
+// first byte an app sent through the tunnel after the last byte back to the
+// next byte back, on any connection. Next to the minutes goes one more line
+// with each minute's stalls past each threshold, their number and their whole
+// length in ms: "[downtime] stalls from=<unix> bounds=300,1000,3000
+// v=.;2:950,1:1200,0:0;-". "." is a minute without a stall, "-" one not
+// measured (an older core, or the minute unseen).
 package downtime
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -90,8 +100,24 @@ type Sources struct {
 	// Internet reports whether the direct path reaches ordinary sites. checked
 	// is false when it could not be measured.
 	Internet func(ctx context.Context) (ok, checked bool)
+	// Stalls reads the core's stall totals since it started; ok is false when
+	// the core does not time stalls. Nil when the engine cannot.
+	Stalls func() (totals StallTotals, ok bool)
 	// Logf writes the minutes.
 	Logf func(format string, args ...any)
+}
+
+// StallTotals are the core's stalls since it started, one value per bound:
+// how many lasted at least the bound, and their whole length in ms.
+type StallTotals struct {
+	BoundsMS []int64
+	Count    []int64
+	MS       []int64
+}
+
+// minuteStalls are one minute's stalls; nil when they were not measured.
+type minuteStalls struct {
+	count, ms []int64
 }
 
 // Meter turns looks at the tunnel into minutes.
@@ -114,7 +140,12 @@ type Meter struct {
 	// Finished minutes not yet written.
 	from      int64
 	states    []State
+	stalls    []*minuteStalls
 	lastFlush time.Time
+
+	// The core's stall totals at the last minute closed, and their bounds.
+	stallBase   *StallTotals
+	stallBounds []int64
 }
 
 type connState struct {
@@ -157,6 +188,7 @@ func (m *Meter) Poll(ctx context.Context) {
 	if !wanted {
 		m.lastPoll, m.prevPoll = time.Time{}, time.Time{}
 		m.conns = map[string]*connState{}
+		m.stallBase = nil
 		m.flush()
 		return
 	}
@@ -172,6 +204,7 @@ func (m *Meter) Poll(ctx context.Context) {
 	if !running {
 		m.coreDown++
 		m.conns = map[string]*connState{}
+		m.stallBase = nil // a new core counts from zero
 	} else if conns, err := m.src.Conns(); err == nil {
 		m.look(now, conns)
 	}
@@ -218,8 +251,9 @@ func (m *Meter) closeMinute(ctx context.Context) {
 	if m.polls == 0 {
 		return
 	}
+	stalls := m.readStalls()
 	if m.polls >= minPolls {
-		m.add(m.minute, m.verdict(ctx))
+		m.add(m.minute, m.verdict(ctx), stalls)
 	}
 	m.polls, m.coreDown, m.got, m.unanswered = 0, 0, false, false
 }
@@ -242,9 +276,54 @@ func (m *Meter) verdict(ctx context.Context) State {
 	return s
 }
 
+// readStalls takes the minute's stalls from the core's totals: the change
+// since the last minute closed. The first minute of a core has no base and is
+// not measured; totals that went down mean a new core, and start over.
+func (m *Meter) readStalls() *minuteStalls {
+	if m.src.Stalls == nil {
+		return nil
+	}
+	// The tunnel may have just gone off: a core still up still has the minute.
+	if _, running := m.src.Tunnel(); !running {
+		m.stallBase = nil
+		return nil
+	}
+	totals, ok := m.src.Stalls()
+	if !ok || len(totals.Count) != len(totals.BoundsMS) || len(totals.MS) != len(totals.BoundsMS) {
+		m.stallBase = nil
+		return nil
+	}
+	base := m.stallBase
+	m.stallBase = &totals
+	if base == nil || !sameBounds(base.BoundsMS, totals.BoundsMS) {
+		return nil
+	}
+	out := &minuteStalls{count: make([]int64, len(totals.Count)), ms: make([]int64, len(totals.MS))}
+	for i := range totals.Count {
+		out.count[i] = totals.Count[i] - base.Count[i]
+		out.ms[i] = totals.MS[i] - base.MS[i]
+		if out.count[i] < 0 || out.ms[i] < 0 {
+			return nil
+		}
+	}
+	return out
+}
+
+func sameBounds(a, b []int64) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // add appends a minute to the run, marking any skipped minutes unseen. A gap
 // longer than a flush starts a new run instead of a line of dashes.
-func (m *Meter) add(minute int64, s State) {
+func (m *Meter) add(minute int64, s State, stalls *minuteStalls) {
 	if len(m.states) > 0 && minute-(m.from+int64(len(m.states))) > int64(flushEvery/time.Minute) {
 		m.flush()
 	}
@@ -258,10 +337,30 @@ func (m *Meter) add(minute int64, s State) {
 	if minute < next {
 		return // the clock went back; that minute is written already
 	}
+	if stalls != nil && !sameBounds(m.stallBounds, m.stallBase.BoundsMS) {
+		if m.hasStalls() {
+			m.flush()
+			m.from = minute
+			m.lastFlush = m.now()
+			next = minute
+		}
+		m.stallBounds = m.stallBase.BoundsMS
+	}
 	for ; next < minute; next++ {
 		m.states = append(m.states, Unseen)
+		m.stalls = append(m.stalls, nil)
 	}
 	m.states = append(m.states, s)
+	m.stalls = append(m.stalls, stalls)
+}
+
+func (m *Meter) hasStalls() bool {
+	for _, s := range m.stalls {
+		if s != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // flush writes the run and starts a new one.
@@ -272,7 +371,55 @@ func (m *Meter) flush() {
 			b.WriteByte(byte(s))
 		}
 		m.src.Logf("[downtime] minutes from=%d states=%s", m.from*60, b.String())
+		if m.hasStalls() {
+			m.src.Logf("[downtime] stalls from=%d bounds=%s v=%s", m.from*60, joinInts(m.stallBounds, ","), m.stallLine())
+		}
 	}
 	m.states = nil
+	m.stalls = nil
 	m.lastFlush = time.Time{}
+}
+
+// stallLine spells the run's stalls: per minute "." without a stall, "-" not
+// measured, else "count:ms" per bound joined by commas; minutes by ";".
+func (m *Meter) stallLine() string {
+	var b strings.Builder
+	for i, s := range m.stalls {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		switch {
+		case s == nil:
+			b.WriteByte('-')
+		case !anyStall(s):
+			b.WriteByte('.')
+		default:
+			for j := range s.count {
+				if j > 0 {
+					b.WriteByte(',')
+				}
+				b.WriteString(strconv.FormatInt(s.count[j], 10))
+				b.WriteByte(':')
+				b.WriteString(strconv.FormatInt(s.ms[j], 10))
+			}
+		}
+	}
+	return b.String()
+}
+
+func anyStall(s *minuteStalls) bool {
+	for _, c := range s.count {
+		if c != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func joinInts(v []int64, sep string) string {
+	parts := make([]string, len(v))
+	for i, x := range v {
+		parts[i] = strconv.FormatInt(x, 10)
+	}
+	return strings.Join(parts, sep)
 }

@@ -145,6 +145,13 @@ type TesterGated interface {
 	SetTesterGate(tester func() bool)
 }
 
+// TunnelStalls is optional: the core times the tunnel's stalls itself, finer
+// than a look at its connections can (core/downtime). ok is false when the
+// running core does not.
+type TunnelStalls interface {
+	TunnelStalls() (boundsMS, count, ms []int64, ok bool, err error)
+}
+
 // DirectTraffic is optional: the engine can show what goes over the direct path
 // and send named hosts from it through the tunnel without restarting.
 type DirectTraffic interface {

@@ -17,6 +17,16 @@ func (c *Core) downtimeMeter() *downtime.Meter {
 	if !ok {
 		return nil
 	}
+	var stalls func() (downtime.StallTotals, bool)
+	if timer, can := c.backend.(engine.TunnelStalls); can {
+		stalls = func() (downtime.StallTotals, bool) {
+			bounds, count, ms, ok, err := timer.TunnelStalls()
+			if err != nil || !ok {
+				return downtime.StallTotals{}, false
+			}
+			return downtime.StallTotals{BoundsMS: bounds, Count: count, MS: ms}, true
+		}
+	}
 	return downtime.New(downtime.Sources{
 		Tunnel: c.tunnelWanted,
 		Conns: func() ([]downtime.Conn, error) {
@@ -31,6 +41,7 @@ func (c *Core) downtimeMeter() *downtime.Meter {
 			return out, nil
 		},
 		Internet: c.directInternet,
+		Stalls:   stalls,
 		Logf:     func(format string, args ...any) { c.logger.Logf(format, args...) },
 	})
 }
