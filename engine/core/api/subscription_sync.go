@@ -309,6 +309,10 @@ func (c *Core) syncSubscriptions(ctx context.Context, urgent, broken bool) bool 
 			return handledBroken
 		}
 		c.applySubscriptionResponse(ctx, source, imported, fetchErr, now)
+		if fetchErr == nil {
+			// Outside operationMu: the preset commit takes it itself.
+			c.adoptTesterFlag(source.URL, imported.Metadata)
+		}
 		if broken && (pf.Auto || source.ID == activeSource) {
 			handledBroken = true
 		}
@@ -339,6 +343,10 @@ func (c *Core) applySubscriptionResponse(ctx context.Context, requested profile.
 	after, err := cloneProfiles(before)
 	if err != nil {
 		c.logSubscriptionError(requested.ID, err)
+		return
+	}
+	if errors.Is(fetchErr, subscription.ErrRevoked) {
+		c.dropRevokedSubscription(ctx, requested.ID, before, after)
 		return
 	}
 	source := &after.Subscriptions[index]
@@ -443,4 +451,37 @@ func (c *Core) subscriptionNetwork() string {
 
 func (c *Core) logSubscriptionError(id string, err error) {
 	c.logger.Logf("[subscription %s] %s", id, subscriptionSecret.ReplaceAllString(fmt.Sprint(err), "[redacted-link]"))
+}
+
+// dropRevokedSubscription deletes a subscription our hub revoked for good and
+// every profile it brought, the running core included: its servers no longer
+// take the key, so keeping them would only leave dead profiles to pick. A
+// commit that fails leaves everything as it was and the next sync tries again.
+func (c *Core) dropRevokedSubscription(ctx context.Context, id string, before, after *profile.File) {
+	removed := profile.RemoveSubscription(after, id)
+	if err := c.commitProfiles(ctx, before, after); err != nil {
+		c.logSubscriptionError(id, fmt.Errorf("отозвана, удалить не вышло: %w", err))
+		return
+	}
+	for _, name := range removed {
+		c.uptime.Forget(name)
+	}
+	c.uptime.Save()
+	c.logger.Logf("[subscription %s] revoked by the hub: removed with %d profiles", id, len(removed))
+}
+
+// adoptTesterFlag turns tester mode on when our hub says, inside the sealed
+// body, that the subscription is a tester's: the tester gets it by opening
+// the link, without the seven taps. Never turns it off: the taps still do,
+// and a tester's link brought in later must not be undone by an ordinary one.
+// Called without operationMu held: the preset commit takes it.
+func (c *Core) adoptTesterFlag(sourceURL string, meta *subscription.Metadata) {
+	if meta == nil || !meta.Tester || !subscription.IsHikkariURL(sourceURL) || c.presets.Snapshot().Tester {
+		return
+	}
+	if err := c.presets.SetTester(true); err != nil {
+		c.logger.Logf("[subscription] tester link: tester mode not turned on: %v", err)
+		return
+	}
+	c.logger.Logf("[subscription] tester link: tester mode on")
 }

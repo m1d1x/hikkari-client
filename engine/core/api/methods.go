@@ -8,6 +8,7 @@ package api
 import (
 	"NekkoVPN/core/supportqueue"
 	"NekkoVPN/core/testerlog"
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -564,6 +565,19 @@ func (c *Core) AddProfileFromURI(uri string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	first, err := c.addImported(ctx, imports)
+	if err != nil {
+		return "", err
+	}
+	// Outside operationMu: the preset commit takes it itself.
+	for _, imported := range imports {
+		c.adoptTesterFlag(imported.SourceURL, imported.Metadata)
+	}
+	return first, nil
+}
+
+// addImported stores what AddProfileFromURI fetched.
+func (c *Core) addImported(ctx context.Context, imports []subscription.Imported[[]profile.Profile]) (string, error) {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
 	if err := ctx.Err(); err != nil {

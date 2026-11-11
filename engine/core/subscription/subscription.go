@@ -38,6 +38,9 @@ type Metadata struct {
 	UpdateIntervalSeconds int64             `json:"updateIntervalSeconds,omitempty"`
 	WebPageURL            string            `json:"webPageUrl,omitempty"`
 	SupportURL            string            `json:"supportUrl,omitempty"`
+	// Tester: our hub issued this subscription to a tester, said inside the
+	// sealed body only (never a header), so nobody on the way can set it.
+	Tester bool `json:"tester,omitempty"`
 }
 
 type Imported[T any] struct {
@@ -408,6 +411,10 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 		return Imported[T]{}, fmt.Errorf("достигнут лимит устройств подписки; удалите старое устройство в кабинете провайдера")
 	}
 
+	if resp.StatusCode == http.StatusGone && IsHikkariURL(subURL) &&
+		strings.EqualFold(resp.Header.Get(revokedHeader), "revoked") {
+		return Imported[T]{}, ErrRevoked
+	}
 	if resp.StatusCode != http.StatusOK {
 		return Imported[T]{}, &HTTPError{Status: resp.StatusCode, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
@@ -421,6 +428,7 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 		return Imported[T]{}, fmt.Errorf("подписка превышает 2 МиБ")
 	}
 	var relayMetrics []capacity.Metric
+	tester := false
 	if IsHikkariURL(subURL) && strings.HasPrefix(resp.Header.Get("Content-Type"), "application/vnd.hikkari.subscription+json") {
 		source, _ := url.Parse(subURL)
 		body, err = openSubscription(path.Base(source.Path), body)
@@ -431,12 +439,14 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 			Version int             `json:"version"`
 			Links   []string        `json:"links"`
 			Metrics json.RawMessage `json:"metrics"`
+			Tester  bool            `json:"tester"`
 		}
 		if json.Unmarshal(body, &envelope) != nil || envelope.Version != 2 || len(envelope.Links) > 256 {
 			return Imported[T]{}, fmt.Errorf("неверный формат подписки Hikkari")
 		}
 		body = []byte(strings.Join(envelope.Links, "\n"))
 		relayMetrics = capacity.Decode(string(envelope.Metrics))
+		tester = envelope.Tester
 	}
 	// Do not follow URLs inside downloaded content: a subscription must
 	// contain server URIs, otherwise providers could form an infinite cycle.
@@ -457,12 +467,21 @@ func fetchOnce[T any](ctx context.Context, subURL, deviceID, agent string, decod
 	}
 	if IsHikkariURL(subURL) {
 		meta.Capacity = relayMetrics
+		meta.Tester = tester
 		if !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/vnd.hikkari.subscription+json") {
 			meta.Capacity = capacity.Decode(resp.Header.Get(capacity.Header))
 		}
 	}
 	return Imported[T]{Items: items, Metadata: meta, SourceURL: subURL}, nil
 }
+
+// revokedHeader marks our hub's 410 as the subscription's end
+// (hikkari-control internal/subscription), not a front refusing the client.
+const revokedHeader = "Hikkari-Subscription"
+
+// ErrRevoked: our hub revoked the subscription for good. The caller deletes
+// it and its profiles; no other provider's answer means this.
+var ErrRevoked = errors.New("подписка отозвана")
 
 // HTTPError carries provider throttling without retaining the credential URL.
 type HTTPError struct {
