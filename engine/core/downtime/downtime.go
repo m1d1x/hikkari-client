@@ -16,7 +16,9 @@
 //
 // The minutes go to the log every flushEvery and when the tunnel goes off, one
 // line per run of minutes: "[downtime] minutes from=<unix> states=oooid-o".
-// The hub reads them from testers' logs into its own table.
+// The hub reads them from testers' logs into its own table. The same run,
+// folded into counts, goes to Sources.Report: the telemetry event "tunnel" of
+// an ordinary user (docs/TELEMETRY.md), which carries no line of the log.
 //
 // A minute measures pauses only as fine as its looks, 5 seconds. The core
 // times shorter ones itself (sing-box-lx hikkari 0015): a stall runs from the
@@ -105,6 +107,27 @@ type Sources struct {
 	Stalls func() (totals StallTotals, ok bool)
 	// Logf writes the minutes.
 	Logf func(format string, args ...any)
+	// Report takes each run as counts, when the run is written. Nil when
+	// nobody wants them.
+	Report func(Period)
+}
+
+// Period is one run of minutes folded into counts: what an ordinary user's
+// telemetry carries instead of the log lines. It says how many minutes were
+// what and how long the tunnel stalled, and nothing about where traffic went.
+type Period struct {
+	// From is the run's first minute, unix seconds.
+	From int64
+	// Minutes counts the run's minutes by state; unseen ones are not counted.
+	Minutes map[State]int
+	// StallMinutes is how many of the minutes had their stalls measured.
+	StallMinutes int
+	// StallBoundsMS are the core's thresholds; StallCount and StallMS are the
+	// stalls of the measured minutes that lasted at least each of them and
+	// their whole length. All three are empty when StallMinutes is zero.
+	StallBoundsMS []int64
+	StallCount    []int64
+	StallMS       []int64
 }
 
 // StallTotals are the core's stalls since it started, one value per bound:
@@ -374,10 +397,39 @@ func (m *Meter) flush() {
 		if m.hasStalls() {
 			m.src.Logf("[downtime] stalls from=%d bounds=%s v=%s", m.from*60, joinInts(m.stallBounds, ","), m.stallLine())
 		}
+		if m.src.Report != nil {
+			m.src.Report(m.period())
+		}
 	}
 	m.states = nil
 	m.stalls = nil
 	m.lastFlush = time.Time{}
+}
+
+// period folds the run into counts.
+func (m *Meter) period() Period {
+	p := Period{From: m.from * 60, Minutes: map[State]int{}}
+	for _, s := range m.states {
+		if s != Unseen {
+			p.Minutes[s]++
+		}
+	}
+	for _, s := range m.stalls {
+		if s == nil || len(s.count) != len(m.stallBounds) {
+			continue
+		}
+		if p.StallMinutes == 0 {
+			p.StallBoundsMS = append([]int64(nil), m.stallBounds...)
+			p.StallCount = make([]int64, len(m.stallBounds))
+			p.StallMS = make([]int64, len(m.stallBounds))
+		}
+		p.StallMinutes++
+		for j := range s.count {
+			p.StallCount[j] += s.count[j]
+			p.StallMS[j] += s.ms[j]
+		}
+	}
+	return p
 }
 
 // stallLine spells the run's stalls: per minute "." without a stall, "-" not

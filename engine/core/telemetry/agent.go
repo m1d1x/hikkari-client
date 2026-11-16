@@ -249,6 +249,13 @@ func (a *Agent) InstallID() string {
 // Event queues a product event after checking it against the contract.
 // Off → silently nothing; a contract violation → error.
 func (a *Agent) Event(name string, fields map[string]any) error {
+	return a.EventAt(time.Time{}, name, fields)
+}
+
+// EventAt queues an event about a moment that has passed: a period the
+// engine measured and reports once it is over. The time is cut to the minute
+// like any other; the zero time is now.
+func (a *Agent) EventAt(at time.Time, name string, fields map[string]any) error {
 	norm, err := normalize(name, fields)
 	if err != nil {
 		return err
@@ -259,7 +266,11 @@ func (a *Agent) Event(name string, fields map[string]any) error {
 		return nil
 	}
 	a.ensureInstallLocked()
-	e := Event{TS: a.minuteLocked(), Name: name, Fields: norm}
+	ts := a.minuteLocked()
+	if !at.IsZero() {
+		ts = at.Truncate(time.Minute).Unix()
+	}
+	e := Event{TS: ts, Name: name, Fields: norm}
 	e.size = jsonSize(e)
 	a.q.Events = append(a.q.Events, e)
 	a.trimLocked()

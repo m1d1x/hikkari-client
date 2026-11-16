@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"NekkoVPN/core/downtime"
@@ -43,7 +44,58 @@ func (c *Core) downtimeMeter() *downtime.Meter {
 		Internet: c.directInternet,
 		Stalls:   stalls,
 		Logf:     func(format string, args ...any) { c.logger.Logf(format, args...) },
+		Report:   c.reportTunnel,
 	})
+}
+
+// reportTunnel queues a period of the meter as the telemetry event "tunnel"
+// (docs/TELEMETRY.md §4a). The agent drops it when the switch is off.
+func (c *Core) reportTunnel(p downtime.Period) {
+	fields := tunnelFields(p)
+	if fields == nil {
+		return
+	}
+	if err := c.telemetry.EventAt(time.Unix(p.From, 0), "tunnel", fields); err != nil {
+		c.logger.Logf("[telemetry] tunnel: %v", err)
+	}
+}
+
+// tunnelStallBounds are the thresholds the contract names. A core that times
+// stalls against other ones has nothing the event can carry.
+var tunnelStallBounds = []int64{300, 1000, 3000}
+
+// tunnelFields spells a period as the event's fields: zeros are left out, and
+// a period without a minute is no event.
+func tunnelFields(p downtime.Period) map[string]any {
+	fields := map[string]any{}
+	for state, key := range map[downtime.State]string{
+		downtime.Flowing: "o", downtime.Idle: "i", downtime.Down: "d", downtime.CoreDown: "c", downtime.NetDown: "n",
+	} {
+		if n := p.Minutes[state]; n > 0 {
+			fields[key] = n
+		}
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	if p.StallMinutes == 0 || len(p.StallBoundsMS) != len(tunnelStallBounds) ||
+		len(p.StallCount) != len(tunnelStallBounds) || len(p.StallMS) != len(tunnelStallBounds) {
+		return fields
+	}
+	for i, bound := range tunnelStallBounds {
+		if p.StallBoundsMS[i] != bound {
+			return fields
+		}
+	}
+	fields["stall_min"] = p.StallMinutes
+	for i, bound := range tunnelStallBounds {
+		if p.StallCount[i] > 0 {
+			key := "s" + strconv.FormatInt(bound, 10)
+			fields[key] = p.StallCount[i]
+			fields[key+"_ms"] = p.StallMS[i]
+		}
+	}
+	return fields
 }
 
 // tunnelWanted is the user's switch and whether the core answers. A core kept

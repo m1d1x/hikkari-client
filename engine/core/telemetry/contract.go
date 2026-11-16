@@ -20,13 +20,30 @@ const (
 	kindCount   // folded into 0 | 1 | 2-5 | 6+ (or the field's own buckets)
 	kindVersion // semantic version
 	kindErrCode // one of errorCodes, or empty
+	kindExact   // a whole number from 0 to the field's max, sent as it is
 )
 
 type fieldSpec struct {
 	kind    fieldKind
 	values  []string // kindEnum
 	buckets []int    // kindCount: lower bounds after 0 and 1, e.g. {2, 6}
+	max     int      // kindExact
 }
+
+// The bounds of the "tunnel" event's numbers. A period is the ten minutes
+// between two writes of the downtime meter; a day leaves room for anything
+// real, and a number past it is a mistake, not a measurement.
+const (
+	tunnelMaxMinutes = 24 * 60
+	tunnelMaxStalls  = 1_000_000
+	tunnelMaxStallMS = 24 * 60 * 60 * 1000
+)
+
+var (
+	tunnelMinutes = fieldSpec{kind: kindExact, max: tunnelMaxMinutes}
+	tunnelStalls  = fieldSpec{kind: kindExact, max: tunnelMaxStalls}
+	tunnelStallMS = fieldSpec{kind: kindExact, max: tunnelMaxStallMS}
+)
 
 var (
 	engines = []string{"singbox", "xray"}
@@ -84,6 +101,16 @@ var eventSpecs = map[string]map[string]fieldSpec{
 	},
 	"cta": {
 		"kind": {kind: kindEnum, values: []string{"subscribe", "renew", "donate"}},
+	},
+	// The main metric (core/downtime): how many minutes of a period the tunnel
+	// was what, and how long it stalled. Numbers only: no profile, no network,
+	// no destination.
+	"tunnel": {
+		"o": tunnelMinutes, "i": tunnelMinutes, "d": tunnelMinutes, "c": tunnelMinutes, "n": tunnelMinutes,
+		"stall_min": tunnelMinutes,
+		"s300":      tunnelStalls, "s300_ms": tunnelStallMS,
+		"s1000": tunnelStalls, "s1000_ms": tunnelStallMS,
+		"s3000": tunnelStalls, "s3000_ms": tunnelStallMS,
 	},
 }
 
@@ -163,6 +190,15 @@ func normalizeField(f fieldSpec, v any) (any, error) {
 			return n / 10 * 10, nil
 		case kindCount:
 			return bucket(n, f.buckets), nil
+		}
+		return n, nil
+	case kindExact:
+		n, err := asInt(v)
+		if err != nil {
+			return nil, err
+		}
+		if n < 0 || n > f.max {
+			return nil, fmt.Errorf("%d is not within 0..%d", n, f.max)
 		}
 		return n, nil
 	case kindVersion:

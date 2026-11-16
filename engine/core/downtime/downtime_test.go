@@ -303,3 +303,40 @@ func TestARestartedCoreStartsItsStallsOver(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestARunIsReportedAsCountsWhenItIsWritten(t *testing.T) {
+	r := newRig(t)
+	var got []Period
+	r.m.src.Report = func(p Period) { got = append(got, p) }
+	from := r.clock.Unix()
+	r.stalls = &StallTotals{BoundsMS: []int64{300, 1000, 3000}, Count: []int64{5, 1, 0}, MS: []int64{4000, 1500, 0}}
+	r.minute(flowing(r)) // the first minute of a core has no base
+	r.minute(flowingWith(r, &StallTotals{BoundsMS: []int64{300, 1000, 3000}, Count: []int64{7, 2, 0}, MS: []int64{5600, 2700, 0}}))
+	r.conns = nil
+	r.minute(asks(r))
+	if s := r.states(); s != "ood" {
+		t.Fatalf("states %q", s)
+	}
+	if len(got) != 1 {
+		t.Fatalf("reported %d periods, want one per line of minutes", len(got))
+	}
+	p := got[0]
+	if p.From != from || p.Minutes[Flowing] != 2 || p.Minutes[Down] != 1 || len(p.Minutes) != 2 {
+		t.Fatalf("period = %+v", p)
+	}
+	if p.StallMinutes != 2 || fmt.Sprint(p.StallBoundsMS, p.StallCount, p.StallMS) != "[300 1000 3000] [2 1 0] [1600 1200 0]" {
+		t.Fatalf("stalls of the period = %+v", p)
+	}
+}
+
+func TestAPeriodOfAnOlderCoreHasNoStalls(t *testing.T) {
+	r := newRig(t)
+	var got []Period
+	r.m.src.Report = func(p Period) { got = append(got, p) }
+	r.minute(nil)
+	r.minute(nil)
+	r.states()
+	if len(got) != 1 || got[0].Minutes[Idle] != 2 || got[0].StallMinutes != 0 || got[0].StallBoundsMS != nil {
+		t.Fatalf("periods = %+v", got)
+	}
+}
