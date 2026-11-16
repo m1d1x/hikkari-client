@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -349,3 +350,67 @@ func TestCloseWritesThePendingQueue(t *testing.T) {
 		t.Fatalf("reloaded queue has %d events", n)
 	}
 }
+
+func TestATunnelPeriodLeavesAsNumbersUnderItsOwnMinute(t *testing.T) {
+	now := time.Unix(1761900000, 0)
+	s := &sink{}
+	a := newAgent(t, t.TempDir(), s, &now)
+	from := now.Add(-10*time.Minute - 7*time.Second)
+	if err := a.EventAt(from, "tunnel", map[string]any{
+		"o": 8, "d": 2, "stall_min": 9, "s300": int64(4), "s300_ms": int64(2600), "s1000": int64(1), "s1000_ms": int64(1400),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.sendAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.batches) != 1 || len(s.batches[0].Events) != 1 {
+		t.Fatalf("batches = %+v", s.batches)
+	}
+	raw, _ := json.Marshal(s.batches[0].Events[0])
+	want := `{"ts":` + itoa(from.Truncate(time.Minute).Unix()) + `,"name":"tunnel","fields":{"d":2,"o":8,"s1000":1,"s1000_ms":1400,"s300":4,"s300_ms":2600,"stall_min":9}}`
+	if string(raw) != want {
+		t.Fatalf("event = %s\nwant    %s", raw, want)
+	}
+}
+
+func TestATunnelPeriodCarriesNothingButItsNumbers(t *testing.T) {
+	now := time.Unix(1761900000, 0)
+	a := newAgent(t, t.TempDir(), &sink{}, &now)
+	for name, fields := range map[string]map[string]any{
+		"a profile":      {"o": 1, "profile": "p-002-3"},
+		"a network":      {"o": 1, "isp": "AS8359"},
+		"a destination":  {"o": 1, "dst": "example.org"},
+		"a state unseen": {"-": 1},
+		"text":           {"o": "many"},
+		"a negative":     {"d": -1},
+		"past a day":     {"o": 24*60 + 1},
+	} {
+		if err := a.EventAt(now, "tunnel", fields); err == nil {
+			t.Errorf("a tunnel event with %s was accepted", name)
+		}
+	}
+	if b := a.LastBatch(); b != nil {
+		t.Fatalf("something was queued: %+v", b)
+	}
+}
+
+func TestOffQueuesNoTunnelPeriod(t *testing.T) {
+	now := time.Unix(1761900000, 0)
+	s := &sink{}
+	a := newAgent(t, t.TempDir(), s, &now)
+	if err := a.SetEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.EventAt(now.Add(-10*time.Minute), "tunnel", map[string]any{"o": 10}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.sendAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.batches) != 0 || a.LastBatch() != nil {
+		t.Fatalf("a tunnel period left while off: %+v", s.batches)
+	}
+}
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
