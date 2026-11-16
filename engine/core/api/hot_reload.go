@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"NekkoVPN/core/engine"
@@ -26,7 +27,7 @@ func (c *Core) reloadInPlace(ctx context.Context, reason string) bool {
 		case err != nil:
 			c.logger.Logf("[lifecycle] hot reason=%s applied=false took=%s err=%q", reason, took, subscriptionSecret.ReplaceAllString(err.Error(), "[redacted-link]"))
 		case outcome.Applied:
-			c.logger.Logf("[lifecycle] hot reason=%s applied=true took=%s added=%d removed=%d replaced=%d", reason, took, outcome.Added, outcome.Removed, outcome.Replaced)
+			c.logger.Logf("[lifecycle] hot reason=%s applied=true took=%s added=%d removed=%d replaced=%d routing=%s", reason, took, outcome.Added, outcome.Removed, outcome.Replaced, strings.Join(outcome.Routing, ","))
 		default:
 			c.logger.Logf("[lifecycle] hot reason=%s applied=false took=%s declined=%q", reason, took, outcome.Declined)
 		}

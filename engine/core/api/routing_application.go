@@ -107,7 +107,7 @@ func (c *Core) transactionRouting(reason string, previous, next routing.RoutingS
 		finish := c.traceCoreTransition(reason, routingChangeSummary(previous, next))
 		defer func() { finish(resultErr) }()
 	}
-	startAttempted := false
+	startAttempted, hot := false, false
 	rollback := func(cause error) error {
 		var recovery []error
 		// A failed Start may leave a partially running process. Stop that candidate
@@ -127,6 +127,14 @@ func (c *Core) transactionRouting(reason string, previous, next routing.RoutingS
 			recovery = append(recovery, fmt.Errorf("восстановление конфигурации: %w", err))
 			configured = false
 		}
+		// Rules that went live in place go back the same way; a core that
+		// refuses them now is restarted on the previous ones.
+		if hot && configured && !c.reloadInPlace(c.ctx, reason+"/rollback") {
+			if err := c.stopForRestart(reason + "/rollback"); err != nil {
+				recovery = append(recovery, fmt.Errorf("остановка неудачной конфигурации: %w", err))
+				stopped = false
+			}
+		}
 		if wasRunning && restart && configured && stopped && !c.backend.IsRunning() {
 			if err := c.backend.Start(c.ctx); err != nil {
 				recovery = append(recovery, fmt.Errorf("восстановление VPN: %w", err))
@@ -137,7 +145,11 @@ func (c *Core) transactionRouting(reason string, previous, next routing.RoutingS
 	if err := c.configureRouting(next); err != nil {
 		return rollback(err)
 	}
-	if restart {
+	// The core takes new rules in place (core patch 0016) and keeps the tunnel
+	// and its connections; one that declines them is restarted as before.
+	if restart && c.reloadInPlace(c.ctx, reason) {
+		hot = true
+	} else if restart {
 		if err := c.stopForRestart(reason); err != nil {
 			return rollback(err)
 		}

@@ -208,8 +208,9 @@ type ForeignVPNStop struct {
 }
 
 // ReloadOutcome is what the core did with an OpReload. Declined names what
-// needs a restart (a changed inbound, DNS, rule...); the lists are outbound
-// and group tags.
+// needs a restart (a changed inbound, DNS server...); the lists are outbound
+// and group tags, and Routing what of the routing went live in place
+// (route.rules, route.final, dns.rules).
 type ReloadOutcome struct {
 	Applied  bool     `json:"applied"`
 	Declined string   `json:"declined,omitempty"`
@@ -217,6 +218,7 @@ type ReloadOutcome struct {
 	Removed  []string `json:"removed,omitempty"`
 	Replaced []string `json:"replaced,omitempty"`
 	Groups   []string `json:"groups,omitempty"`
+	Routing  []string `json:"routing,omitempty"`
 }
 
 // NetworkRepair is the outcome of OpRepairNetwork.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"NekkoVPN/core/engine"
 )
@@ -129,5 +130,59 @@ func TestDeletingAProfileDropsItInPlace(t *testing.T) {
 	}
 	if len(f.reloaded.Profiles) != 1 {
 		t.Fatalf("reloaded %d profiles", len(f.reloaded.Profiles))
+	}
+}
+
+// D3 of plans/2026-11-16-default-mode-blocked-via-vpn.md: a switch of the
+// routing mode reaches a core that takes rules in place (patch 0016) without
+// stopping it, and a core that declines them is restarted on the new rules.
+func TestRoutingModeSwitchIsAppliedInPlace(t *testing.T) {
+	c, f := initHotCore(t)
+	starts := f.starts
+	if err := c.SetRoutingMode("proxy"); err != nil {
+		t.Fatal(err)
+	}
+	waitRoutingApplied(t, c)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reloads != 1 || f.starts != starts || !f.running {
+		t.Fatalf("reloads=%d starts %d->%d running=%v", f.reloads, starts, f.starts, f.running)
+	}
+	if f.reloaded.Routing.Mode != "proxy" {
+		t.Fatalf("the reload ran on mode %q", f.reloaded.Routing.Mode)
+	}
+	log := c.logger.Tail()
+	if !strings.Contains(log, "[lifecycle] hot reason=manual-routing applied=true") || strings.Contains(log, "reason=manual-routing/stop") {
+		t.Fatalf("the switch was not applied in place:\n%s", log)
+	}
+}
+
+func TestDeclinedRoutingReloadRestartsTheCore(t *testing.T) {
+	c, f := initHotCore(t)
+	f.decline = "new rules match processes, the router runs without process search"
+	starts := f.starts
+	if err := c.SetRoutingMode("proxy"); err != nil {
+		t.Fatal(err)
+	}
+	waitRoutingApplied(t, c)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reloads != 1 || f.starts != starts+1 || !f.running || f.configuration.Routing.Mode != "proxy" {
+		t.Fatalf("reloads=%d starts %d->%d running=%v mode=%s", f.reloads, starts, f.starts, f.running, f.configuration.Routing.Mode)
+	}
+	if !strings.Contains(c.logger.Tail(), "reason=manual-routing/stop") {
+		t.Fatalf("no fallback restart in the log:\n%s", c.logger.Tail())
+	}
+}
+
+// waitRoutingApplied waits out the debounce of manual routing changes.
+func waitRoutingApplied(t *testing.T, c *Core) {
+	t.Helper()
+	deadline := time.Now().Add(4 * time.Second)
+	for (c.RoutingStatus().Status == "pending" || c.RoutingStatus().Status == "applying") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if status := c.RoutingStatus(); status.Status != "applied" {
+		t.Fatal("routing not applied:", status)
 	}
 }

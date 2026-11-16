@@ -63,6 +63,7 @@ func (b *Backend) Reload(ctx context.Context) (engine.ReloadOutcome, error) {
 		Added:    len(outcome.Added),
 		Removed:  len(outcome.Removed),
 		Replaced: len(outcome.Replaced),
+		Routing:  outcome.Routing,
 	}, nil
 }
 

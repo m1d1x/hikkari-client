@@ -99,6 +99,11 @@ SSH-туннель и токен инструмент поднимает сам:
   `service: core reloaded in place: …` или `service: reload declined: …`. В строках ядра: `hot reload: applied, outbounds +A -R ~C`.
   Старый объект закрывается позже, когда уйдут его соединения: `hot reload: retired previous outbound[тег] after Ns, drained`.
   `drain limit reached, N connections cut` — соединения старше 30 минут оборваны.
+  С клиента 1.0.85 (ядро hk.11, патч 0016) так же без перезапуска идут смена режима маршрута, ручные правила и пресеты
+  (`reason=manual-routing`, `preset-routing`, `routing-snapshot`): в строке `routing=route.rules,route.final,dns.rules`, у
+  ядра `hot reload: applied, …, routing …`. Отказы ядра: `new rules match processes, the router runs without process search`
+  (ядро запущено без процессных правил, а новые их требуют), `changed outside outbounds and routing: …`; за отказом обычный
+  перезапуск.
 - `service`: вывод сервиса и ядра sing-box, уровень warn. Временно (клиент новее 1.0.39), пока разбирается поток DNS на Mac:
   `[dns-diag] window` раз в 10 с: кто спрашивает (`top`), исходы, `drop`; `[dns-diag] socket`: куда шлёт транспорт, с какого
   адреса и интерфейса, ошибки записи; `[dns-diag] local config`: что `dns-direct` прочитал из системы (`172-19-0-2` это само ядро);

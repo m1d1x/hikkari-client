@@ -13,6 +13,9 @@ type ReloadResult struct {
 	Removed  []string `json:"removed,omitempty"`
 	Replaced []string `json:"replaced,omitempty"`
 	Groups   []string `json:"groups,omitempty"`
+	// Routing: what of the routing went live in place (core patch 0016):
+	// route.rules, route.final, dns.rules.
+	Routing []string `json:"routing,omitempty"`
 }
 
 // ErrReloadUnsupported: the running core has no control channel (an xray

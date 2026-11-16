@@ -54,14 +54,15 @@ func (s *Server) reload(req svcproto.Request) (svcproto.ReloadOutcome, error) {
 	hash := hex.EncodeToString(sum[:])
 	result, err := s.reloadCore(engine, hash)
 	if err == nil && result.Applied {
-		s.log.Logf("service: core reloaded in place: added=%d removed=%d replaced=%d groups=%s hash=%s",
-			len(result.Added), len(result.Removed), len(result.Replaced), strings.Join(result.Groups, ","), shortHash(req.ConfigHash))
+		s.log.Logf("service: core reloaded in place: added=%d removed=%d replaced=%d groups=%s routing=%s hash=%s",
+			len(result.Added), len(result.Removed), len(result.Replaced), strings.Join(result.Groups, ","), strings.Join(result.Routing, ","), shortHash(req.ConfigHash))
 		return svcproto.ReloadOutcome{
 			Applied:  true,
 			Added:    result.Added,
 			Removed:  result.Removed,
 			Replaced: result.Replaced,
 			Groups:   result.Groups,
+			Routing:  result.Routing,
 		}, nil
 	}
 	if restoreErr := s.restoreConfig(engine, previous); restoreErr != nil {

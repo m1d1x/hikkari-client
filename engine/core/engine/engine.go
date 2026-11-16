@@ -136,6 +136,9 @@ type ReloadOutcome struct {
 	Added    int
 	Removed  int
 	Replaced int
+	// Routing: what of the routing went live in place (route.rules,
+	// route.final, dns.rules); empty when only profiles changed.
+	Routing []string
 }
 
 // TesterGated is optional: the engine has things it does only on a tester's
