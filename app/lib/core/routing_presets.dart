@@ -115,6 +115,17 @@ class RoutingPresets {
       choices[mode.wire]?[service.id] ??
       service.defaultModes.contains(mode.wire);
 
+  /// Whether the mode's list offers the service. A group the catalog puts
+  /// only on the other mode's side means nothing here: in proxy mode an
+  /// open service (Yandex, Steam) goes direct anyway, in bypass mode a
+  /// blocked one (Telegram) must not go around the tunnel. A group on no
+  /// side is offered in both; one the person turned on here stays so they
+  /// can turn it off.
+  bool shown(ServicePreset service, RoutingMode mode) =>
+      service.defaultModes.isEmpty ||
+      service.defaultModes.contains(mode.wire) ||
+      (choices[mode.wire]?[service.id] ?? false);
+
   String get status {
     if (!syncEnabled) return 'Автообновление выключено · сохранённая версия';
     if (error.isNotEmpty) {

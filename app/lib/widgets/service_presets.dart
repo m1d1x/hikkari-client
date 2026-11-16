@@ -476,6 +476,7 @@ class _ServicePresetsState extends State<ServicePresets>
       final q = _query.trim().toLowerCase();
       final allCategoryServices = catalog.services
           .where((s) => _rules(s, catalog.platform, widget.category).isNotEmpty)
+          .where((s) => catalog.shown(s, state.routing.mode))
           .toList();
       final services = allCategoryServices
           .where((s) => _matchesQuery(s, catalog.platform, q))

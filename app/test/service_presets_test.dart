@@ -1192,7 +1192,7 @@ void main() {
             'domains': ['discord.gg', 'discord.com'],
             'ips': [],
             'processes': {},
-            'defaultModes': ['proxy'],
+            'defaultModes': [],
           },
           {
             'id': 'banks',
@@ -1367,9 +1367,46 @@ void main() {
     );
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('each mode offers only the groups that mean something in it', (
+    tester,
+  ) async {
+    Map<String, dynamic> group(String id, String name, List<String> modes) => {
+      'id': id,
+      'name': name,
+      'icon': id,
+      'domains': ['$id.example'],
+      'ips': [],
+      'processes': {},
+      'defaultModes': modes,
+    };
+    final state = await showPresets(
+      tester,
+      _ModeCore(
+        customServices: [
+          group('yandex', 'Yandex', ['bypass']),
+          group('telegram', 'Telegram', ['proxy']),
+          group('twitch', 'Twitch', []),
+        ],
+      ),
+    );
+    addTearDown(state.dispose);
+    await state.refreshRoutingState();
+    await tester.pumpAndSettle();
+    expect(find.text('yandex'), findsOneWidget);
+    expect(find.text('telegram'), findsNothing);
+    expect(find.text('twitch'), findsOneWidget);
+
+    await state.setRoutingMode(RoutingMode.proxy);
+    await tester.pumpAndSettle();
+    expect(find.text('yandex'), findsNothing);
+    expect(find.text('telegram'), findsOneWidget);
+    expect(find.text('twitch'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 }
 
 class _ModeCore extends PresetCore {
+  _ModeCore({super.customServices});
   var manual = const RoutingState.initial();
   @override
   Future<RoutingApplicationSnapshot> routingStatus() async =>
