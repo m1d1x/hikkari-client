@@ -62,6 +62,9 @@ type Options struct {
 	// Transact owns application, persistence and rollback as one application
 	// transaction. It is mutually exclusive with the legacy Apply callback.
 	Transact func(old, next State, persist func() error) error
+	// Logf, when set, gets a line when a refresh starts failing and when it
+	// works again; the error itself is also in Snapshot.Error.
+	Logf func(format string, args ...any)
 }
 
 type Manager struct {
@@ -361,12 +364,23 @@ func (m *Manager) commit(old, next State) error {
 
 func (m *Manager) report(err error) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.lastChecked = time.Now().UTC().Format(time.RFC3339)
+	previous := m.lastError
 	if err == nil {
 		m.lastError = ""
 	} else {
 		m.lastError = err.Error()
+	}
+	current := m.lastError
+	m.mu.Unlock()
+	// A refresh runs every minute: only a new error goes to the log, and its
+	// end once, so a catalog refused for hours is one line, not hundreds.
+	if m.options.Logf != nil && current != previous {
+		if current != "" {
+			m.options.Logf("[presets] refresh failed: %s", current)
+		} else {
+			m.options.Logf("[presets] refresh works again after: %s", previous)
+		}
 	}
 	return err
 }
@@ -435,6 +449,19 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	return m.adopt(ctx, asked, catalog, "remote", resp.Header.Get("ETag"))
 }
 
+// fillsDefaultMode reports whether next is held under the same version only
+// with the default mode filled in. The hub gives the mode only to a client
+// that asks for it (defaultmode=1); a catalog cached by a release that did not
+// ask has none, and the release after it gets the same version with the mode.
+// That is the same release seen in full, not a change without a new version.
+func fillsDefaultMode(held, next Catalog) bool {
+	if held.DefaultMode != "" || next.DefaultMode == "" {
+		return false
+	}
+	next.DefaultMode = ""
+	return reflect.DeepEqual(held, next)
+}
+
 // adopt applies an answer to the request made with asked. An answer to a
 // request made before the tester flag flipped is dropped: the refetch that
 // flip woke is already on its way.
@@ -452,7 +479,7 @@ func (m *Manager) adopt(ctx context.Context, asked State, catalog Catalog, sourc
 		if catalog.Version < old.Catalog.Version {
 			return m.report(fmt.Errorf("сервер вернул старую версию пресетов"))
 		}
-		if catalog.Version == old.Catalog.Version && !reflect.DeepEqual(catalog, old.Catalog) {
+		if catalog.Version == old.Catalog.Version && !reflect.DeepEqual(catalog, old.Catalog) && !fillsDefaultMode(old.Catalog, catalog) {
 			return m.report(fmt.Errorf("содержимое каталога изменено без увеличения версии"))
 		}
 	}

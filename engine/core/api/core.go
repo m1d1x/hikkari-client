@@ -187,6 +187,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		Transact: func(old, next presets.State, persist func() error) error {
 			return c.commitPresetState(presetContext, old, next, persist)
 		},
+		Logf: c.logger.Logf,
 	})
 	if err != nil {
 		c.cancel()

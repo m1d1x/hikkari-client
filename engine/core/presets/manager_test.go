@@ -523,3 +523,67 @@ func TestTesterFlagSwapsTheCatalogUnderOneVersion(t *testing.T) {
 		t.Fatalf("leaving the testers with nothing released: %+v", s.State)
 	}
 }
+
+// A release before the default mode cached version N without it (the hub
+// gives the mode only to a client that asks); the release after it asks and
+// gets the same N with the mode. That is taken, and survives a restart: on
+// 16.11 dima-002's 1.0.84 refused v10 so, and stayed off the hub's mode until
+// v11. Any other change under the same version is still refused, and the
+// refusal reaches the log once.
+func TestTheSameVersionWithItsDefaultModeIsTaken(t *testing.T) {
+	version := bundledVersion + 3
+	withMode := func(domain string) []byte {
+		c, _ := Parse(testCatalog(version, domain))
+		c.DefaultMode = routing.ModeProxy
+		data, _ := json.Marshal(c)
+		return data
+	}
+	var mu sync.Mutex
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	serve := func(b []byte) { mu.Lock(); body = b; mu.Unlock() }
+	path := filepath.Join(t.TempDir(), "presets.json")
+
+	serve(testCatalog(version, "list.example"))
+	if err := newManager(t, path, Options{URL: server.URL}).Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var logMu sync.Mutex
+	var lines []string
+	logf := func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	m := newManager(t, path, Options{URL: server.URL, Logf: logf})
+	if m.Snapshot().Catalog.DefaultMode != "" {
+		t.Fatal("the cached catalog already has a mode")
+	}
+	serve(withMode("other.example"))
+	for range 2 {
+		if err := m.Refresh(context.Background()); err == nil {
+			t.Fatal("a changed list under the same version was taken")
+		}
+	}
+	serve(withMode("list.example"))
+	if err := m.Refresh(context.Background()); err != nil {
+		t.Fatalf("the same version with its mode: %v", err)
+	}
+	if s := m.Snapshot(); s.Catalog.DefaultMode != routing.ModeProxy || s.Error != "" {
+		t.Fatalf("after taking it: mode=%q error=%q", s.Catalog.DefaultMode, s.Error)
+	}
+	if got := newManager(t, path, Options{URL: server.URL}).Snapshot().Catalog.DefaultMode; got != routing.ModeProxy {
+		t.Fatalf("after a restart the mode is %q", got)
+	}
+	logMu.Lock()
+	defer logMu.Unlock()
+	if len(lines) != 2 || !strings.Contains(lines[0], "refresh failed: содержимое каталога изменено") || !strings.Contains(lines[1], "works again") {
+		t.Fatalf("log lines: %q", lines)
+	}
+}
