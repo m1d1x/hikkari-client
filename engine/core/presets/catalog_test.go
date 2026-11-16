@@ -42,3 +42,18 @@ func TestBundledCatalogRoutesNoBrowserByProcess(t *testing.T) {
 		}
 	}
 }
+
+func TestACatalogNamesOnlyAKnownDefaultMode(t *testing.T) {
+	doc := func(mode string) []byte {
+		return []byte(`{"schemaVersion":1,"version":1` + mode + `,"services":[{"id":"a","name":"A","icon":"","domains":["a.example"],"ips":[],"processes":{},"defaultModes":[]}]}`)
+	}
+	for mode, want := range map[string]string{``: "", `,"defaultMode":"proxy"`: "proxy", `,"defaultMode":"bypass"`: "bypass"} {
+		c, err := Parse(doc(mode))
+		if err != nil || string(c.DefaultMode) != want {
+			t.Fatalf("%q: got %q, %v", mode, c.DefaultMode, err)
+		}
+	}
+	if _, err := Parse(doc(`,"defaultMode":"all"`)); err == nil {
+		t.Fatal("an unknown default mode was taken")
+	}
+}

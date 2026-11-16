@@ -219,9 +219,9 @@ func ApplyRoutingSnapshotToState(
 ) (routing.RoutingState, Choices, error) {
 	nextRouting := routing.DefaultRoutingState()
 	if snapshot.Mode != "" {
-		nextRouting.Mode = routing.RoutingMode(snapshot.Mode)
+		nextRouting.Mode, nextRouting.ModeChosen = routing.RoutingMode(snapshot.Mode), true
 	} else {
-		nextRouting.Mode = currentRouting.Mode
+		nextRouting.Mode, nextRouting.ModeChosen = currentRouting.Mode, currentRouting.ModeChosen
 	}
 	nextRouting.Enabled = true
 

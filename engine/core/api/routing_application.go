@@ -257,6 +257,9 @@ func (c *Core) commitPresetState(ctx context.Context, old, next presets.State, p
 	if app.pending != nil {
 		previous, beforeManual = app.pending.effective, app.pending.manual
 	}
+	// The hub's default mode reaches a person who never picked one with the
+	// catalog that carries it, in the same transaction.
+	manual = manual.FollowDefault(next.Catalog.DefaultMode)
 	effective, err := presets.Effective(manual, next.Catalog, next.Choices)
 	if err != nil {
 		return err

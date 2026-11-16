@@ -359,7 +359,7 @@ func (c *Core) SetRoutingMode(mode string) error {
 	if err != nil {
 		return err
 	}
-	policy.Mode = RoutingMode(mode)
+	policy.Mode, policy.ModeChosen = RoutingMode(mode), true
 	effective, err := c.effectiveRouting(policy)
 	if err != nil {
 		return err
@@ -371,7 +371,7 @@ func (c *Core) SetRoutingMode(mode string) error {
 		if mode != "bypass" && mode != "proxy" {
 			return fmt.Errorf("неизвестный режим %q", mode)
 		}
-		state.Mode = RoutingMode(mode)
+		state.Mode, state.ModeChosen = RoutingMode(mode), true
 		return nil
 	})
 }

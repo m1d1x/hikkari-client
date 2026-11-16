@@ -127,3 +127,27 @@ func TestPolicySemanticsAndActiveEquality(t *testing.T) {
 		t.Fatal("set ordering changes policy")
 	}
 }
+
+func TestFollowDefaultMovesOnlyAModeNobodyPicked(t *testing.T) {
+	s := DefaultRoutingState()
+	if got := s.FollowDefault(ModeProxy).Mode; got != ModeProxy {
+		t.Fatal("unpicked mode stayed", got)
+	}
+	if got := s.FollowDefault("").Mode; got != ModeBypass {
+		t.Fatal("no default is bypass, got", got)
+	}
+	s.Mode, s.ModeChosen = ModeBypass, true
+	if got := s.FollowDefault(ModeProxy).Mode; got != ModeBypass {
+		t.Fatal("a picked mode moved to", got)
+	}
+}
+
+func TestSettingTheModeMarksItPicked(t *testing.T) {
+	st := NewMemory()
+	if err := st.SetRoutingMode(ModeProxy); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := st.ReadRouting(); !s.ModeChosen || s.Mode != ModeProxy {
+		t.Fatal("the mode set by hand is not marked picked", s.Mode, s.ModeChosen)
+	}
+}

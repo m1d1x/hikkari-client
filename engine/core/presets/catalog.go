@@ -32,9 +32,14 @@ type Service struct {
 }
 
 type Catalog struct {
-	SchemaVersion int       `json:"schemaVersion"`
-	Version       int64     `json:"version"`
-	Services      []Service `json:"services"`
+	SchemaVersion int   `json:"schemaVersion"`
+	Version       int64 `json:"version"`
+	// DefaultMode is the routing mode for a person who never picked one
+	// (routing.RoutingState.FollowDefault); "" means bypass. The hub sends
+	// it only to a client that asks with defaultmode=1: an older client
+	// refuses a catalog with a field it does not know.
+	DefaultMode routing.RoutingMode `json:"defaultMode,omitempty"`
+	Services    []Service           `json:"services"`
 }
 
 var validID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -56,6 +61,9 @@ func Parse(data []byte) (Catalog, error) {
 	}
 	if c.SchemaVersion != 1 || c.Version < 1 || c.Services == nil || len(c.Services) > 200 {
 		return c, fmt.Errorf("неподдерживаемая схема, версия или размер каталога")
+	}
+	if c.DefaultMode != "" && c.DefaultMode != routing.ModeBypass && c.DefaultMode != routing.ModeProxy {
+		return c, fmt.Errorf("неизвестный режим по умолчанию %q", c.DefaultMode)
 	}
 	seen := map[string]bool{}
 	for i := range c.Services {

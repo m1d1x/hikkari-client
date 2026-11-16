@@ -195,6 +195,15 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		return err
 	}
 	c.presetState = c.presets.Snapshot().State
+	// The cached catalog's default mode holds from the first start, ahead of
+	// the engine's configuration, which reads routing.json.
+	if followed := manual.FollowDefault(c.presetState.Catalog.DefaultMode); followed.Mode != manual.Mode {
+		if err := c.routing.WriteRouting(followed); err != nil {
+			c.logger.Logf("[routing] default mode %s not kept: %v", followed.Mode, err)
+		} else {
+			manual = followed
+		}
+	}
 	if gated, ok := c.backend.(engine.TesterGated); ok {
 		presetManager := c.presets
 		gated.SetTesterGate(func() bool { return presetManager.Snapshot().Tester })

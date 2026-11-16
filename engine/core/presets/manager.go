@@ -384,6 +384,7 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	asked := m.Snapshot().State
 	query := endpoint.Query()
 	query.Set("bucket", fmt.Sprint(*asked.Bucket))
+	query.Set("defaultmode", "1")
 	if asked.Tester {
 		query.Set("tester", "1")
 	}

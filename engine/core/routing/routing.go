@@ -77,8 +77,27 @@ type RouteList struct {
 type RoutingState struct {
 	Enabled bool        `json:"enabled"`
 	Mode    RoutingMode `json:"mode"`
-	Bypass  RouteList   `json:"bypass"`
-	Proxy   RouteList   `json:"proxy"`
+	// ModeChosen is set once the person picks the mode themselves (the
+	// switch, or an imported snapshot that names one). Until then Mode
+	// follows the default the catalog from the hub gives; after it the
+	// person's pick wins over the hub.
+	ModeChosen bool      `json:"modeChosen,omitempty"`
+	Bypass     RouteList `json:"bypass"`
+	Proxy      RouteList `json:"proxy"`
+}
+
+// FollowDefault puts a mode the person never picked on def, the default the
+// hub's catalog gives; "" is a catalog without one, and means the client's
+// own default, bypass. A picked mode is returned as it is.
+func (s RoutingState) FollowDefault(def RoutingMode) RoutingState {
+	if s.ModeChosen {
+		return s
+	}
+	if def != ModeProxy {
+		def = ModeBypass
+	}
+	s.Mode = def
+	return s
 }
 
 // DefaultRoutingState is what we materialise when routing.json doesn't
@@ -211,7 +230,7 @@ func (s *Store) SetRoutingMode(mode RoutingMode) error {
 	if err != nil {
 		return err
 	}
-	state.Mode = mode
+	state.Mode, state.ModeChosen = mode, true
 	if err := s.WriteRouting(state); err != nil {
 		return err
 	}

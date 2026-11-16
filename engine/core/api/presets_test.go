@@ -14,6 +14,7 @@ import (
 
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/presets"
+	"NekkoVPN/core/routing"
 )
 
 func TestServicePresetUpdatesReachRunningBackendAndPreserveManualRules(t *testing.T) {
@@ -212,5 +213,69 @@ func TestFailedPresetRestartRestoresPreviousRunningPolicy(t *testing.T) {
 	f.mu.Unlock()
 	if len(domains) != 0 {
 		t.Fatal("failed group still configured", domains)
+	}
+}
+
+// D3 of plans/2026-11-16-default-mode-blocked-via-vpn.md: the hub's default
+// mode moves a person who never picked one, and never one who did.
+func TestTheHubsDefaultModeMovesOnlyAPersonWhoNeverPickedOne(t *testing.T) {
+	var mode atomic.Value
+	mode.Store(`,"defaultMode":"proxy"`)
+	var version atomic.Int64
+	version.Store(40)
+	asked := make(chan string, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case asked <- r.URL.Query().Get("defaultmode"):
+		default:
+		}
+		_, _ = fmt.Fprintf(w, `{"schemaVersion":1,"version":%d%s,"services":[{"id":"blocked","name":"Blocked","icon":"steam","domains":["blocked.example"],"ips":[],"processes":{},"defaultModes":["proxy"]}]}`, version.Load(), mode.Load())
+	}))
+	defer server.Close()
+	t.Setenv("HIKKARI_PRESET_CATALOG_URL", server.URL)
+	t.Setenv("HIKKARI_PRESET_EVENTS_URL", "")
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProcessRouting: true, FolderRouting: true}}
+	c := initAlternate(t, f)
+	if m, _ := c.Routing(); m.Mode != routing.ModeBypass {
+		t.Fatal("a fresh install starts in", m.Mode)
+	}
+	if err := c.RefreshRoutingPresets(); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-asked; got != "1" {
+		t.Fatalf("the client asked defaultmode=%q, the hub keeps the field from it", got)
+	}
+	manual, _ := c.Routing()
+	f.mu.Lock()
+	got := f.configuration.Routing
+	f.mu.Unlock()
+	if manual.Mode != routing.ModeProxy || manual.ModeChosen {
+		t.Fatal("the hub's default did not reach a person who never picked", manual.Mode, manual.ModeChosen)
+	}
+	if got.Mode != routing.ModeProxy || !reflect.DeepEqual(got.Proxy.Domains, []string{"blocked.example"}) {
+		t.Fatal("the engine did not get the default mode with its list", got.Mode, got.Proxy.Domains)
+	}
+
+	// A catalog without the field is the client's own default again.
+	mode.Store("")
+	version.Store(41)
+	if err := c.RefreshRoutingPresets(); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := c.Routing(); m.Mode != routing.ModeBypass {
+		t.Fatal("a catalog without a default left the mode at", m.Mode)
+	}
+
+	// Picked by hand, the mode stays whatever the hub says next.
+	if err := c.SetRoutingMode("bypass"); err != nil {
+		t.Fatal(err)
+	}
+	mode.Store(`,"defaultMode":"proxy"`)
+	version.Store(42)
+	if err := c.RefreshRoutingPresets(); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := c.Routing(); m.Mode != routing.ModeBypass || !m.ModeChosen {
+		t.Fatal("the hub overrode a mode the person picked", m.Mode, m.ModeChosen)
 	}
 }
