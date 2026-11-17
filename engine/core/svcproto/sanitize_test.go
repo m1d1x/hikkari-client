@@ -319,3 +319,19 @@ func mustJSON(t *testing.T, v interface{}) []byte {
 	}
 	return raw
 }
+
+// The GUI's one inbound besides the TUN is the voice probe's UDP forwarder on
+// loopback. The same forwarder on a public address would serve the tunnel to
+// whoever reaches the machine, and the service runs as root or SYSTEM.
+func TestAnInboundBesidesTheTUNMustListenOnLoopback(t *testing.T) {
+	for _, listen := range []string{"0.0.0.0", "::", "192.168.1.5", ""} {
+		cfg := realConfig(t)
+		cfg["inbounds"] = append(cfg["inbounds"].([]interface{}), map[string]interface{}{
+			"tag": "open", "type": "direct", "listen": listen, "listen_port": 5353,
+			"network": "udp", "override_address": "1.1.1.1", "override_port": 53,
+		})
+		if _, err := sanitize(t, cfg); err == nil || !strings.Contains(err.Error(), "loopback") {
+			t.Fatalf("an inbound on %q was not refused: %v", listen, err)
+		}
+	}
+}

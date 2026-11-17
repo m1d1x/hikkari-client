@@ -9,6 +9,7 @@
 package diag
 
 import (
+	"NekkoVPN/core/voiceprobe"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -57,11 +58,12 @@ type Runner struct {
 	loadBusy     bool        // a load round is running
 	loadMobile   bool        // the last round found a mobile network
 
-	voiceAddr   string    // voiceTarget resolved before the TUN comes up; see voice.go
-	baseNet     string    // the network the tunnel-down baseline was seen from
-	voiceAt     time.Time // last voice round
-	voiceBusy   bool      // a voice round is running
-	voiceMobile bool      // the last voice round found a mobile network
+	voiceAddr    string    // voiceTarget resolved before the TUN comes up; see voice.go
+	voiceTunAddr string    // the core's inbound for the probe; a var for tests
+	baseNet      string    // the network the tunnel-down baseline was seen from
+	voiceAt      time.Time // last voice round
+	voiceBusy    bool      // a voice round is running
+	voiceMobile  bool      // the last voice round found a mobile network
 
 	destKey destKey // see dest.go
 }
@@ -73,7 +75,7 @@ type physIface struct {
 
 // New builds a Runner. configPath is the sing-box config.json.
 func New(log Logger, configPath string) *Runner {
-	return &Runner{log: log, configPath: configPath}
+	return &Runner{log: log, configPath: configPath, voiceTunAddr: voiceprobe.Address()}
 }
 
 // Baseline snapshots the machine while the tunnel is down (call at engine

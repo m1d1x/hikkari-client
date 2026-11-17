@@ -6,6 +6,7 @@
 package configfile
 
 import (
+	"NekkoVPN/core/voiceprobe"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -94,6 +95,13 @@ func singboxLogBlock() map[string]interface{} {
 		"level":     "warn",
 		"timestamp": true,
 	}
+}
+
+// coreInbounds are every inbound the core runs with: the TUN, and the loopback
+// inbound through which the tester's voice probe reaches the tunnel's profile
+// in any routing mode (core/voiceprobe, voiceProbeRules).
+func coreInbounds() []interface{} {
+	return []interface{}{tunInbound(), voiceprobe.Inbound()}
 }
 
 func tunInbound() map[string]interface{} {
@@ -207,11 +215,9 @@ func realAddressRule() map[string]interface{} {
 
 func DefaultConfig() map[string]interface{} {
 	return map[string]interface{}{
-		"log": singboxLogBlock(),
-		"dns": canonicalDNS(),
-		"inbounds": []interface{}{
-			tunInbound(),
-		},
+		"log":      singboxLogBlock(),
+		"dns":      canonicalDNS(),
+		"inbounds": coreInbounds(),
 		"outbounds": []interface{}{
 			map[string]interface{}{"tag": "direct", "type": "direct"},
 		},
@@ -599,10 +605,9 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		"store_fakeip": true,
 	}
 	cfg["log"] = singboxLogBlock()
-	// Always heal tun-in inbound for optimal MTU (1360), mixed stack, and FullCone NAT.
-	cfg["inbounds"] = []interface{}{
-		tunInbound(),
-	}
+	// Always heal the inbounds: tun-in for optimal MTU (1360), mixed stack and
+	// FullCone NAT, and the voice probe's own.
+	cfg["inbounds"] = coreInbounds()
 }
 
 // healOutboundConfig ensures VLESS profiles have proper packet_encoding.

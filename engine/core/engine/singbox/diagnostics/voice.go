@@ -21,10 +21,15 @@ import (
 // its TCP profiles (plans/research/2026-11-08-udp-abroad-from-testers.md). The
 // round below sends what a call sends and writes what a call would hear.
 //
-// The series goes through the tunnel, whatever profile is selected. On Windows
-// a second series leaves from the physical card past the tunnel: what the
-// tester's own network loses before any tunnel. Elsewhere a socket bound to the
-// card still goes through the TUN (reach.go), so that control is Windows only.
+// The series goes through the tunnel's profile, whatever profile is selected
+// and whatever the routing mode: it is sent to the core's loopback inbound for
+// the probe, which forwards it to voiceTarget through the outbound the VPN's own
+// traffic takes (core/voiceprobe). By the default route it would follow the
+// rules, and in the default mode an unblocked STUN server goes direct. On
+// Windows a second series leaves from the physical card past the tunnel: what
+// the tester's own network loses before any tunnel. Elsewhere a socket bound to
+// the card still goes through the TUN (reach.go), so that control is Windows
+// only.
 const (
 	voiceEvery = 30 * time.Minute
 	// A series costs ~0.3 MB; on a phone's data plan the round runs rarely.
@@ -43,7 +48,9 @@ const (
 // voiceTarget answers each datagram: a STUN binding request comes back with the
 // same transaction ID. Cloudflare's anycast answers near whichever end the
 // datagram leaves from, so through the tunnel the series times the tunnel and
-// not a far server, and from the card it times the tester's own network.
+// not a far server, and from the card it times the tester's own network. The
+// tunnel's series reaches it by the core (voiceprobe.TargetHost), the card's by
+// this address resolved before the TUN came up.
 const voiceTarget = "stun.cloudflare.com:3478"
 
 // maybeVoice starts the round when it is allowed and due. Like the load round
@@ -136,12 +143,12 @@ func (r *Runner) voiceLines(ctx context.Context, ifaces []physIface) []string {
 	network := fmt.Sprintf("isp=%s isp_at=%s mobile=%d", isp, ispAt, boolInt(mobile))
 
 	tag, proto := r.voiceProfile()
-	if addr == "" {
-		return []string{fmt.Sprintf("path=tun profile=%s proto=%s %s error=%q", tag, proto, network, "target not resolved")}
-	}
 	lines := []string{fmt.Sprintf("path=tun profile=%s proto=%s %s target=%s %s",
-		tag, proto, network, voiceTargetTag, voiceLine(ctx, nil, addr))}
-	if card != nil && ctx.Err() == nil {
+		tag, proto, network, voiceTargetTag, voiceLine(ctx, nil, r.voiceTunAddr))}
+	if card != nil && addr == "" {
+		lines = append(lines, fmt.Sprintf("path=direct iface=%s %s error=%q",
+			strings.ReplaceAll(card.Name, " ", "_"), network, "target not resolved"))
+	} else if card != nil && ctx.Err() == nil {
 		lines = append(lines, fmt.Sprintf("path=direct iface=%s %s target=%s %s",
 			strings.ReplaceAll(card.Name, " ", "_"), network, voiceTargetTag, voiceLine(ctx, card.IP, addr)))
 	}
@@ -180,8 +187,8 @@ func (r *Runner) voiceProfile() (tag, proto string) {
 	return tag, proto
 }
 
-// voiceLine runs one series from local (nil: the default route, the tunnel)
-// and formats what it measured.
+// voiceLine runs one series from local (nil: the default route) to addr and
+// formats what it measured.
 func voiceLine(ctx context.Context, local net.IP, addr string) string {
 	raddr, err := net.ResolveUDPAddr("udp4", addr)
 	if err != nil {

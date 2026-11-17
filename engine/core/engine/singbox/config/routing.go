@@ -5,6 +5,7 @@ import (
 	"NekkoVPN/core/health"
 	"NekkoVPN/core/routing"
 	"NekkoVPN/core/ruzone"
+	"NekkoVPN/core/voiceprobe"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -98,7 +99,7 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 
 	// The egress probe first, ahead of every list: it measures the tunnel's
 	// exit, so through the tunnel is the only place it can ask from.
-	userRules := egressProbeRules(head)
+	userRules := append(voiceProbeRules(head), egressProbeRules(head)...)
 	if state.Enabled && ruleOutbound != "" {
 		appendRule := func(key string, vals []string) {
 			if len(vals) == 0 {
@@ -272,6 +273,22 @@ func egressProbeRules(head string) []interface{} {
 	return []interface{}{map[string]interface{}{
 		"domain":   toAnySlice(hosts),
 		"network":  "tcp",
+		"outbound": head,
+	}}
+}
+
+// voiceProbeRules send everything from the voice probe's inbound to head, the
+// outbound the VPN's own traffic takes, in every mode: the probe exists to time
+// that path, and its STUN server is not blocked, so in the default mode the
+// rules below would send it direct. The rule names no network, so in auto mode
+// routeUDPByDatagrams gives it the UDP twin to auto mode's UDP group, the group
+// a call's datagrams take.
+func voiceProbeRules(head string) []interface{} {
+	if head == "" {
+		return nil
+	}
+	return []interface{}{map[string]interface{}{
+		"inbound":  []interface{}{voiceprobe.Tag},
 		"outbound": head,
 	}}
 }

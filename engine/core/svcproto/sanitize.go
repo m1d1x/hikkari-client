@@ -53,6 +53,9 @@ func Sanitize(raw []byte, p Paths) ([]byte, error) {
 		// Without the tun inbound there is nothing for the service to do.
 		return nil, fmt.Errorf("config has no inbounds")
 	}
+	if err := checkInbounds(cfg["inbounds"]); err != nil {
+		return nil, err
+	}
 
 	for key := range cfg {
 		if !allowedTopLevel[key] {
@@ -129,6 +132,31 @@ func normaliseAutoTunnel(route map[string]interface{}, servicePath string) error
 	route["rule_set"] = []interface{}{map[string]interface{}{
 		"tag": autotunnel.Tag, "type": "local", "format": "source", "path": servicePath,
 	}}
+	return nil
+}
+
+// checkInbounds keeps every inbound but the TUN on loopback. The GUI adds one
+// such inbound, the voice probe's UDP forwarder (core/voiceprobe); the service
+// runs as root or SYSTEM, and an inbound on a public address would serve the
+// tunnel to whoever reaches the machine.
+func checkInbounds(v interface{}) error {
+	inbounds, ok := v.([]interface{})
+	if !ok {
+		return fmt.Errorf("inbounds is not a list")
+	}
+	for i, item := range inbounds {
+		in, ok := item.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("inbounds[%d] is not an object", i)
+		}
+		if in["type"] == "tun" {
+			continue
+		}
+		listen, _ := in["listen"].(string)
+		if ip := net.ParseIP(listen); ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("inbounds[%d]: %v must listen on loopback, not %q", i, in["type"], listen)
+		}
+	}
 	return nil
 }
 
