@@ -10,6 +10,7 @@ import (
 	"NekkoVPN/core/engine/xray"
 	"NekkoVPN/core/routing"
 	"NekkoVPN/core/ruzone"
+	"NekkoVPN/core/voiceprobe"
 )
 
 // One portable fixture exercises both native compilers, every platform, both
@@ -58,6 +59,14 @@ func TestAdaptersImplementTheSameRoutingIntent(t *testing.T) {
 					// The health probe's echo services go through the tunnel in
 					// every mode: they measure its exit.
 					if rule["domain"] != nil && rule["network"] == "tcp" {
+						if rule["outbound"] != "vpn" {
+							t.Fatal(rule)
+						}
+						continue
+					}
+					// So does the voice probe, by its own loopback inbound
+					// (core/voiceprobe): it times the VPN's path.
+					if in, _ := rule["inbound"].([]interface{}); len(in) == 1 && in[0] == voiceprobe.Tag {
 						if rule["outbound"] != "vpn" {
 							t.Fatal(rule)
 						}
