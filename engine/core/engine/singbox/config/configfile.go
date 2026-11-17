@@ -6,7 +6,6 @@
 package configfile
 
 import (
-	"NekkoVPN/core/voiceprobe"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -97,11 +96,12 @@ func singboxLogBlock() map[string]interface{} {
 	}
 }
 
-// coreInbounds are every inbound the core runs with: the TUN, and the loopback
-// inbound through which the tester's voice probe reaches the tunnel's profile
-// in any routing mode (core/voiceprobe, voiceProbeRules).
+// coreInbounds are every inbound the core runs with: the TUN alone. The voice
+// probe reaches the profile by a route rule (core/voiceprobe), not by an
+// inbound of its own: an inbound on a port Windows reserved keeps the core
+// from starting.
 func coreInbounds() []interface{} {
-	return []interface{}{tunInbound(), voiceprobe.Inbound()}
+	return []interface{}{tunInbound()}
 }
 
 func tunInbound() map[string]interface{} {
@@ -606,7 +606,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 	}
 	cfg["log"] = singboxLogBlock()
 	// Always heal the inbounds: tun-in for optimal MTU (1360), mixed stack and
-	// FullCone NAT, and the voice probe's own.
+	// FullCone NAT. This also drops 1.0.90's voice probe inbound.
 	cfg["inbounds"] = coreInbounds()
 }
 

@@ -22,10 +22,10 @@ import (
 // round below sends what a call sends and writes what a call would hear.
 //
 // The series goes through the tunnel's profile, whatever profile is selected
-// and whatever the routing mode: it is sent to the core's loopback inbound for
-// the probe, which forwards it to voiceTarget through the outbound the VPN's own
-// traffic takes (core/voiceprobe). By the default route it would follow the
-// rules, and in the default mode an unblocked STUN server goes direct. On
+// and whatever the routing mode: it is sent into the TUN to the probe's own
+// address, and the core's rules turn it to voiceTarget through the outbound the
+// VPN's own traffic takes (core/voiceprobe). Sent to voiceTarget itself it would
+// follow the rules, and in the default mode an unblocked STUN server goes direct. On
 // Windows a second series leaves from the physical card past the tunnel: what
 // the tester's own network loses before any tunnel. Elsewhere a socket bound to
 // the card still goes through the TUN (reach.go), so that control is Windows

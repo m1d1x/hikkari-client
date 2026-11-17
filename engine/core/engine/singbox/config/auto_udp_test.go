@@ -73,14 +73,14 @@ func TestAutoUDPGroupHoldsOnlyDatagramProfiles(t *testing.T) {
 	}
 	// Rules that send traffic direct keep it ahead of the UDP rule. The voice
 	// probe's twin is ahead of them on purpose: it matches only the probe's own
-	// inbound, which must take the VPN's path in every mode.
+	// address (core/voiceprobe), which must take the VPN's path in every mode.
 	ruIndex, udpIndex := -1, -1
 	for i, raw := range rules {
 		r, _ := raw.(map[string]interface{})
 		if r["outbound"] == "direct" && r["domain_suffix"] != nil && ruIndex < 0 {
 			ruIndex = i
 		}
-		if r["outbound"] == AutoUDPTag && r["inbound"] == nil && udpIndex < 0 {
+		if r["outbound"] == AutoUDPTag && !isVoiceProbeRule(r) && udpIndex < 0 {
 			udpIndex = i
 		}
 	}

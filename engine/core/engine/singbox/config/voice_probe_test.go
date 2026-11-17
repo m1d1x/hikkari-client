@@ -6,36 +6,33 @@ import (
 	"NekkoVPN/core/voiceprobe"
 )
 
-// voiceProbeRule is the rule that matches the probe's inbound, and its index.
+// isVoiceProbeRule reports whether r matches the voice probe's own address.
+func isVoiceProbeRule(r map[string]interface{}) bool {
+	cidr, _ := r["ip_cidr"].([]interface{})
+	return len(cidr) == 1 && cidr[0] == voiceprobe.CIDR()
+}
+
+// voiceProbeRule finds the rule for the probe's address, and its index.
 func voiceProbeRule(cfg map[string]interface{}) (map[string]interface{}, int) {
 	for i, r := range rulesOf(cfg) {
-		in, _ := r["inbound"].([]interface{})
-		if len(in) == 1 && in[0] == voiceprobe.Tag && r["network"] == nil {
+		if isVoiceProbeRule(r) && r["network"] == nil {
 			return r, i
 		}
 	}
 	return nil, -1
 }
 
-func TestTheCoreCarriesTheVoiceProbesInboundOnLoopback(t *testing.T) {
+// 1.0.90 had the core listen for the probe on 127.0.0.1:47391; on a PC with
+// Hyper-V or WSL2 that port was reserved, and a core that cannot bind an
+// inbound does not start. The core runs the TUN alone.
+func TestTheCoreRunsNoInboundButTheTUN(t *testing.T) {
 	for name, inbounds := range map[string]interface{}{
 		"a fresh config":  DefaultConfig()["inbounds"],
 		"a healed config": coreInbounds(),
 	} {
-		var probe map[string]interface{}
-		for _, in := range inbounds.([]interface{}) {
-			if m := in.(map[string]interface{}); m["tag"] == voiceprobe.Tag {
-				probe = m
-			}
-		}
-		if probe == nil {
-			t.Fatalf("%s: no inbound %q among %v", name, voiceprobe.Tag, inbounds)
-		}
-		if probe["type"] != "direct" || probe["listen"] != "127.0.0.1" || probe["network"] != "udp" {
-			t.Fatalf("%s: the probe's inbound is not a UDP forwarder on loopback: %v", name, probe)
-		}
-		if probe["override_address"] != "stun.cloudflare.com" || probe["override_port"] != 3478 {
-			t.Fatalf("%s: the probe's inbound forwards elsewhere: %v", name, probe)
+		list := inbounds.([]interface{})
+		if len(list) != 1 || list[0].(map[string]interface{})["type"] != "tun" {
+			t.Fatalf("%s: inbounds %v, want the TUN alone", name, list)
 		}
 	}
 }
@@ -52,12 +49,15 @@ func TestTheVoiceProbeTakesTheVPNsPathInEveryMode(t *testing.T) {
 	} {
 		cfg := freshCfg()
 		ApplyRouting(cfg, state, SelectorTag)
-		rule, at := voiceProbeRule(cfg)
-		if rule == nil {
-			t.Fatalf("%s: no rule for the probe's inbound in %v", name, rulesOf(cfg))
+		route, at := voiceProbeRule(cfg)
+		if route == nil {
+			t.Fatalf("%s: no rule for the probe's address in %v", name, rulesOf(cfg))
 		}
-		if rule["outbound"] != SelectorTag {
-			t.Fatalf("%s: the probe goes to %v, not the VPN", name, rule["outbound"])
+		if route["override_address"] != voiceprobe.TargetHost || route["override_port"] != voiceprobe.TargetPort || route["port"] != voiceprobe.Port {
+			t.Fatalf("%s: the probe's datagrams are turned elsewhere: %v", name, route)
+		}
+		if route["outbound"] != SelectorTag {
+			t.Fatalf("%s: the probe goes to %v, not the VPN", name, route["outbound"])
 		}
 		for i, r := range rulesOf(cfg)[:at] {
 			if ob, _ := r["outbound"].(string); ob != "" && r["network"] != "icmp" {
@@ -78,11 +78,10 @@ func TestTheVoiceProbeTakesAutoModesUDPGroup(t *testing.T) {
 	ApplyRouting(cfg, RoutingState{Enabled: true, Mode: ModeProxy, Proxy: RouteList{Domains: []string{"discord.com"}}}, AutoTag)
 	_, at := voiceProbeRule(cfg)
 	if at < 1 {
-		t.Fatalf("no rule for the probe's inbound behind its UDP twin: %v", rulesOf(cfg))
+		t.Fatalf("no rule for the probe's address behind its UDP twin: %v", rulesOf(cfg))
 	}
 	twin := rulesOf(cfg)[at-1]
-	in, _ := twin["inbound"].([]interface{})
-	if len(in) != 1 || in[0] != voiceprobe.Tag || twin["network"] != "udp" || twin["outbound"] != AutoUDPTag {
+	if !isVoiceProbeRule(twin) || twin["network"] != "udp" || twin["outbound"] != AutoUDPTag || twin["override_address"] != voiceprobe.TargetHost {
 		t.Fatalf("the probe's UDP does not go to %s: %v", AutoUDPTag, twin)
 	}
 }

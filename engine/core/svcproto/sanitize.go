@@ -135,10 +135,9 @@ func normaliseAutoTunnel(route map[string]interface{}, servicePath string) error
 	return nil
 }
 
-// checkInbounds keeps every inbound but the TUN on loopback. The GUI adds one
-// such inbound, the voice probe's UDP forwarder (core/voiceprobe); the service
-// runs as root or SYSTEM, and an inbound on a public address would serve the
-// tunnel to whoever reaches the machine.
+// checkInbounds keeps every inbound but the TUN on loopback. The GUI sends the
+// TUN alone today; the service runs as root or SYSTEM, and an inbound on a
+// public address would serve the tunnel to whoever reaches the machine.
 func checkInbounds(v interface{}) error {
 	inbounds, ok := v.([]interface{})
 	if !ok {

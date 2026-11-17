@@ -277,19 +277,25 @@ func egressProbeRules(head string) []interface{} {
 	}}
 }
 
-// voiceProbeRules send everything from the voice probe's inbound to head, the
-// outbound the VPN's own traffic takes, in every mode: the probe exists to time
-// that path, and its STUN server is not blocked, so in the default mode the
-// rules below would send it direct. The rule names no network, so in auto mode
-// routeUDPByDatagrams gives it the UDP twin to auto mode's UDP group, the group
-// a call's datagrams take.
+// voiceProbeRules send the voice probe's datagrams (core/voiceprobe), which go
+// into the TUN to an address nothing else uses, to head, the outbound the VPN's
+// own traffic takes, and turn them to the STUN server by name, in every mode:
+// the probe exists to time that path, and its STUN server is not blocked, so in
+// the default mode the rules below would send it direct. One rule, because the
+// turn changes the destination to the name and a rule behind it would no longer
+// match the address. It names no network, so in auto mode routeUDPByDatagrams
+// gives it the UDP twin to auto mode's UDP group, the group a call's datagrams
+// take.
 func voiceProbeRules(head string) []interface{} {
 	if head == "" {
 		return nil
 	}
 	return []interface{}{map[string]interface{}{
-		"inbound":  []interface{}{voiceprobe.Tag},
-		"outbound": head,
+		"ip_cidr":          []interface{}{voiceprobe.CIDR()},
+		"port":             voiceprobe.Port,
+		"outbound":         head,
+		"override_address": voiceprobe.TargetHost,
+		"override_port":    voiceprobe.TargetPort,
 	}}
 }
 

@@ -47,6 +47,14 @@ func TestAdaptersImplementTheSameRoutingIntent(t *testing.T) {
 				matches := map[string][]string{}
 				for _, item := range route["rules"].([]interface{}) {
 					rule := item.(map[string]interface{})
+					// The voice probe goes through the tunnel in every mode, by its own
+					// address in the TUN (core/voiceprobe): it times the VPN's path.
+					if cidr, _ := rule["ip_cidr"].([]interface{}); len(cidr) == 1 && cidr[0] == voiceprobe.CIDR() {
+						if rule["outbound"] != "vpn" {
+							t.Fatal(rule)
+						}
+						continue
+					}
 					// The Secure DNS rules are the engine's, not the user's:
 					// only they carry ports. So is the Russian zone, which
 					// goes direct in every mode (core/ruzone).
@@ -59,14 +67,6 @@ func TestAdaptersImplementTheSameRoutingIntent(t *testing.T) {
 					// The health probe's echo services go through the tunnel in
 					// every mode: they measure its exit.
 					if rule["domain"] != nil && rule["network"] == "tcp" {
-						if rule["outbound"] != "vpn" {
-							t.Fatal(rule)
-						}
-						continue
-					}
-					// So does the voice probe, by its own loopback inbound
-					// (core/voiceprobe): it times the VPN's path.
-					if in, _ := rule["inbound"].([]interface{}); len(in) == 1 && in[0] == voiceprobe.Tag {
 						if rule["outbound"] != "vpn" {
 							t.Fatal(rule)
 						}
