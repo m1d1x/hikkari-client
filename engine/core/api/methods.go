@@ -527,17 +527,21 @@ func (c *Core) logConnect(action string, started time.Time, err error) {
 	if c.logger == nil {
 		return
 	}
-	label := "?"
-	if pf, readErr := c.profiles.Read(); readErr == nil {
+	c.logger.Logf("[connect] %s profile=%q proto=%s secs=%.1f ok=%v err=%v",
+		action, c.activeLabel(), c.activeProto(), time.Since(started).Seconds(), err == nil, err)
+}
+
+// activeLabel is the active profile's name as the user sees it, "?" when
+// the profiles cannot be read.
+func (c *Core) activeLabel() string {
+	if pf, err := c.profiles.Read(); err == nil {
 		for _, p := range pf.Profiles {
 			if p.Name == pf.Active {
-				label = p.Label
-				break
+				return p.Label
 			}
 		}
 	}
-	c.logger.Logf("[connect] %s profile=%q proto=%s secs=%.1f ok=%v err=%v",
-		action, label, c.activeProto(), time.Since(started).Seconds(), err == nil, err)
+	return "?"
 }
 
 // probeAfterSwitch measures the profile a tester just switched to. The session

@@ -28,10 +28,22 @@
 // length in ms: "[downtime] stalls from=<unix> bounds=300,1000,3000
 // v=.;2:950,1:1200,0:0;-". "." is a minute without a stall, "-" one not
 // measured (an older core, or the minute unseen).
+//
+// For a tester the log also says how much went where and on what (owner,
+// 18.11: «тестеры добровольно дали разрешение на все»). Each minute's bytes,
+// from the same looks at the connections: "[downtime] bytes from=<unix>
+// v=1200,56000,300,900;.;-", per minute the bytes up and down through the
+// tunnel, then up and down past it, "." a minute that carried nothing, "-" one
+// not measured. A connection that opened and closed between two looks, or the
+// last bytes of one that closed, are not seen: the figure is a little short,
+// never long. And what the tunnel runs on, when it changes and with every run:
+// "[downtime] state at=<unix> mode=proxy proto=hikkari profile="амстердам-006"".
+// Neither goes into Period: an ordinary user's telemetry carries no traffic.
 package downtime
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -105,6 +117,9 @@ type Sources struct {
 	// Stalls reads the core's stall totals since it started; ok is false when
 	// the core does not time stalls. Nil when the engine cannot.
 	Stalls func() (totals StallTotals, ok bool)
+	// State is what the tunnel runs on now: the routing mode (proxy, bypass,
+	// off), the active profile's protocol and its name. Nil when unknown.
+	State func() (mode, proto, profile string)
 	// Logf writes the minutes.
 	Logf func(format string, args ...any)
 	// Report takes each run as counts, when the run is written. Nil when
@@ -138,6 +153,16 @@ type StallTotals struct {
 	MS       []int64
 }
 
+// minuteBytes are one minute's bytes through the tunnel and past it; nil
+// when the minute was not measured.
+type minuteBytes struct {
+	tunUp, tunDown, dirUp, dirDown uint64
+}
+
+func (b *minuteBytes) empty() bool {
+	return b.tunUp == 0 && b.tunDown == 0 && b.dirUp == 0 && b.dirDown == 0
+}
+
 // minuteStalls are one minute's stalls; nil when they were not measured.
 type minuteStalls struct {
 	count, ms []int64
@@ -156,6 +181,7 @@ type Meter struct {
 	coreDown   int
 	got        bool
 	unanswered bool
+	minBytes   minuteBytes
 	lastPoll   time.Time
 	// prevPoll is the look before this one while the tunnel stays on.
 	prevPoll time.Time
@@ -164,7 +190,11 @@ type Meter struct {
 	from      int64
 	states    []State
 	stalls    []*minuteStalls
+	bytes     []*minuteBytes
 	lastFlush time.Time
+
+	// lastState is the state line last written, "" while the tunnel is off.
+	lastState string
 
 	// The core's stall totals at the last minute closed, and their bounds.
 	stallBase   *StallTotals
@@ -213,6 +243,7 @@ func (m *Meter) Poll(ctx context.Context) {
 		m.conns = map[string]*connState{}
 		m.stallBase = nil
 		m.flush()
+		m.lastState = ""
 		return
 	}
 	if m.polls == 0 {
@@ -240,9 +271,6 @@ func (m *Meter) Poll(ctx context.Context) {
 func (m *Meter) look(now time.Time, conns []Conn) {
 	open := make(map[string]*connState, len(conns))
 	for _, c := range conns {
-		if c.Direct {
-			continue
-		}
 		s := m.conns[c.ID]
 		if s == nil {
 			s = &connState{}
@@ -251,6 +279,21 @@ func (m *Meter) look(now time.Time, conns []Conn) {
 			}
 		}
 		open[c.ID] = s
+		var up, down uint64
+		if c.Up > s.up {
+			up = c.Up - s.up
+		}
+		if c.Down > s.down {
+			down = c.Down - s.down
+		}
+		if c.Direct {
+			m.minBytes.dirUp += up
+			m.minBytes.dirDown += down
+			s.up, s.down = c.Up, c.Down
+			continue
+		}
+		m.minBytes.tunUp += up
+		m.minBytes.tunDown += down
 		if c.Down > s.down {
 			m.got = true
 			s.pendingSince, s.pendingBytes = time.Time{}, 0
@@ -276,9 +319,36 @@ func (m *Meter) closeMinute(ctx context.Context) {
 	}
 	stalls := m.readStalls()
 	if m.polls >= minPolls {
-		m.add(m.minute, m.verdict(ctx), stalls)
+		bytes := m.minBytes
+		m.add(m.minute, m.verdict(ctx), stalls, &bytes)
 	}
 	m.polls, m.coreDown, m.got, m.unanswered = 0, 0, false, false
+	m.minBytes = minuteBytes{}
+	m.writeState(false)
+}
+
+// writeState logs what the tunnel runs on when it changed, or always.
+func (m *Meter) writeState(always bool) {
+	if m.src.State == nil {
+		return
+	}
+	if wanted, running := m.src.Tunnel(); !wanted || !running {
+		return
+	}
+	mode, proto, profile := m.src.State()
+	line := fmt.Sprintf("mode=%s proto=%s profile=%q", orDash(mode), orDash(proto), profile)
+	if line == m.lastState && !always {
+		return
+	}
+	m.lastState = line
+	m.src.Logf("[downtime] state at=%d %s", m.now().Unix(), line)
+}
+
+func orDash(s string) string {
+	if s == "" || strings.ContainsAny(s, " \t\"") {
+		return "-"
+	}
+	return s
 }
 
 func (m *Meter) verdict(ctx context.Context) State {
@@ -346,7 +416,7 @@ func sameBounds(a, b []int64) bool {
 
 // add appends a minute to the run, marking any skipped minutes unseen. A gap
 // longer than a flush starts a new run instead of a line of dashes.
-func (m *Meter) add(minute int64, s State, stalls *minuteStalls) {
+func (m *Meter) add(minute int64, s State, stalls *minuteStalls, bytes *minuteBytes) {
 	if len(m.states) > 0 && minute-(m.from+int64(len(m.states))) > int64(flushEvery/time.Minute) {
 		m.flush()
 	}
@@ -372,9 +442,11 @@ func (m *Meter) add(minute int64, s State, stalls *minuteStalls) {
 	for ; next < minute; next++ {
 		m.states = append(m.states, Unseen)
 		m.stalls = append(m.stalls, nil)
+		m.bytes = append(m.bytes, nil)
 	}
 	m.states = append(m.states, s)
 	m.stalls = append(m.stalls, stalls)
+	m.bytes = append(m.bytes, bytes)
 }
 
 func (m *Meter) hasStalls() bool {
@@ -397,12 +469,19 @@ func (m *Meter) flush() {
 		if m.hasStalls() {
 			m.src.Logf("[downtime] stalls from=%d bounds=%s v=%s", m.from*60, joinInts(m.stallBounds, ","), m.stallLine())
 		}
+		if line, ok := m.bytesLine(); ok {
+			m.src.Logf("[downtime] bytes from=%d v=%s", m.from*60, line)
+		}
 		if m.src.Report != nil {
 			m.src.Report(m.period())
+		}
+		if m.lastState != "" {
+			m.writeState(true)
 		}
 	}
 	m.states = nil
 	m.stalls = nil
+	m.bytes = nil
 	m.lastFlush = time.Time{}
 }
 
@@ -430,6 +509,30 @@ func (m *Meter) period() Period {
 		}
 	}
 	return p
+}
+
+// bytesLine spells the run's bytes: per minute "." when nothing went, "-" not
+// measured, else "tunnel up,tunnel down,direct up,direct down"; minutes by
+// ";". ok is false when no minute carried anything: such a run says nothing
+// the minutes line does not.
+func (m *Meter) bytesLine() (string, bool) {
+	var b strings.Builder
+	carried := false
+	for i, v := range m.bytes {
+		if i > 0 {
+			b.WriteByte(';')
+		}
+		switch {
+		case v == nil:
+			b.WriteByte('-')
+		case v.empty():
+			b.WriteByte('.')
+		default:
+			carried = true
+			fmt.Fprintf(&b, "%d,%d,%d,%d", v.tunUp, v.tunDown, v.dirUp, v.dirDown)
+		}
+	}
+	return b.String(), carried
 }
 
 // stallLine spells the run's stalls: per minute "." without a stall, "-" not
