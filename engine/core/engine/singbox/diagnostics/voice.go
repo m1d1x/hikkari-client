@@ -38,10 +38,13 @@ const (
 	voicePackets     = 1500 // 30 s at voiceInterval
 	voiceSize        = 160  // bytes above UDP: an Opus frame with its RTP header
 	// A reply later than this is lost to a call: no jitter buffer waits a second.
-	voiceGrace     = time.Second
-	voiceGapShort  = 60 * time.Millisecond  // three frames: an audible glitch
-	voiceGapLong   = 150 * time.Millisecond // a dropout
-	voiceSoftware  = 0x8022                 // STUN SOFTWARE, comprehension-optional
+	voiceGrace    = time.Second
+	voiceGapShort = 60 * time.Millisecond  // three frames: an audible glitch
+	voiceGapLong  = 150 * time.Millisecond // a dropout
+	// Discord's jitter buffer holds about 20 ms, so a pause of one frame past
+	// it is heard already (plans/2026-11-18-live-traffic-observability.md, O3).
+	voiceGapTight  = 40 * time.Millisecond
+	voiceSoftware  = 0x8022 // STUN SOFTWARE, comprehension-optional
 	voiceTargetTag = "cloudflare"
 )
 
@@ -310,8 +313,8 @@ type voiceStats struct {
 	Jitter time.Duration
 	// Gaps count silences between consecutive arrivals: a lost run and a stream
 	// that stalls, then bursts, both make one.
-	Gaps60, Gaps150 int
-	GapMax          time.Duration
+	Gaps40, Gaps60, Gaps150 int
+	GapMax                  time.Duration
 	// Reorder counts replies that came after a later request's reply.
 	Reorder, Dup int
 }
@@ -374,6 +377,9 @@ func summarizeVoice(sent, got []time.Time, dup int) voiceStats {
 		if gap > s.GapMax {
 			s.GapMax = gap
 		}
+		if gap > voiceGapTight {
+			s.Gaps40++
+		}
 		if gap > voiceGapShort {
 			s.Gaps60++
 		}
@@ -395,8 +401,8 @@ func (s voiceStats) String() string {
 		return out
 	}
 	ms := func(d time.Duration) int64 { return d.Round(time.Millisecond).Milliseconds() }
-	return out + fmt.Sprintf(" rtt_p50=%d rtt_p95=%d rtt_max=%d jitter=%.1f gaps60=%d gaps150=%d gap_max=%d reorder=%d dup=%d",
-		ms(s.P50), ms(s.P95), ms(s.Max), float64(s.Jitter)/float64(time.Millisecond), s.Gaps60, s.Gaps150, ms(s.GapMax), s.Reorder, s.Dup)
+	return out + fmt.Sprintf(" rtt_p50=%d rtt_p95=%d rtt_max=%d jitter=%.1f gaps40=%d gaps60=%d gaps150=%d gap_max=%d reorder=%d dup=%d",
+		ms(s.P50), ms(s.P95), ms(s.Max), float64(s.Jitter)/float64(time.Millisecond), s.Gaps40, s.Gaps60, s.Gaps150, ms(s.GapMax), s.Reorder, s.Dup)
 }
 
 func boolInt(b bool) int {

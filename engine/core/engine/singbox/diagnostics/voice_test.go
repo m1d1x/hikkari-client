@@ -60,8 +60,22 @@ func TestVoiceSummaryCountsALostRunAsAGap(t *testing.T) {
 	if s.Recv != 16 || s.LossRun != 4 {
 		t.Fatalf("lost run: %+v", s)
 	}
-	if s.Gaps60 != 1 || s.Gaps150 != 0 || s.GapMax != 100*time.Millisecond {
-		t.Fatalf("lost run gaps: gaps60=%d gaps150=%d max=%v", s.Gaps60, s.Gaps150, s.GapMax)
+	if s.Gaps40 != 1 || s.Gaps60 != 1 || s.Gaps150 != 0 || s.GapMax != 100*time.Millisecond {
+		t.Fatalf("lost run gaps: gaps40=%d gaps60=%d gaps150=%d max=%v", s.Gaps40, s.Gaps60, s.Gaps150, s.GapMax)
+	}
+}
+
+// Two lost in a row leave 60 ms between arrivals: past Discord's 20 ms
+// buffer by two frames, so gaps40 counts it, gaps60 does not yet.
+func TestVoiceSummaryCountsAPauseTheBufferDoesNotHide(t *testing.T) {
+	rtts := make([]time.Duration, 20)
+	for i := range rtts {
+		rtts[i] = 40 * time.Millisecond
+	}
+	rtts[7], rtts[8] = 0, 0
+	s := voiceSummaryOf(rtts)
+	if s.Gaps40 != 1 || s.Gaps60 != 0 || s.GapMax != 60*time.Millisecond {
+		t.Fatalf("two lost: gaps40=%d gaps60=%d max=%v", s.Gaps40, s.Gaps60, s.GapMax)
 	}
 }
 
