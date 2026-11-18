@@ -351,10 +351,10 @@ func (r *rig) linesWith(prefix string) []string {
 	return out
 }
 
-// A tester's log says how much went through the tunnel and past it, minute
-// by minute (owner, 18.11): the deltas of the open connections, a connection
-// older than the first look only as a baseline.
-func TestEachMinuteCarriesItsBytesThroughTheTunnelAndPastIt(t *testing.T) {
+// A tester's log says how much went through the tunnel, minute by minute
+// (owner, 18.11): the deltas of the open connections, a connection older than
+// the first look only as a baseline. Traffic past the tunnel is not counted.
+func TestEachMinuteCarriesItsBytesThroughTheTunnelOnly(t *testing.T) {
 	r := newRig(t)
 	start := r.clock
 	old := r.clock.Add(-time.Hour)
@@ -368,8 +368,9 @@ func TestEachMinuteCarriesItsBytesThroughTheTunnelAndPastIt(t *testing.T) {
 	r.states()
 	got := r.linesWith("[downtime] bytes")
 	// Eleven looks after the first: 1100 up and 11000 down through the
-	// tunnel, 110 and 220 past it. The second minute carried nothing.
-	want := fmt.Sprintf("[downtime] bytes from=%d v=1100,11000,110,220;.", start.Unix())
+	// tunnel; what went past it is not counted. The second minute carried
+	// nothing.
+	want := fmt.Sprintf("[downtime] bytes from=%d v=1100,11000;.", start.Unix())
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("bytes lines %q, want %q", got, want)
 	}
@@ -385,6 +386,20 @@ func TestAnIdleRunWritesNoBytesLine(t *testing.T) {
 	r.states()
 	if got := r.linesWith("[downtime] bytes"); len(got) != 0 {
 		t.Errorf("idle run wrote %q", got)
+	}
+}
+
+// A run where only traffic past the tunnel went writes no bytes line: what
+// went past the VPN is the tester's own business (owner, 18.11).
+func TestTrafficPastTheTunnelWritesNoBytesLine(t *testing.T) {
+	r := newRig(t)
+	old := r.clock.Add(-time.Hour)
+	r.minute(func(i int) {
+		r.conns = []Conn{{ID: "d", Up: uint64(1000 * i), Down: uint64(5000 * i), Direct: true, Start: old}}
+	})
+	r.states()
+	if got := r.linesWith("[downtime] bytes"); len(got) != 0 {
+		t.Errorf("traffic past the tunnel wrote %q", got)
 	}
 }
 
