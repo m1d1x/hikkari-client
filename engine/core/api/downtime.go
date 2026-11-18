@@ -43,6 +43,7 @@ func (c *Core) downtimeMeter() *downtime.Meter {
 		},
 		Internet: c.directInternet,
 		Stalls:   stalls,
+		State:    c.tunnelState,
 		Logf:     func(format string, args ...any) { c.logger.Logf(format, args...) },
 		Report:   c.reportTunnel,
 	})
@@ -96,6 +97,19 @@ func tunnelFields(p downtime.Period) map[string]any {
 		}
 	}
 	return fields
+}
+
+// tunnelState is what the tunnel runs on, for a tester's log: the routing
+// mode in effect (proxy: only the list goes through the VPN; bypass:
+// everything but the list; off: split routing off, everything through the
+// VPN), the active profile's protocol and its name.
+func (c *Core) tunnelState() (mode, proto, profile string) {
+	effective := c.RoutingStatus().Effective
+	mode = string(effective.Mode)
+	if !effective.Enabled {
+		mode = "off"
+	}
+	return mode, c.activeProto(), c.activeLabel()
 }
 
 // tunnelWanted is the user's switch and whether the core answers. A core kept

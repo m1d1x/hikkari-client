@@ -340,3 +340,75 @@ func TestAPeriodOfAnOlderCoreHasNoStalls(t *testing.T) {
 		t.Fatalf("periods = %+v", got)
 	}
 }
+
+func (r *rig) linesWith(prefix string) []string {
+	var out []string
+	for _, l := range r.lines {
+		if strings.HasPrefix(l, prefix) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// A tester's log says how much went through the tunnel and past it, minute
+// by minute (owner, 18.11): the deltas of the open connections, a connection
+// older than the first look only as a baseline.
+func TestEachMinuteCarriesItsBytesThroughTheTunnelAndPastIt(t *testing.T) {
+	r := newRig(t)
+	start := r.clock
+	old := r.clock.Add(-time.Hour)
+	r.minute(func(i int) {
+		r.conns = []Conn{
+			{ID: "old", Up: 1_000_000 + uint64(100*i), Down: 5_000_000 + uint64(1000*i), Start: old},
+			{ID: "d", Up: uint64(10 * i), Down: uint64(20 * i), Direct: true, Start: old},
+		}
+	})
+	r.minute(nil) // the connections closed: nothing went
+	r.states()
+	got := r.linesWith("[downtime] bytes")
+	// Eleven looks after the first: 1100 up and 11000 down through the
+	// tunnel, 110 and 220 past it. The second minute carried nothing.
+	want := fmt.Sprintf("[downtime] bytes from=%d v=1100,11000,110,220;.", start.Unix())
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("bytes lines %q, want %q", got, want)
+	}
+	if p := r.m.period(); len(p.Minutes) != 0 {
+		t.Errorf("the period kept %v after the write", p.Minutes)
+	}
+}
+
+// A run that carried nothing writes no bytes line.
+func TestAnIdleRunWritesNoBytesLine(t *testing.T) {
+	r := newRig(t)
+	r.minute(nil)
+	r.states()
+	if got := r.linesWith("[downtime] bytes"); len(got) != 0 {
+		t.Errorf("idle run wrote %q", got)
+	}
+}
+
+// What the tunnel runs on is written when it changes and with every run, and
+// not while the tunnel is off.
+func TestTheStateIsWrittenWhenItChangesAndWithEveryRun(t *testing.T) {
+	r := newRig(t)
+	firstClosed := r.clock.Add(time.Minute)
+	mode, profile := "proxy", "амстердам-006"
+	r.m.src.State = func() (string, string, string) { return mode, "hikkari", profile }
+	r.minute(nil)
+	r.minute(nil)
+	if got := r.linesWith("[downtime] state"); len(got) != 1 ||
+		!strings.HasSuffix(got[0], `mode=proxy proto=hikkari profile="амстердам-006"`) ||
+		!strings.Contains(got[0], fmt.Sprintf("at=%d ", firstClosed.Unix())) {
+		t.Fatalf("state lines %q, want one, at the first minute closed", got)
+	}
+	mode = "bypass"
+	r.minute(nil)
+	if got := r.linesWith("[downtime] state"); len(got) != 2 || !strings.Contains(got[1], "mode=bypass") {
+		t.Fatalf("state lines %q, want the change written", got)
+	}
+	r.states() // the tunnel goes off: the run is written, the state with it
+	if got := r.linesWith("[downtime] state"); len(got) != 2 {
+		t.Errorf("state lines %q: the tunnel was off when the run was written", got)
+	}
+}
