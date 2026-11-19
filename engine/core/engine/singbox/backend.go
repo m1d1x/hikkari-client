@@ -393,6 +393,10 @@ func (b *Backend) Snapshot() { b.diagnostics.Snapshot(b.IsRunning()) }
 // LoadNow starts a load round over every profile right now, on request.
 func (b *Backend) LoadNow() []string { return b.diagnostics.LoadNow() }
 
+// SpeedNow measures how fast each profile, or the one named, carries traffic
+// from the card right now, on request.
+func (b *Backend) SpeedNow(params json.RawMessage) []string { return b.diagnostics.SpeedNow(params) }
+
 // VoiceNow times a call's datagrams through the tunnel right now, on request.
 // With the tunnel down the series would time the bare network under the
 // tunnel's name, so it refuses.

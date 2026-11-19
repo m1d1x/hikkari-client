@@ -172,7 +172,8 @@ func doctorLines(report NetworkReport) []string {
 // All only read the machine: run_doctor never repairs, a snapshot writes its
 // [diag:*] lines into the log as the session diagnostics do, load_profiles runs
 // each profile in a core of its own beside the tunnel as the periodic round
-// does, and probe_targets opens and closes bare TCP connections to the
+// does, speed_profiles runs them the same way for two timed windows of
+// several flows, down and up, and probe_targets opens and closes bare TCP connections to the
 // addresses the operator named. probe_voice sends a call's datagrams through
 // the tunnel for half a minute, and on Windows from the card beside it.
 // provoke_targets sends stimuli ТСПУ is known to cut (blocked SNIs, a long
@@ -201,6 +202,15 @@ func (c *Core) testerCommands() map[string]testerlog.Command {
 				return []string{"error=\"this engine has no load round\""}
 			}
 			return loader.LoadNow()
+		}},
+		"speed_profiles": {Source: "diag:speed", Run: func(_ context.Context, params json.RawMessage) []string {
+			speeder, ok := c.backend.(interface {
+				SpeedNow(json.RawMessage) []string
+			})
+			if !ok {
+				return []string{"error=\"this engine has no speed round\""}
+			}
+			return speeder.SpeedNow(params)
 		}},
 		"probe_voice": {Source: "diag:voice", Run: func(context.Context, json.RawMessage) []string {
 			voicer, ok := c.backend.(interface{ VoiceNow() []string })
