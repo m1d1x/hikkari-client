@@ -18,7 +18,7 @@ Material/SimpleIcons. PNG здесь главный: он и есть насто
 | `1c` | Викимедиа (P154): 1C logo.svg |
 | `2gis` | iOS app icon (2ГИС) |
 | `aeroflot` | Викимедиа (P154): Aeroflot logo (ru).svg |
-| `alfa` | iOS app icon (Альфа-Банк) |
+| `alfa` | alfabank.ru favicon (256px) |
 | `aviasales` | aviasales.ru icon.svg |
 | `avito` | avito.ru favicon (256px) |
 | `beeline` | iOS app icon (Билайн) |
@@ -32,9 +32,9 @@ Material/SimpleIcons. PNG здесь главный: он и есть насто
 | `faceit` | iOS app icon (FACEIT) |
 | `figma` | iOS app icon (Figma) |
 | `gazprombank` | gazprombank.ru favicon (256px) |
-| `gemini` | iOS app icon (Google Gemini) |
+| `gemini` | gemini.google.com icon |
 | `github` | iOS app icon (GitHub) |
-| `google` | iOS app icon (Google) |
+| `google` | iOS app icon (Google, com.google.GoogleMobile) |
 | `gosuslugi` | iOS app icon (ЕПГУ, seller: Минкомсвязь России) |
 | `habr` | iOS app icon (Хабр) |
 | `hh` | iOS app icon (hh.ru) |
@@ -44,7 +44,7 @@ Material/SimpleIcons. PNG здесь главный: он и есть насто
 | `kinopoisk` | iOS app icon (Кинопоиск) |
 | `kion` | kion.ru favicon (256px) |
 | `kommersant` | kommersant.ru apple-touch-icon |
-| `kontur` | iOS app icon (Контур) |
+| `kontur` | kontur.ru favicon (48px, корпоративный знак «К») |
 | `kuper` | kuper.ru favicon (256px) |
 | `lamoda` | Викимедиа (P154): Lamoda logo.svg |
 | `lenta` | Викимедиа (P154): Lenta.svg |
@@ -99,6 +99,6 @@ Material/SimpleIcons. PNG здесь главный: он и есть насто
 | `yandex-maps` | iOS app icon (Яндекс Карты) |
 | `yandex-market` | market.yandex.ru apple-touch-icon |
 | `yandex-music` | iOS app icon (Яндекс Музыка) |
-| `yandex-taxi` | iOS app icon (Яндекс Go) |
+| `yandex-taxi` | taxi.yandex.ru icon (Яндекс Go) |
 | `yoomoney` | yoomoney.ru apple-touch-icon |
 | `youtube` | iOS app icon (YouTube) |
