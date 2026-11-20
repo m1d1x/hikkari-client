@@ -970,6 +970,7 @@ class _ModeFlipButton extends StatefulWidget {
 
 class _ModeFlipButtonState extends State<_ModeFlipButton> {
   bool _hover = false;
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
@@ -984,9 +985,11 @@ class _ModeFlipButtonState extends State<_ModeFlipButton> {
     // ⬇⬇⬇ ПЕСОЧНИЦА — крути эти строки, жми `r` в flutter run, смотри что вышло.
     final bg = dim
         ? Colors.transparent
-        : (_hover
-              ? t.primary.withValues(alpha: 0.40)
-              : t.primary.withValues(alpha: 0.15));
+        : (_pressed
+              ? t.primary.withValues(alpha: 0.55)
+              : (_hover
+                    ? t.primary.withValues(alpha: 0.40)
+                    : t.primary.withValues(alpha: 0.15)));
     final fg = dim ? t.textFaint : (_hover ? t.text : t.textMuted);
     // ⬆⬆⬆
 
@@ -1000,40 +1003,113 @@ class _ModeFlipButtonState extends State<_ModeFlipButton> {
         onExit: (_) => setState(() => _hover = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
+          // The flip goes through the engine, so the word lands a frame or two
+          // after the click. The press has to answer on its own: without it
+          // the button looks dead until the label changes.
+          onTapDown: dim ? null : (_) => setState(() => _pressed = true),
+          onTapUp: dim ? null : (_) => setState(() => _pressed = false),
+          onTapCancel: dim ? null : () => setState(() => _pressed = false),
           onTap: dim ? null : () => s.setRoutingMode(nextMode),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            height: 28,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(t.radius),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 140),
-                  transitionBuilder: (child, anim) =>
-                      FadeTransition(opacity: anim, child: child),
-                  child: Text(
-                    label,
-                    key: ValueKey(label),
-                    style: TextStyle(
-                      color: fg,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      height: 1,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Icon(Icons.swap_horiz, size: 16, color: fg),
-              ],
+          child: AnimatedScale(
+            scale: _pressed ? 0.96 : 1,
+            duration: _pressed ? AppDurations.hover : AppDurations.fast,
+            curve: AppCurves.fastInSlowOut,
+            child: AnimatedContainer(
+              duration: AppDurations.hover,
+              curve: AppCurves.hover,
+              height: 28,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(t.radius),
+              ),
+              child: TweenAnimationBuilder<Color?>(
+                tween: ColorTween(end: fg),
+                duration: AppDurations.hover,
+                curve: AppCurves.hover,
+                builder: (context, color, _) {
+                  final style = TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    height: 1,
+                  );
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _ModeFlipWord(label: label, style: style),
+                      const SizedBox(width: 6),
+                      Icon(Icons.swap_horiz, size: 16, color: color),
+                    ],
+                  );
+                },
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The pill's word slot.
+///
+/// Both mode words are laid out invisibly underneath the visible one, so the
+/// slot is always as wide as the widest of them. A slot that follows the live
+/// label resizes on the frame the mode flips — 'bypass' is a character longer
+/// than 'proxy' — and the pill, the icon and the row's right edge all jump
+/// before any transition has started.
+///
+/// The swap itself is staggered: the old word is gone before the new one
+/// arrives. A plain cross-fade leaves both at half opacity in the same spot
+/// for a few frames, which reads as smeared text, not as a state change.
+class _ModeFlipWord extends StatelessWidget {
+  static const _words = ['proxy', 'bypass'];
+
+  final String label;
+  final TextStyle style;
+  const _ModeFlipWord({required this.label, required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        ExcludeSemantics(
+          child: Visibility(
+            visible: false,
+            maintainSize: true,
+            maintainAnimation: true,
+            maintainState: true,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                for (final word in _words) Text(word, style: style),
+              ],
+            ),
+          ),
+        ),
+        AnimatedSwitcher(
+          duration: AppDurations.fast,
+          switchOutCurve: const Interval(0.34, 1, curve: Curves.easeIn),
+          switchInCurve: const Interval(0.36, 1, curve: Curves.easeOut),
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.center,
+            children: [...previous, if (current != null) current],
+          ),
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: SlideTransition(
+              position: Tween(
+                begin: const Offset(0, 0.28),
+                end: Offset.zero,
+              ).animate(anim),
+              child: child,
+            ),
+          ),
+          child: Text(label, key: ValueKey(label), style: style),
+        ),
+      ],
     );
   }
 }
