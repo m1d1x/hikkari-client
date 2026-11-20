@@ -18,7 +18,6 @@ import (
 
 	"NekkoVPN/core/applist"
 	"NekkoVPN/core/appversion"
-	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/downdetector"
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
@@ -38,8 +37,6 @@ type (
 	RoutingMode  = routing.RoutingMode
 	ProfileInfo  = profile.Info
 	PingSample   = uptime.Sample
-
-	CleanlinessReport = cleanliness.Report
 )
 
 // ============================================================
@@ -236,11 +233,6 @@ func (c *Core) requireProfiles() error {
 
 func (c *Core) Health() HealthInfo { return c.health.Probe() }
 func (c *Core) ExternalIP() string { return c.health.ExternalIP() }
-
-// ServerCleanliness returns the cached "whiteness" report for the active
-// egress: exit IP, ASN, hosting flag, optional fraud-score, and how
-// Cloudflare classifies it. Instant read — the probing runs in background.
-func (c *Core) ServerCleanliness() CleanlinessReport { return c.cleanliness.Report() }
 
 // ============================================================
 //  Logging

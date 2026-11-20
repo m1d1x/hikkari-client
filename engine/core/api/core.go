@@ -18,13 +18,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"NekkoVPN/core/appversion"
 	"NekkoVPN/core/autotunnel"
-	"NekkoVPN/core/cleanliness"
 	"NekkoVPN/core/downdetector"
 	"NekkoVPN/core/engine"
 	"NekkoVPN/core/geoip"
@@ -66,7 +64,6 @@ type Core struct {
 	profiles    *profile.Store
 	backend     engine.Backend
 	health      *health.Checker
-	cleanliness *cleanliness.Checker
 	uptime      *uptime.Tracker
 	// serviceUptime holds on-demand pings of arbitrary user services
 	// (YouTube, Discord, …) measured through the active profile — kept
@@ -227,22 +224,6 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 			Net:     c.downdetectorNet,
 		},
 	)
-	// Server-cleanliness scoring. Gated on TunnelOK so we never score the
-	// bare ISP IP. IPQS key is optional — dropped as plain text in
-	// baseDir/ipqs-key.txt; absent → fraud-score step is simply skipped.
-	c.cleanliness = cleanliness.New(
-		c.logger,
-		func() bool { return c.health.Probe().TunnelOK },
-		readOptionalKey(filepath.Join(baseDir, "ipqs-key.txt")),
-	)
-	c.cleanliness.SetChangeKey(func() string {
-		ip := c.health.Probe().IP
-		if ip == "" {
-			return ""
-		}
-		return ip + "|" + c.activeProfileProvider()
-	})
-
 	c.health.LoadDirectIP()
 	c.ensureProfiles()
 	configurationErr := c.ensureEngineConfiguration()
@@ -277,7 +258,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	probe := uptime.NewLiveProbe(c.backend)
 	// Join every background observer before this Core can be initialized again.
 	// Their providers refer to Core fields, so cancellation alone is insufficient.
-	ctx, tracker, checker, cleanliness, backend, reporter, tel := c.ctx, c.uptime, c.health, c.cleanliness, c.backend, c.downdetector, c.telemetry
+	ctx, tracker, checker, backend, reporter, tel := c.ctx, c.uptime, c.health, c.backend, c.downdetector, c.telemetry
 	var workers sync.WaitGroup
 	run := func(fn func()) { workers.Add(1); go func() { defer workers.Done(); fn() }() }
 	run(func() { tracker.Run(ctx, c.uptimeHosts, c.carryingProfile, probe, c.uptimeObserver()) })
@@ -295,7 +276,6 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	support := c.support
 	run(func() { support.Run(ctx) })
 	run(func() { checker.Run(ctx) })
-	run(func() { cleanliness.Run(ctx) })
 	if !c.routingPreview {
 		if direct, ok := backend.(engine.DirectTraffic); ok {
 			c.autoTunnel = autotunnel.OpenList(direct.AutoTunnelList(), c.logger.Logf)
@@ -659,15 +639,4 @@ func (c *Core) saveCustomServices() error {
 		return err
 	}
 	return os.WriteFile(c.customServicesPath, data, 0644)
-}
-
-// readOptionalKey returns the trimmed contents of a small text file, or ""
-// if it's missing/unreadable. Used for the optional IPQS API key so the
-// secret lives on disk (baseDir/ipqs-key.txt) instead of in code or config.
-func readOptionalKey(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
 }

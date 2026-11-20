@@ -9,7 +9,6 @@ import '../theme/tokens.dart';
 import '../ui/nekko_dialog.dart';
 import '../ui/nekko_dialog_action.dart';
 import '../ui/nekko_dialog_field.dart';
-import 'server_cleanliness_card.dart';
 import 'service_icon.dart';
 import 'sparkline.dart';
 
@@ -302,9 +301,6 @@ class _ServicePingSheetState extends State<ServicePingSheet> {
           children: [
             _grabber(t),
             _header(t),
-            // Плашка «чистоты» текущего сервера — над всеми сервисами. Сама
-            // прячется, когда туннель выключен (verdict == 'off').
-            if (hasActive) const ServerCleanlinessCard(),
             Expanded(
               child: hasActive
                   ? _list(t, scrollCtrl)

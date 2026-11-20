@@ -95,7 +95,6 @@ class AppState extends ChangeNotifier {
   RoutingState _routing = const RoutingState.initial();
   Map<String, List<PingSample>> _uptime = const {};
   Map<String, List<PingSample>> _serviceUptime = const {};
-  ServerCleanliness _cleanliness = ServerCleanliness.off;
   bool _busy = false;
   // Which way the power button is taking the tunnel right now, so the screen
   // can say "подключение…" / "отключение…" instead of a silent wait.
@@ -217,10 +216,6 @@ class AppState extends ChangeNotifier {
   RoutingState get routing => _routing;
   Map<String, List<PingSample>> get uptime => _uptime;
   Map<String, List<PingSample>> get serviceUptime => _serviceUptime;
-
-  /// "Whiteness" of the active egress. Backed by the engine's cached report;
-  /// refreshed each tick alongside health (the engine read is instant).
-  ServerCleanliness get cleanliness => _cleanliness;
   bool get busy => _busy;
 
   /// The power button's press in flight: [VpnTransition.connecting] from the
@@ -343,7 +338,6 @@ class AppState extends ChangeNotifier {
         _elog('start: dry-run, seeding fake profiles/health');
         _profiles = _dryProfiles;
         _health = _dryHealth;
-        _cleanliness = _dryCleanliness;
         _update = _dryUpdate;
         _profileCountries = const {
           'dry-demo': 'nl',
@@ -622,56 +616,6 @@ class AppState extends ChangeNotifier {
       version: '1.0.4',
     ),
   };
-
-  static const _dryCleanliness = ServerCleanliness(
-    running: true,
-    checked: true,
-    ip: '203.0.113.10',
-    asn: 'AS210644',
-    asname: 'AEZA-AS',
-    asnType: 'hosting',
-    asnCountry: 'RU',
-    isp: 'Aeza International LTD',
-    org: 'Aeza',
-    country: 'DE',
-    city: 'Frankfurt',
-    isHosting: true,
-    isMobile: false,
-    isProxy: false,
-    isVpn: false,
-    isTor: false,
-    isAbuser: true,
-    isCrawler: false,
-    abuserLabel: 'High',
-    fraudScore: -1,
-    abuseEmail: 'abuse@aeza.net',
-    cfColo: 'FRA',
-    cfWarp: 'off',
-    score: 27,
-    verdict: 'datacenter',
-    message: 'датацентр · DE · AEZA-AS',
-    reasons: [
-      CleanlinessReason(
-        severity: 'high',
-        title:
-            'Хостинг/датацентр IP: Cloudflare Turnstile почти всегда челленджит такие',
-        fix:
-            'Перейти на residential или mobile выход: это устраняет главную причину фрода.',
-      ),
-      CleanlinessReason(
-        severity: 'high',
-        title: 'IP/подсеть в abuse-фидах (репутация: High)',
-        fix: 'Сменить IP/подсеть: с этого сервера уже спамили/абузили.',
-      ),
-      CleanlinessReason(
-        severity: 'med',
-        title:
-            'ASN зарегистрирован в RU (гео IP: DE): CF повышает подозрительность',
-        fix: 'Выбрать провайдера с ASN в той же юрисдикции, что и гео.',
-      ),
-    ],
-    checkedAt: '',
-  );
 
   static const _dryHealthOn = HealthInfo(
     running: true,
@@ -1523,7 +1467,6 @@ class AppState extends ChangeNotifier {
         }
         _uptime = await _core.uptimeHistory();
         _serviceUptime = await _core.serviceUptimeHistory();
-        _cleanliness = await _core.serverCleanliness();
         _carryingProfile = await _core.carryingProfile();
       });
     } finally {

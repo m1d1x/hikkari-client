@@ -25,7 +25,7 @@ import (
 // run slow.
 var polledMethods = map[string]bool{
 	"IsRunning": true, "Health": true, "ExternalIP": true, "LogTail": true, "CollectDiagnostics": true,
-	"Routing": true, "ServerCleanliness": true, "ListApps": true,
+	"Routing": true, "ListApps": true,
 	"RoutingPresets": true, "RoutingStatus": true,
 	"Profiles": true, "AutoMode": true, "CarryingProfile": true, "UptimeHistory": true, "ServiceUptimeHistory": true,
 	"UpdateStatus": true, "TrafficCounters": true,
@@ -132,8 +132,6 @@ func (c *Core) dispatch(method, argsJSON string) (interface{}, error) {
 		return c.Health(), nil
 	case "ExternalIP":
 		return c.ExternalIP(), nil
-	case "ServerCleanliness":
-		return c.ServerCleanliness(), nil
 
 	// ----- logging -----
 	case "LogTail":
