@@ -972,15 +972,37 @@ class _ModeFlipButtonState extends State<_ModeFlipButton> {
   bool _hover = false;
   bool _pressed = false;
 
+  /// The mode the user just picked, shown before the engine confirms it.
+  ///
+  /// A flip is two round-trips to the engine process and back (the command and
+  /// the refreshed snapshot), so waiting for it put the reel 20–60 ms behind
+  /// the click — the button answered late and read as sticky. The reel now
+  /// turns on the click and settles back to the engine's answer when it lands;
+  /// if the engine refuses the change, the reel rolls back to the real mode.
+  RoutingMode? _pending;
+
+  void _setPressed(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
+
+  Future<void> _flip(RoutingMode target) async {
+    if (_pending != null) return;
+    setState(() => _pending = target);
+    await widget.state.setRoutingMode(target);
+    if (!mounted) return;
+    setState(() => _pending = null);
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final s = widget.state;
     final dim = !s.routing.enabled;
-    final nextMode = s.routing.mode == RoutingMode.bypass
+    final shown = _pending ?? s.routing.mode;
+    final nextMode = shown == RoutingMode.bypass
         ? RoutingMode.proxy
         : RoutingMode.bypass;
-    final label = s.routing.mode == RoutingMode.bypass ? 'bypass' : 'proxy';
+    final label = shown == RoutingMode.bypass ? 'bypass' : 'proxy';
 
     // ⬇⬇⬇ ПЕСОЧНИЦА — крути эти строки, жми `r` в flutter run, смотри что вышло.
     final bg = dim
@@ -995,54 +1017,70 @@ class _ModeFlipButtonState extends State<_ModeFlipButton> {
 
     return Opacity(
       opacity: dim ? 0.5 : 1,
-      child: MouseRegion(
-        cursor: dim ? SystemMouseCursors.basic : SystemMouseCursors.click,
-        onEnter: (_) {
-          if (!dim) setState(() => _hover = true);
-        },
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          // The flip goes through the engine, so the word lands a frame or two
-          // after the click. The press has to answer on its own: without it
-          // the button looks dead until the label changes.
-          onTapDown: dim ? null : (_) => setState(() => _pressed = true),
-          onTapUp: dim ? null : (_) => setState(() => _pressed = false),
-          onTapCancel: dim ? null : () => setState(() => _pressed = false),
-          onTap: dim ? null : () => s.setRoutingMode(nextMode),
-          child: AnimatedScale(
-            scale: _pressed ? 0.96 : 1,
-            duration: _pressed ? AppDurations.hover : AppDurations.fast,
-            curve: AppCurves.fastInSlowOut,
-            child: AnimatedContainer(
-              duration: AppDurations.hover,
-              curve: AppCurves.hover,
-              height: 28,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-              decoration: BoxDecoration(
-                color: bg,
-                borderRadius: BorderRadius.circular(t.radius),
-              ),
-              child: TweenAnimationBuilder<Color?>(
-                tween: ColorTween(end: fg),
+      // Raw pointer events, not the tap recognizer's onTapDown: that one waits
+      // out the press timeout (~100 ms) before reporting, which is exactly the
+      // delay the button had. A Listener fires on the same frame as the press.
+      child: Listener(
+        onPointerDown: dim ? null : (_) => _setPressed(true),
+        onPointerUp: dim ? null : (_) => _setPressed(false),
+        onPointerCancel: dim ? null : (_) => _setPressed(false),
+        child: MouseRegion(
+          cursor: dim ? SystemMouseCursors.basic : SystemMouseCursors.click,
+          onEnter: (_) {
+            if (!dim) setState(() => _hover = true);
+          },
+          onExit: (_) => setState(() => _hover = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: dim ? null : () => _flip(nextMode),
+            child: AnimatedScale(
+              scale: _pressed ? 0.96 : 1,
+              duration: _pressed ? AppDurations.hover : AppDurations.fast,
+              curve: AppCurves.fastInSlowOut,
+              child: AnimatedContainer(
                 duration: AppDurations.hover,
                 curve: AppCurves.hover,
-                builder: (context, color, _) {
-                  final style = TextStyle(
-                    color: color,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                    height: 1,
-                  );
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _ModeFlipWord(label: label, style: style),
-                      const SizedBox(width: 6),
-                      Icon(Icons.swap_horiz, size: 16, color: color),
-                    ],
-                  );
-                },
+                height: 28,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 0,
+                ),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(t.radius),
+                ),
+                child: TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: fg),
+                  duration: AppDurations.hover,
+                  curve: AppCurves.hover,
+                  builder: (context, color, _) {
+                    final style = TextStyle(
+                      color: color,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      height: 1,
+                    );
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _ModeFlipWord(label: label, style: style),
+                        const SizedBox(width: 6),
+                        // The arrows turn over together with the reel, so the
+                        // flip is more than a word changing places.
+                        AnimatedRotation(
+                          turns: shown == RoutingMode.bypass ? .5 : 0,
+                          duration: AppDurations.fast,
+                          curve: AppCurves.fastInSlowOut,
+                          child: Icon(
+                            Icons.swap_horiz,
+                            size: 16,
+                            color: color,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),
@@ -1101,7 +1139,9 @@ class _ModeFlipWordState extends State<_ModeFlipWord>
     if (widget.label != old.label) {
       _reel.animateTo(
         _positionOf(widget.label),
-        curve: Curves.easeInOutCubic,
+        // Fast off the mark: the click must move the word on its own frame,
+        // the ease is there to land it, not to start it.
+        curve: AppCurves.fastInSlowOut,
       );
     }
   }

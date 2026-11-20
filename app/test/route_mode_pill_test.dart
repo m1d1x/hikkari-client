@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -40,13 +41,26 @@ class _ModeCore extends NekkoboxCore {
       manual = manual.copyWith(mode: mode);
 }
 
+/// Holds the flip until the test lets it through, so the reel can be caught
+/// turning before the engine has said anything.
+class _SlowCore extends _ModeCore {
+  _SlowCore(super.manual);
+  final gate = Completer<void>();
+
+  @override
+  Future<void> setRoutingMode(RoutingMode mode) async {
+    await gate.future;
+    await super.setRoutingMode(mode);
+  }
+}
+
 /// The pill: the only animated container in the sheet that is 28 px tall.
 Finder _pill() => find.byWidgetPredicate(
   (w) => w is AnimatedContainer && w.constraints?.maxHeight == 28,
 );
 
-Future<AppState> _pumpCaption(WidgetTester tester) async {
-  final core = _ModeCore(
+Future<AppState> _pumpCaption(WidgetTester tester, {NekkoboxCore? core}) async {
+  core ??= _ModeCore(
     const RoutingState.initial().copyWith(mode: RoutingMode.bypass),
   );
   final state = AppState(core);
@@ -119,6 +133,38 @@ void main() {
     );
   });
 
+  testWidgets('the reel turns on the click, not on the engine answer', (
+    tester,
+  ) async {
+    // The flip is two round-trips into the engine process. Waiting for them
+    // put the whole animation behind the click, which is what made the button
+    // feel sticky.
+    final core = _SlowCore(
+      const RoutingState.initial().copyWith(mode: RoutingMode.bypass),
+    );
+    await _pumpCaption(tester, core: core);
+    final rest = tester.getCenter(find.byKey(const ValueKey('bypass'))).dx;
+
+    await tester.tap(_pill());
+    await tester.pump(); // the click's own frame: the reel starts here
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(core.manual.mode, RoutingMode.bypass, reason: 'engine is still busy');
+    expect(
+      tester.getCenter(find.byKey(const ValueKey('bypass'))).dx,
+      greaterThan(rest + 20),
+      reason: 'the word has not moved while the engine was answering',
+    );
+
+    core.gate.complete();
+    await tester.pumpAndSettle();
+    expect(core.manual.mode, RoutingMode.proxy);
+    expect(
+      tester.getCenter(find.byKey(const ValueKey('proxy'))).dx,
+      closeTo(rest, .01),
+      reason: 'the reel settles on the mode the engine confirmed',
+    );
+  });
+
   testWidgets('each mode parks its word in the slot', (tester) async {
     final state = await _pumpCaption(tester); // starts in bypass
     final parked = tester.getCenter(find.byKey(const ValueKey('bypass'))).dx;
@@ -143,16 +189,25 @@ void main() {
     Color? fill() =>
         (tester.widget<DecoratedBox>(decoration).decoration as BoxDecoration)
             .color;
+    Color? target() =>
+        (tester.widget<AnimatedContainer>(_pill()).decoration as BoxDecoration)
+            .color;
     final idle = fill();
+    final clockBypass = tester
+        .getCenter(find.byKey(const ValueKey('bypass')))
+        .dx;
     final gesture = await tester.startGesture(tester.getCenter(_pill()));
-    // The tap recognizer reports the press once the gesture arena settles, and
-    // the surface then eases into its pressed tint.
-    await tester.pump(const Duration(milliseconds: 120));
-    await tester.pump(const Duration(milliseconds: 60));
-    expect(fill(), isNot(idle), reason: 'the press is invisible');
+    // Raw pointer input: the pressed tint must be the target on the very frame
+    // the pointer goes down, not after the tap recognizer's ~100 ms timeout.
+    await tester.pump();
+    expect(target(), isNot(idle), reason: 'the press was ignored for ~100 ms');
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(fill(), isNot(idle), reason: 'the pressed tint never surfaced');
     expect(
-      find.byKey(const ValueKey('bypass')),
-      findsOneWidget,
+      tester.getCenter(find.byKey(const ValueKey('bypass'))).dx,
+      // The press also scales the pill, hence the slack: a flip would move the
+      // word a whole slot (a few dozen pixels), not a fraction of one.
+      closeTo(clockBypass, 1),
       reason: 'the mode must not flip before the pointer is released',
     );
     await gesture.up();
