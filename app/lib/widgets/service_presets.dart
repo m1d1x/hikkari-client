@@ -253,8 +253,50 @@ class _ServicePresetsState extends State<ServicePresets>
   // instead of jumping when the motion ends, and the viewport stays put.
   bool _paintOnly = false;
 
+  /// The expanded body, kept as it is while the card is closed.
+  ///
+  /// It is invisible then, but the home screen's routing section rebuilds on
+  /// every routing change, and this body is 88 service rows: about 90 ms in a
+  /// profile build. That is what made flipping the mode — or editing a rule —
+  /// freeze a frame. Handing back the same widget instance while closed makes
+  /// Flutter skip the subtree; the cache is dropped the moment the card opens
+  /// or the catalog itself changes, so what the user unfolds is current.
+  Widget? _closedBody;
+  Object? _closedBodyView;
+
+  Widget _bodyWhileClosed(
+    NekkoTokens t,
+    AppState state,
+    RoutingPresets? catalog,
+  ) {
+    final view = catalog?.view;
+    if (!_open.value &&
+        _closedBody != null &&
+        view == _closedBodyView) {
+      return _closedBody!;
+    }
+    final body = _body(t, state, catalog);
+    _closedBody = _open.value ? null : body;
+    _closedBodyView = _open.value ? null : view;
+    return body;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _open.addListener(_onOpenChanged);
+  }
+
+  /// The body is cached while the card is closed ([_bodyWhileClosed]); opening
+  /// it is the one moment the rows have to be rebuilt, with the selections the
+  /// active mode has right now.
+  void _onOpenChanged() {
+    if (_open.value && mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _open.removeListener(_onOpenChanged);
     _expand.dispose();
     _open.dispose();
     _phase.dispose();
@@ -459,7 +501,7 @@ class _ServicePresetsState extends State<ServicePresets>
               expanded: _open,
               cardHover: _cardHover,
             ),
-            _body(t, state, catalog),
+            _bodyWhileClosed(t, state, catalog),
           ],
         ),
       ),

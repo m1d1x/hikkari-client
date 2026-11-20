@@ -1421,6 +1421,34 @@ void main() {
     state.dispose();
   });
 
+  testWidgets('a mode flip leaves the closed catalog rows alone', (
+    tester,
+  ) async {
+    // The catalog body sits in the routing card, which the whole app rebuilds
+    // on every routing change. While the card is closed the body is invisible,
+    // but rebuilding it still costs ~90 ms (88 service rows) — that froze a
+    // frame on flipping the mode, and on every rule edit.
+    final core = _ModeCore();
+    final state = await showPresets(tester, core, expand: false);
+    addTearDown(state.dispose);
+    // The card keeps the closed body built, only offstage: that is why it
+    // costs anything at all.
+    final hidden = find.text('steam', skipOffstage: false);
+    final closed = tester.widget(hidden);
+    await state.setRoutingMode(RoutingMode.proxy);
+    await tester.pump();
+    expect(
+      tester.widget(hidden),
+      same(closed),
+      reason: 'the closed catalog body must not rebuild on a mode flip',
+    );
+    // Unfolding it shows the selections of the mode that is active now.
+    await tester.tap(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    expect(tester.widget(find.text('steam')), isNot(same(closed)));
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('manual list caption explains the active mode and tab', (
     tester,
   ) async {
