@@ -1069,8 +1069,10 @@ class _ModeFlipButtonState extends State<_ModeFlipButton> {
                         // flip is more than a word changing places.
                         AnimatedRotation(
                           turns: shown == RoutingMode.bypass ? .5 : 0,
-                          duration: AppDurations.fast,
-                          curve: AppCurves.fastInSlowOut,
+                          // Slower and symmetric than the word: the arrows are
+                          // a detail, not the state itself.
+                          duration: AppDurations.normal,
+                          curve: Curves.easeInOutCubic,
                           child: Icon(
                             Icons.swap_horiz,
                             size: 16,

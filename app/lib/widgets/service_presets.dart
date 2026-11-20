@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
@@ -259,10 +261,20 @@ class _ServicePresetsState extends State<ServicePresets>
   /// every routing change, and this body is 88 service rows: about 90 ms in a
   /// profile build. That is what made flipping the mode — or editing a rule —
   /// freeze a frame. Handing back the same widget instance while closed makes
-  /// Flutter skip the subtree; the cache is dropped the moment the card opens
-  /// or the catalog itself changes, so what the user unfolds is current.
+  /// Flutter skip the subtree.
+  ///
+  /// A cached body that no longer matches the mode or the catalog is refreshed
+  /// only when nothing is moving: a moment after the change while the card is
+  /// closed, or once the unfold has settled. Rebuilding it on the tap that
+  /// unfolds the card just moved the freeze into the reveal.
   Widget? _closedBody;
   Object? _closedBodyView;
+  RoutingMode? _closedBodyMode;
+  Timer? _staleBody;
+
+  bool _bodyIsStale(Object? view, RoutingMode mode) =>
+      _closedBody != null &&
+      (view != _closedBodyView || mode != _closedBodyMode);
 
   Widget _bodyWhileClosed(
     NekkoTokens t,
@@ -270,15 +282,24 @@ class _ServicePresetsState extends State<ServicePresets>
     RoutingPresets? catalog,
   ) {
     final view = catalog?.view;
-    if (!_open.value &&
-        _closedBody != null &&
-        view == _closedBodyView) {
+    final mode = state.routing.mode;
+    if (!_open.value && _closedBody != null) {
+      if (_bodyIsStale(view, mode)) _refreshWhenQuiet();
       return _closedBody!;
     }
     final body = _body(t, state, catalog);
     _closedBody = _open.value ? null : body;
     _closedBodyView = _open.value ? null : view;
+    _closedBodyMode = _open.value ? null : mode;
     return body;
+  }
+
+  void _refreshWhenQuiet() {
+    _staleBody?.cancel();
+    _staleBody = Timer(const Duration(milliseconds: 320), () {
+      if (!mounted || _open.value) return;
+      setState(() => _closedBody = null);
+    });
   }
 
   @override
@@ -287,15 +308,16 @@ class _ServicePresetsState extends State<ServicePresets>
     _open.addListener(_onOpenChanged);
   }
 
-  /// The body is cached while the card is closed ([_bodyWhileClosed]); opening
-  /// it is the one moment the rows have to be rebuilt, with the selections the
-  /// active mode has right now.
+  /// Opening no longer forces a rebuild on its own: while the card is
+  /// unfolded the rows carry their own animations, and rebuilding them here
+  /// froze the reveal. A stale body is swapped in once the motion settles.
   void _onOpenChanged() {
-    if (_open.value && mounted) setState(() {});
+    if (_open.value) _staleBody?.cancel();
   }
 
   @override
   void dispose() {
+    _staleBody?.cancel();
     _open.removeListener(_onOpenChanged);
     _expand.dispose();
     _open.dispose();

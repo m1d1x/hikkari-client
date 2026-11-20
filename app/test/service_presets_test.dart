@@ -1442,10 +1442,22 @@ void main() {
       same(closed),
       reason: 'the closed catalog body must not rebuild on a mode flip',
     );
-    // Unfolding it shows the selections of the mode that is active now.
+    // Once nothing is moving, the closed body is refreshed quietly, so the
+    // card unfolds without paying for the rebuild during the reveal.
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      tester.widget(hidden),
+      isNot(same(closed)),
+      reason: 'the closed body must refresh once the flip has settled',
+    );
+    final quiet = tester.widget(hidden);
     await tester.tap(find.text('преднастроенные'));
     await tester.pumpAndSettle();
-    expect(tester.widget(find.text('steam')), isNot(same(closed)));
+    expect(
+      tester.widget(find.text('steam')),
+      same(quiet),
+      reason: 'unfolding must not rebuild the rows again',
+    );
     await tester.pumpWidget(const SizedBox());
   });
 
