@@ -1052,65 +1052,110 @@ class _ModeFlipButtonState extends State<_ModeFlipButton> {
   }
 }
 
-/// The pill's word slot.
+/// The pill's word slot, a reel of the two mode words.
 ///
-/// Both mode words are laid out invisibly underneath the visible one, so the
-/// slot is always as wide as the widest of them. A slot that follows the live
-/// label resizes on the frame the mode flips — 'bypass' is a character longer
-/// than 'proxy' — and the pill, the icon and the row's right edge all jump
-/// before any transition has started.
+/// Both words always sit in the slot, one slot-width apart, and the reel is
+/// slid sideways: flipping to bypass pushes the words left, back to proxy
+/// pushes them right. Neither word ever fades — a word dissolving in place
+/// reads as a blink, and at 12 px the eye has nothing to follow, while the
+/// sideway travel lines up with the swap arrows next to it.
 ///
-/// The swap itself is staggered: the old word is gone before the new one
-/// arrives. A plain cross-fade leaves both at half opacity in the same spot
-/// for a few frames, which reads as smeared text, not as a state change.
-class _ModeFlipWord extends StatelessWidget {
+/// The slot keeps the width of the wider word, so the pill, the icon and the
+/// row's right edge hold still; a slot that follows the live label resizes on
+/// the frame of the flip, because 'bypass' is a character longer than 'proxy'.
+class _ModeFlipWord extends StatefulWidget {
   static const _words = ['proxy', 'bypass'];
+
+  /// Travel distance in slot widths. A hair over one slot leaves a visible gap
+  /// between the leaving word and the arriving one, so a mid-flip frame reads
+  /// as two words passing, not as one glued word.
+  static const travel = 1.15;
 
   final String label;
   final TextStyle style;
   const _ModeFlipWord({required this.label, required this.style});
 
   @override
+  State<_ModeFlipWord> createState() => _ModeFlipWordState();
+}
+
+class _ModeFlipWordState extends State<_ModeFlipWord>
+    with SingleTickerProviderStateMixin {
+  /// Position on the reel: 0 is 'proxy' in the slot, 0.5 is the two words
+  /// sharing it, 1 is 'bypass'. A single scalar keeps a flip that is reversed
+  /// mid-travel continuous — the reel just turns back.
+  late final AnimationController _reel = AnimationController(
+    vsync: this,
+    duration: AppDurations.fast,
+    value: _positionOf(widget.label),
+  );
+
+  static double _positionOf(String label) {
+    final index = _ModeFlipWord._words.indexOf(label);
+    return (index < 0 ? 0 : index).toDouble();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ModeFlipWord old) {
+    super.didUpdateWidget(old);
+    if (widget.label != old.label) {
+      _reel.animateTo(
+        _positionOf(widget.label),
+        curve: Curves.easeInOutCubic,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _reel.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        ExcludeSemantics(
-          child: Visibility(
-            visible: false,
-            maintainSize: true,
-            maintainAnimation: true,
-            maintainState: true,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                for (final word in _words) Text(word, style: style),
-              ],
-            ),
-          ),
+    // The reel travels in slot steps, not in each word's own width: 'bypass'
+    // is a character wider, and letting every word travel by its own width
+    // makes the wipe boundary drift off-centre mid-flip.
+    final slot = _slotWidth(context);
+    return ClipRect(
+      child: AnimatedBuilder(
+        animation: _reel,
+        builder: (context, _) => Stack(
+          alignment: Alignment.center,
+          children: [
+            for (var i = 0; i < _ModeFlipWord._words.length; i++)
+              Transform.translate(
+                offset: Offset((i - _reel.value) * slot * _ModeFlipWord.travel, 0),
+                child: ExcludeSemantics(
+                  excluding: (i - _reel.value).abs() > .01,
+                  child: Text(
+                    _ModeFlipWord._words[i],
+                    key: ValueKey(_ModeFlipWord._words[i]),
+                    style: widget.style,
+                  ),
+                ),
+              ),
+          ],
         ),
-        AnimatedSwitcher(
-          duration: AppDurations.fast,
-          switchOutCurve: const Interval(0.34, 1, curve: Curves.easeIn),
-          switchInCurve: const Interval(0.36, 1, curve: Curves.easeOut),
-          layoutBuilder: (current, previous) => Stack(
-            alignment: Alignment.center,
-            children: [...previous, if (current != null) current],
-          ),
-          transitionBuilder: (child, anim) => FadeTransition(
-            opacity: anim,
-            child: SlideTransition(
-              position: Tween(
-                begin: const Offset(0, 0.28),
-                end: Offset.zero,
-              ).animate(anim),
-              child: child,
-            ),
-          ),
-          child: Text(label, key: ValueKey(label), style: style),
-        ),
-      ],
+      ),
     );
+  }
+
+  double _slotWidth(BuildContext context) {
+    // Text merges its style onto the inherited one, and so must the measure:
+    // the family and the letter spacing live in the theme, not in the pill.
+    final inherited = DefaultTextStyle.of(context).style.merge(widget.style);
+    var widest = 0.0;
+    for (final word in _ModeFlipWord._words) {
+      final painter = TextPainter(
+        text: TextSpan(text: word, style: inherited),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout();
+      widest = widest > painter.width ? widest : painter.width;
+    }
+    return widest;
   }
 }
 

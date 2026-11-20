@@ -45,15 +45,6 @@ Finder _pill() => find.byWidgetPredicate(
   (w) => w is AnimatedContainer && w.constraints?.maxHeight == 28,
 );
 
-double _currentOpacity(WidgetTester tester, String word) {
-  // The slot carries both words invisibly, so only the live one has a key.
-  final label = find.byKey(ValueKey(word));
-  if (label.evaluate().isEmpty) return 0;
-  final fades = find.ancestor(of: label, matching: find.byType(FadeTransition));
-  if (fades.evaluate().isEmpty) return 1;
-  return tester.widget<FadeTransition>(fades.first).opacity.value;
-}
-
 Future<AppState> _pumpCaption(WidgetTester tester) async {
   final core = _ModeCore(
     const RoutingState.initial().copyWith(mode: RoutingMode.bypass),
@@ -92,29 +83,52 @@ void main() {
     expect(tester.getSize(_pill()).width, closeTo(width, .01));
   });
 
-  testWidgets('the two mode words never sit on top of each other', (
-    tester,
-  ) async {
-    // A plain cross-fade leaves 'proxy' and 'bypass' at half opacity in the
-    // same spot for a few frames: smeared text, not a swap. The old word has
-    // to be gone before the new one arrives.
+  testWidgets('the swap is a sideway reel, not a fade', (tester) async {
+    // A word dissolving in place reads as a blink: at 12 px there is nothing
+    // for the eye to follow. The reel pushes the words sideways instead, and
+    // keeps both at full opacity the whole way.
     await _pumpCaption(tester);
-    expect(find.byKey(const ValueKey('bypass')), findsOneWidget);
+    // The slot is as wide as the wider word: that is the reel's travel step.
+    final slot = tester.getSize(find.byKey(const ValueKey('bypass'))).width;
+    double gap() =>
+        tester.getCenter(find.byKey(const ValueKey('bypass'))).dx -
+        tester.getCenter(find.byKey(const ValueKey('proxy'))).dx;
+    expect(gap(), greaterThan(slot), reason: 'the parked word is clear of the slot');
+
     await tester.tap(_pill());
-    for (var ms = 0; ms <= 200; ms += 5) {
-      await tester.pump(const Duration(milliseconds: 5));
-      final out = _currentOpacity(tester, 'bypass');
-      final into = _currentOpacity(tester, 'proxy');
+    var widestGap = 0.0;
+    for (var ms = 0; ms <= 200; ms += 10) {
+      await tester.pump(const Duration(milliseconds: 10));
       expect(
-        out < .35 || into < .35,
-        isTrue,
-        reason:
-            'at ${ms}ms both words are half-visible '
-            '(outgoing $out, incoming $into)',
+        find.descendant(of: _pill(), matching: find.byType(FadeTransition)),
+        findsNothing,
+        reason: 'the word slot must not fade',
       );
+      widestGap = widestGap > gap() ? widestGap : gap();
     }
+    expect(
+      widestGap,
+      greaterThan(slot * .95),
+      reason: 'the two words never travelled a full slot apart',
+    );
     await tester.pumpAndSettle();
-    expect(_currentOpacity(tester, 'proxy'), 1);
+    expect(
+      gap(),
+      greaterThan(slot),
+      reason: 'the reel comes to rest one step from the other word',
+    );
+  });
+
+  testWidgets('each mode parks its word in the slot', (tester) async {
+    final state = await _pumpCaption(tester); // starts in bypass
+    final parked = tester.getCenter(find.byKey(const ValueKey('bypass'))).dx;
+    await state.setRoutingMode(RoutingMode.proxy);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getCenter(find.byKey(const ValueKey('proxy'))).dx,
+      closeTo(parked, .01),
+      reason: 'proxy must land where bypass stood, not somewhere else',
+    );
   });
 
   testWidgets('the pill answers a press before the mode changes', (
