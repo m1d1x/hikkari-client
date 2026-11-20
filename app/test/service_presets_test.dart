@@ -1341,6 +1341,32 @@ void main() {
     state.dispose();
   });
 
+  testWidgets('the whole card expands and collapses, not just the label row', (
+    tester,
+  ) async {
+    final core = PresetCore();
+    final state = await showPresets(tester, core, expand: false);
+    final card = find.byKey(const ValueKey('presets_card'));
+    expect(card, findsOneWidget);
+    // The card's own frame — the padding around the label — is the same
+    // target as the label.
+    await tester.tapAt(tester.getRect(card).topLeft + const Offset(4, 4));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('preset_search_field')), findsOneWidget);
+    // Rows keep their own taps: pressing one selects it, the card stays open.
+    await tester.tap(find.text('steam'));
+    await tester.pumpAndSettle();
+    expect(core.selected, isNotNull);
+    expect(find.byKey(const ValueKey('preset_search_field')), findsOneWidget);
+    // And the frame closes the open card the same way.
+    final expanded = tester.getRect(card);
+    await tester.tapAt(expanded.topLeft + Offset(4, expanded.height / 2));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('preset_search_field')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
   testWidgets('catalog reveal reverses in place and ignores passing hover', (
     tester,
   ) async {

@@ -235,6 +235,10 @@ class _ServicePresetsState extends State<ServicePresets>
   final _open = ValueNotifier<bool>(false);
   bool get _expanded => _open.value;
   final _phase = ValueNotifier<int>(0);
+  // The whole card is the collapse/expand target, not just the label row:
+  // the pointer anywhere on it turns the cursor into a hand and, while the
+  // card is closed, lights the label up as part of that target.
+  final _cardHover = ValueNotifier<bool>(false);
   // Natural height of the hidden body. It stays laid out under the clip, so
   // the key reads its full size even while collapsed — the same way the
   // routing card measures its blocks.
@@ -254,6 +258,7 @@ class _ServicePresetsState extends State<ServicePresets>
     _expand.dispose();
     _open.dispose();
     _phase.dispose();
+    _cardHover.dispose();
     _searchCtl.dispose();
     super.dispose();
   }
@@ -437,16 +442,41 @@ class _ServicePresetsState extends State<ServicePresets>
     final state = context.read<AppState>();
     final catalog = state.presets;
     final t = context.tokens;
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // One minimalist row stands in for the whole catalog until
-          // tapped; the search and the groups live in the expandable body.
-          _PresetsHeader(expanded: _open, onTap: _toggleExpanded),
-          _body(t, state, catalog),
-        ],
+    // Every pixel of the card is the expand/collapse target: the padding and
+    // the gaps between rows included. Rows, the search field and the header
+    // keep their own gestures — a nested tap recognizer wins the arena, so
+    // only the empty surface falls through to this one.
+    return ValueListenableBuilder<bool>(
+      valueListenable: _open,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // One row stands in for the whole catalog until tapped; the
+            // search and the groups live in the expandable body.
+            _PresetsHeader(
+              expanded: _open,
+              cardHover: _cardHover,
+            ),
+            _body(t, state, catalog),
+          ],
+        ),
+      ),
+      builder: (context, expanded, child) => MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => _cardHover.value = true,
+        onExit: (_) => _cardHover.value = false,
+        child: Semantics(
+          button: true,
+          expanded: expanded,
+          child: GestureDetector(
+            key: const ValueKey('presets_card'),
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleExpanded,
+            child: child,
+          ),
+        ),
       ),
     );
   }
@@ -588,8 +618,11 @@ class _ServicePresetsState extends State<ServicePresets>
 
 class _PresetsHeader extends StatefulWidget {
   final ValueListenable<bool> expanded;
-  final VoidCallback onTap;
-  const _PresetsHeader({required this.expanded, required this.onTap});
+
+  /// Pointer anywhere on the card; while the card is closed the whole surface
+  /// is the target, so the label lights up with it.
+  final ValueListenable<bool> cardHover;
+  const _PresetsHeader({required this.expanded, required this.cardHover});
 
   @override
   State<_PresetsHeader> createState() => _PresetsHeaderState();
@@ -601,63 +634,58 @@ class _PresetsHeaderState extends State<_PresetsHeader> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    // The tap belongs to the card surface; this row only reports hover.
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: ValueListenableBuilder<bool>(
-          valueListenable: widget.expanded,
-          builder: (context, expanded, _) => Semantics(
-            button: true,
-            expanded: expanded,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 11),
-              child: Row(
-                children: [
-                  // Balances the chevron so the label stays centered.
-                  const SizedBox(width: 22),
-                  Expanded(
-                    child: TweenAnimationBuilder<Color?>(
-                      tween: ColorTween(
-                        end: _hover ? t.primary : t.textSecondary,
-                      ),
-                      duration: AppDurations.hover,
-                      curve: AppCurves.hover,
-                      builder: (_, color, _) => Text(
-                        'преднастроенные',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: color,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  AnimatedRotation(
-                    turns: expanded ? .5 : 0,
-                    duration: AppDurations.routingDetails,
-                    curve: AppCurves.fastInSlowOut,
-                    child: TweenAnimationBuilder<Color?>(
-                      tween: ColorTween(end: _hover ? t.primary : t.textFaint),
-                      duration: AppDurations.hover,
-                      curve: AppCurves.hover,
-                      builder: (_, color, _) => Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 16,
+      child: ListenableBuilder(
+        listenable: Listenable.merge([widget.expanded, widget.cardHover]),
+        builder: (context, _) {
+          final expanded = widget.expanded.value;
+          final hover = _hover || (widget.cardHover.value && !expanded);
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            child: Row(
+              children: [
+                // Balances the chevron so the label stays centered.
+                const SizedBox(width: 22),
+                Expanded(
+                  child: TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(end: hover ? t.primary : t.textSecondary),
+                    duration: AppDurations.hover,
+                    curve: AppCurves.hover,
+                    builder: (_, color, _) => Text(
+                      'преднастроенные',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
                         color: color,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 6),
+                AnimatedRotation(
+                  turns: expanded ? .5 : 0,
+                  duration: AppDurations.routingDetails,
+                  curve: AppCurves.fastInSlowOut,
+                  child: TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(end: hover ? t.primary : t.textFaint),
+                    duration: AppDurations.hover,
+                    curve: AppCurves.hover,
+                    builder: (_, color, _) => Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: color,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
