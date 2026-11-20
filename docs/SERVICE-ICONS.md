@@ -17,7 +17,7 @@ Material/SimpleIcons. PNG здесь главный: он и есть насто
 | --- | --- |
 | `1c` | Викимедиа (P154): 1C logo.svg |
 | `2gis` | iOS app icon (2ГИС) |
-| `aeroflot` | Викимедиа (P154): Aeroflot logo (ru).svg |
+| `aeroflot` | Викимедиа (P154): Aeroflot logo (ru).svg, без подписи «Российские авиалинии» |
 | `alfa` | alfabank.ru favicon (256px) |
 | `aviasales` | aviasales.ru icon.svg |
 | `avito` | avito.ru favicon (256px) |
@@ -52,7 +52,7 @@ Material/SimpleIcons. PNG здесь главный: он и есть насто
 | `megafon` | iOS app icon (МегаФон) |
 | `megamarket` | megamarket.ru favicon (256px) |
 | `mir` | Викимедиа (P154): Mir-logo.SVG.svg |
-| `mts` | static.mts.ru apple-touch-icon (180px) |
+| `mts` | Викимедиа: Mts-newlogo2023.png (638px) |
 | `mvideo` | Викимедиа (P154): MVideo 2023 |
 | `notion` | Викимедиа (P154): Notion-logo.svg |
 | `ok` | ok.ru apple-touch-icon |
@@ -69,7 +69,7 @@ Material/SimpleIcons. PNG здесь главный: он и есть насто
 | `ria` | ria.ru favicon (256px) |
 | `rostelecom` | iOS app icon (Ростелеком) |
 | `rutube` | rutube.ru icon.svg |
-| `rzd` | Викимедиа (P154): RZD.svg (без подписи «Российские железные дороги») |
+| `rzd` | Викимедиа (P154): RZD.svg, только знак «РЖД» |
 | `s7` | s7.ru favicon (256px) |
 | `samokat` | samokat.ru favicon (256px) |
 | `sber` | Викимедиа: Sberbank logo 2020 en.png (331px) |
