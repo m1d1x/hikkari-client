@@ -1172,6 +1172,50 @@ void main() {
     }
   });
 
+  // The badge draws a bundled PNG first (service_icon.dart); the vector SVG is
+  // only a fallback for ids the app does not ship. A catalog service without
+  // its PNG shows a fake glyph, so every shipped service must have its file.
+  test('every catalog service has a bundled brand PNG', () {
+    final raw = jsonDecode(
+      File('../engine/core/presets/defaults.json').readAsStringSync(),
+    );
+    final services = (raw['services'] as List).cast<Map<String, dynamic>>();
+    // Mirrors _normalizeIconId: catalog ids that are aliases of a shipped file.
+    const aliases = <String, String>{
+      'yandex-go': 'yandex-taxi',
+      'yandexgo': 'yandex-taxi',
+      'yandextaxi': 'yandex-taxi',
+      'yandexmusic': 'yandex-music',
+      'yandexmaps': 'yandex-maps',
+      'yandexdisk': 'yandex-disk',
+      'yandexmarket': 'yandex-market',
+      'vkvideo': 'vk-video',
+      'vkplay': 'vk-play',
+      'alfabank': 'alfa',
+      'sberbank': 'sber',
+      'tinkoff': 'tbank',
+      'twitter': 'x',
+      'chatgpt': 'openai',
+    };
+    for (final service in services) {
+      final icon = (service['icon'] as String).trim().toLowerCase().replaceAll(
+        '_',
+        '-',
+      );
+      final id = aliases[icon] ?? icon;
+      final file = File('assets/services/$id.png');
+      final reason = 'service ${service['id']} has no assets/services/$id.png';
+      expect(file.existsSync(), isTrue, reason: reason);
+      final bytes = file.readAsBytesSync();
+      expect(
+        bytes.sublist(0, 8),
+        <int>[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+        reason: '$id.png is not a PNG',
+      );
+      expect(bytes.length, greaterThan(600), reason: '$id.png is empty');
+    }
+  });
+
   testWidgets(
     'preset search filters services by name, id, domains and aliases',
     (tester) async {
