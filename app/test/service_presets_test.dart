@@ -856,6 +856,32 @@ void main() {
     state.dispose();
   });
 
+  // The hub's catalog carries entries whose icon id is empty (fall-guys was
+  // released that way). The row must still draw that service's own asset, so
+  // the badge gets the service id when the icon id says nothing.
+  testWidgets('a service without an icon id draws its own asset', (
+    tester,
+  ) async {
+    final core = PresetCore(
+      customServices: [
+        {
+          'id': 'fall-guys',
+          'name': 'Fall Guys',
+          'icon': '',
+          'domains': ['fallguys.com'],
+          'ips': [],
+          'processes': {},
+          'defaultModes': ['bypass', 'proxy'],
+        },
+      ],
+    );
+    final state = await showPresets(tester, core);
+    final badge = tester.widget<ServiceIconBadge>(find.byType(ServiceIconBadge));
+    expect(badge.iconId, 'fall-guys');
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
   testWidgets('sync preference lives in settings and keeps selected groups', (
     tester,
   ) async {

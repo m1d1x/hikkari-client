@@ -64,6 +64,11 @@ export 'brand_icons.dart' show resolveBrandSvg;
   'yandex-market' ||
   'yandex_market' ||
   'yandexmarket' => (Icons.shopping_bag_rounded, const Color(0xFFFFD500)),
+  // Rows that are a category rather than one brand: no logo to show, so the
+  // pictogram says what the group is instead of the generic «apps» grid.
+  'news' => (Icons.newspaper_outlined, const Color(0xFF8A8F98)),
+  'privacy' ||
+  'tor' => (Icons.shield_outlined, const Color(0xFF7D4CDB)),
   'vk' => (SimpleIcons.vk, const Color(0xFF0077FF)),
   'vk-video' ||
   'vkvideo' => (Icons.video_collection_outlined, const Color(0xFF0077FF)),

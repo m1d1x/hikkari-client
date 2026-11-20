@@ -748,7 +748,13 @@ class _ServiceRowState extends State<_ServiceRow>
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final (icon, brand) = resolveServiceIcon(widget.service.icon, t.textMuted);
+    // A catalog entry may arrive without an icon id («fall-guys» shipped that
+    // way): the service's own id names its asset just as well, so the row is
+    // not left with a generic glyph.
+    final iconId = widget.service.icon.isNotEmpty
+        ? widget.service.icon
+        : widget.service.id;
+    final (icon, brand) = resolveServiceIcon(iconId, t.textMuted);
     final color = widget.selected ? brand : t.textFaint;
     final rules = _rules(
       widget.service,
@@ -830,7 +836,7 @@ class _ServiceRowState extends State<_ServiceRow>
                                   curve: AppCurves.fastInSlowOut,
                                   builder: (context, tint, child) =>
                                       ServiceIconBadge(
-                                        iconId: widget.service.icon,
+                                        iconId: iconId,
                                         icon: icon,
                                         color: tint ?? color,
                                       ),
