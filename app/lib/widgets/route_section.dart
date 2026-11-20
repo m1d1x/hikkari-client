@@ -24,15 +24,31 @@ import 'service_presets.dart';
 /// to the settings sheet ([RouteSettingsSection]) — this section only
 /// shows a tooltip on the header explaining whichever mode is active.
 class RouteSection extends StatefulWidget {
-  const RouteSection({super.key, this.spareHeight});
+  const RouteSection({super.key, this.spareHeight, this.controller});
 
   /// Free height the page can still give this section before it starts to
   /// scroll, as laid out right now. Without it the whole reveal is treated as
   /// visible.
   final double Function()? spareHeight;
 
+  /// Lets the page close the card from the space around it; see
+  /// [RouteSectionController].
+  final RouteSectionController? controller;
+
   @override
   State<RouteSection> createState() => _RouteSectionState();
+}
+
+/// A way into the card's open state from outside it.
+///
+/// The header is the card's own close button, and a catalog scrolled deep
+/// takes it off the screen: the empty space around the card then has to be
+/// the way out, or the window traps the user in a list they scrolled into.
+class RouteSectionController {
+  VoidCallback? _close;
+
+  /// Closes the card; no-op when it is already closed or not mounted.
+  void close() => _close?.call();
 }
 
 /// What a reveal shows on screen. Each share is the part of a block's natural
@@ -190,6 +206,7 @@ class _RouteSectionState extends State<RouteSection>
 
   @override
   void dispose() {
+    if (widget.controller?._close == _close) widget.controller?._close = null;
     _reveal.dispose();
     _presetsTail.dispose();
     _presetsEdge.dispose();
@@ -198,6 +215,22 @@ class _RouteSectionState extends State<RouteSection>
   }
 
   void _toggleOpen() => _setOpen(!_open);
+
+  void _close() => _setOpen(false);
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller?._close = _close;
+  }
+
+  @override
+  void didUpdateWidget(RouteSection old) {
+    super.didUpdateWidget(old);
+    if (old.controller == widget.controller) return;
+    if (old.controller?._close == _close) old.controller?._close = null;
+    widget.controller?._close = _close;
+  }
 
   void _setOpen(bool value) {
     if (_open == value) return;
@@ -372,60 +405,68 @@ class _RouteSectionState extends State<RouteSection>
 
     final reversedItems = items.reversed.toList();
 
-    return AnimatedBuilder(
-      animation: Listenable.merge([_reveal, _presetsEdge]),
-      builder: (context, child) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-        // The inset goes negative while the catalog's reveal carries the
-        // card's bottom edge past the window: the card then hangs below
-        // the section by that much instead of making the page scroll.
-        child: _BottomInset(
-          inset:
-              (_settled
-                  ? _bottomInset
-                  : _bottomInset - _plan.edge * _reveal.value) -
-              _presetsEdge.value,
-          child: child,
+    return GestureDetector(
+      // Taps inside the card belong to it. The page closes an open card on a
+      // tap in the empty space around it, and a label in the card is not
+      // that space: rows, fields and buttons keep their own gestures, and
+      // this catches only what nothing else claimed.
+      behavior: HitTestBehavior.opaque,
+      onTap: () {},
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_reveal, _presetsEdge]),
+        builder: (context, child) => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          // The inset goes negative while the catalog's reveal carries the
+          // card's bottom edge past the window: the card then hangs below
+          // the section by that much instead of making the page scroll.
+          child: _BottomInset(
+            inset:
+                (_settled
+                    ? _bottomInset
+                    : _bottomInset - _plan.edge * _reveal.value) -
+                _presetsEdge.value,
+            child: child,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _island(
-            t,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _head(t, s),
-                _revealed(
-                  KeyedSubtree(
-                    key: _controlsSize,
-                    child: _tabHeight(_body(t, s)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _island(
+              t,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _head(t, s),
+                  _revealed(
+                    KeyedSubtree(
+                      key: _controlsSize,
+                      child: _tabHeight(_body(t, s)),
+                    ),
+                    () => _plan.controls,
                   ),
-                  () => _plan.controls,
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          _itemsBlock(t, s, reversedItems),
-          _expandingIsland(
-            t,
-            key: const ValueKey('route_presets_surface'),
-            measurementKey: _presetsSize,
-            gap: () => _plan.presetsGap,
-            share: () => _plan.presets,
-            tail: _presetsTail,
-            child: CatalogRevealScope(
+            _itemsBlock(t, s, reversedItems),
+            _expandingIsland(
+              t,
+              key: const ValueKey('route_presets_surface'),
+              measurementKey: _presetsSize,
+              gap: () => _plan.presetsGap,
+              share: () => _plan.presets,
               tail: _presetsTail,
-              taken: _presetsEdge,
-              spare: _presetsSpare,
-              // The bottom inset, then the rounded corners and the border.
-              edge: _bottomInset + t.radiusLg + 1,
-              child: _tabHeight(_catalogs[_tab]!),
+              child: CatalogRevealScope(
+                tail: _presetsTail,
+                taken: _presetsEdge,
+                spare: _presetsSpare,
+                // The bottom inset, then the rounded corners and the border.
+                edge: _bottomInset + t.radiusLg + 1,
+                child: _tabHeight(_catalogs[_tab]!),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

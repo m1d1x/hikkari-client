@@ -17,6 +17,7 @@ import 'package:nekkobox/screens/home_screen.dart';
 import 'package:nekkobox/theme/app_theme.dart';
 import 'package:nekkobox/widgets/service_presets.dart';
 import 'package:nekkobox/widgets/route_section.dart';
+import 'package:nekkobox/widgets/brand_header.dart';
 import 'package:nekkobox/ui/nekko_switch.dart';
 import 'package:nekkobox/ui/nekko_animated_height.dart';
 import 'package:nekkobox/widgets/service_icon.dart';
@@ -1401,6 +1402,80 @@ void main() {
     expect(find.text('yandex'), findsNothing);
     expect(find.text('telegram'), findsOneWidget);
     expect(find.text('twitch'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a tap outside the card closes routing scrolled deep', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(480, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('window_manager'),
+          (_) async => false,
+        );
+    final state = AppState(
+      PresetCore(
+        customServices: [
+          for (var i = 0; i < 60; i++)
+            {
+              'id': 'service-$i',
+              'name': 'Service $i',
+              'icon': 'steam',
+              'domains': ['example$i.com'],
+              'ips': [],
+              'processes': <String, dynamic>{},
+              'defaultModes': ['bypass', 'proxy'],
+            },
+        ],
+      ),
+    );
+    addTearDown(state.dispose);
+    await state.refreshPresetState();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(theme: buildAppTheme(), home: const HomeScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final section = find.byType(RouteSection);
+    final collapsed = tester.getSize(section).height;
+    await tester.tap(find.text('маршрутизация'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    // The catalog runs past the window: the header leaves the screen and
+    // only its rows stay in view.
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getBottomLeft(find.text('маршрутизация')).dy,
+      lessThan(0),
+      reason: 'the header closed the card before, and it is now off-screen',
+    );
+    // The empty strip of the header row above the card.
+    final brand = tester.getRect(find.byType(BrandHeader));
+    await tester.tapAt(Offset(brand.left + 4, brand.center.dy));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(section).height,
+      closeTo(collapsed, .01),
+      reason: 'the card is back to its closed height',
+    );
+    // And a tap inside the card leaves it alone.
+    await tester.tap(find.text('маршрутизация'));
+    await tester.pumpAndSettle();
+    final open = tester.getSize(section).height;
+    expect(open, greaterThan(collapsed));
+    await tester.tap(find.text('ручные'));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(section).height, closeTo(open, .01));
     await tester.pumpWidget(const SizedBox());
   });
 }
