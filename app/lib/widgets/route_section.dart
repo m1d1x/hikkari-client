@@ -1126,7 +1126,10 @@ class _ModeFlipWordState extends State<_ModeFlipWord>
   /// mid-travel continuous — the reel just turns back.
   late final AnimationController _reel = AnimationController(
     vsync: this,
-    duration: AppDurations.fast,
+    // The word leaves in the click's own frame and lands softly: the curve
+    // carries the snap, the longer travel makes the ride read as motion and
+    // not as a hop.
+    duration: AppDurations.normal,
     value: _positionOf(widget.label),
   );
 
