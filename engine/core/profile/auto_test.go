@@ -48,3 +48,28 @@ func TestLegacyAutoWithoutOurSourceBecomesManual(t *testing.T) {
 		t.Fatalf("legacy global auto was not safely narrowed: %+v, %v", f, err)
 	}
 }
+
+func TestServerManagedAutoKeepsExplicitCountriesOutOfThePool(t *testing.T) {
+	const base = "hikkari+v1://hikkari:test-key@192.0.2.1:8443?sni=relay.example&egress="
+	source := &SubscriptionInfo{ID: "own"}
+	f := &File{
+		Active:        "nl",
+		Subscriptions: []Subscription{{ID: source.ID, URL: "https://sub.hikkari.net/sub/token"}},
+		Profiles: []Profile{
+			{Name: "nl", Subscription: source, Connection: &Connection{URI: base + "nl"}},
+			{Name: "de", Subscription: source, Connection: &Connection{URI: base + "de"}},
+			{Name: "auto", Subscription: source, Connection: &Connection{URI: base + "auto"}},
+			{Name: "local", Connection: &Connection{URI: base + "auto"}},
+		},
+	}
+	if ids := f.AutoProfiles(); !reflect.DeepEqual(ids, []string{"auto"}) {
+		t.Fatalf("auto candidates: %v", ids)
+	}
+	if f.Active != "nl" {
+		t.Fatalf("manual NL was changed to %q", f.Active)
+	}
+	f.Profiles[2] = f.Profiles[3]
+	if ids := f.AutoProfiles(); len(ids) != 0 {
+		t.Fatalf("explicit countries entered Auto after removal of its profile: %v", ids)
+	}
+}

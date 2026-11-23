@@ -23,6 +23,8 @@ type Link struct {
 	Hikkari bool
 	// Dup is dup=1 on a hikkari+v1:// link: v1.02 duplicated UDP.
 	Dup bool
+	// Egress identifies a fixed country or an entry-managed Auto route.
+	Egress string
 }
 
 func Parse(u *url.URL) (Link, error) {
@@ -58,7 +60,7 @@ func Parse(u *url.URL) (Link, error) {
 		return l, fmt.Errorf("naive: неверные параметры ссылки")
 	}
 	for key, values := range q {
-		known := key == "sni" || key == "hikkari-node" || (key == "dup" && l.Hikkari)
+		known := key == "sni" || key == "hikkari-node" || (l.Hikkari && (key == "dup" || key == "egress"))
 		if !known || len(values) != 1 {
 			return l, fmt.Errorf("naive: неподдерживаемые параметры ссылки")
 		}
@@ -69,6 +71,11 @@ func Parse(u *url.URL) (Link, error) {
 		l.Dup = true
 	default:
 		return l, fmt.Errorf("naive: неверный параметр dup")
+	}
+	switch l.Egress = q.Get("egress"); l.Egress {
+	case "", "nl", "de", "auto":
+	default:
+		return l, fmt.Errorf("naive: неверный параметр egress")
 	}
 	l.ServerName = q.Get("sni")
 	if l.ServerName == "" {
@@ -115,6 +122,9 @@ func (l Link) URI() string {
 	}
 	if l.Hikkari && l.Dup {
 		q.Set("dup", "1")
+	}
+	if l.Hikkari && l.Egress != "" {
+		q.Set("egress", l.Egress)
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
