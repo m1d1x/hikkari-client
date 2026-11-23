@@ -1,10 +1,13 @@
 package profile
 
 import (
-	"NekkoVPN/core/capacity"
-	"NekkoVPN/core/subscription"
+	"net/url"
 	"sort"
 	"time"
+
+	"NekkoVPN/core/capacity"
+	"NekkoVPN/core/naive"
+	"NekkoVPN/core/subscription"
 )
 
 // AutoSource resolves one authoritative provider source, never a display title
@@ -41,12 +44,45 @@ func (f *File) AutoProfiles() []string {
 	if source == "" {
 		return ids
 	}
+	var countries bool
+	var managed string
 	for _, p := range f.Profiles {
-		if p.Subscription != nil && p.Subscription.ID == source {
-			ids = append(ids, p.Name)
+		if p.Subscription == nil || p.Subscription.ID != source {
+			continue
+		}
+		ids = append(ids, p.Name)
+		switch p.countryEgress() {
+		case "auto":
+			if managed != "" {
+				return []string{}
+			}
+			managed = p.Name
+		case "nl", "de":
+			countries = true
 		}
 	}
+	if managed != "" {
+		return []string{managed}
+	}
+	if countries {
+		return []string{}
+	}
 	return ids
+}
+
+func (p Profile) countryEgress() string {
+	if p.Connection == nil {
+		return ""
+	}
+	u, err := url.Parse(p.Connection.URI)
+	if err != nil || u.Scheme != "hikkari+v1" {
+		return ""
+	}
+	link, err := naive.Parse(u)
+	if err != nil {
+		return ""
+	}
+	return link.Egress
 }
 
 func (f *File) CapacityFor(p Profile, now time.Time) *capacity.Metric {
