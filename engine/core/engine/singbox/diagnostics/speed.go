@@ -33,12 +33,17 @@ const (
 	speedStreams = 4
 	speedWindow  = 10 * time.Second
 	// speedDownBytes and speedUpBytes size one request; a flow that finishes one
-	// before the window ends starts the next.
-	speedDownBytes = 100 << 20
+	// before the window ends starts the next. Cloudflare answers 403 to a
+	// download of 100 000 000 bytes or more (checked 23.11: 99 999 999 is 200),
+	// so a request stays under cloudflareDownLimit.
+	speedDownBytes = 25 << 20
 	speedUpBytes   = 25 << 20
 	// speedNowWait bounds a round on request: a core's start, the address check
 	// and two windows a profile, with room to spare.
 	speedNowWait = 10 * time.Minute
+	// cloudflareDownLimit is the first byte count speed.cloudflare.com/__down
+	// refuses with 403.
+	cloudflareDownLimit = 100_000_000
 )
 
 // speedPlan is one round's targets and limits; a test points it at its server.
