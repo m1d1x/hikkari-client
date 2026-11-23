@@ -182,6 +182,8 @@ class ServerCleanliness {
 }
 
 class ProfileInfo {
+  final String country;
+  final bool countryUnavailable;
   final bool autoEligible;
   final RelayCapacity? capacity;
   final String name;
@@ -204,11 +206,15 @@ class ProfileInfo {
     required this.endpoint,
     required this.protocol,
     this.subscription,
+    this.country = '',
+    this.countryUnavailable = false,
     this.autoEligible = false,
     this.capacity,
   });
 
   factory ProfileInfo.fromJson(Map<String, dynamic> j) => ProfileInfo(
+    country: j['country'] as String? ?? '',
+    countryUnavailable: j['countryUnavailable'] as bool? ?? false,
     autoEligible: j['autoEligible'] as bool? ?? false,
     capacity: j['capacity'] is Map<String, dynamic>
         ? RelayCapacity.fromJson(j['capacity'] as Map<String, dynamic>)

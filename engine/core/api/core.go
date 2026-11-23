@@ -91,6 +91,10 @@ type Core struct {
 	// support delivers support reports, retrying until the hub takes them
 	support *supportqueue.Queue
 
+	// countryHealth describes the entry's route for new country connections.
+	countryHealthMu sync.RWMutex
+	countryHealth   map[string]countryHealth
+
 	// routed is the profile traffic goes through, kept by watchRoute.
 	routedMu sync.RWMutex
 	routed   string
@@ -316,6 +320,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		run(func() { c.watchNetwork(ctx) })
 		run(func() { c.watchRoute(ctx) })
 	}
+	run(func() { c.watchCountryHealth(ctx) })
 	c.workerDone = make(chan struct{})
 	workerDone := c.workerDone
 	go func() { workers.Wait(); close(workerDone) }()

@@ -113,8 +113,12 @@ class _ProfilesSheetState extends State<ProfilesSheet>
     //   3  dead
     // Inside each tier we sub-sort by recent rtt so the fastest survives
     // at the top.
+    final displayed = s.displayedCountryProfile(
+      s.autoMode ? s.autoProfileName : active,
+    );
     (int, int) qualityKey(ProfileInfo p) {
-      if (s.autoMode ? p.name == s.autoProfileName : p.active) return (0, 0);
+      if (p.name == displayed) return (0, 0);
+      if (p.countryUnavailable) return (4, 0);
       final hist = s.uptime[p.name] ?? const <PingSample>[];
       if (hist.length < 3) return (2, 0);
       final r = UptimeStats.recentAvgRtt(hist);

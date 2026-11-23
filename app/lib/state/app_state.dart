@@ -204,6 +204,11 @@ class AppState extends ChangeNotifier {
   /// Resolved lowercase ISO country code for [name], or null if not resolved
   /// (either still loading, or the host couldn't be geolocated).
   String? countryCodeFor(String name) {
+    for (final profile in _profiles) {
+      if (profile.name == name && profile.country.isNotEmpty) {
+        return profile.country;
+      }
+    }
     final code = _profileCountries[name];
     return (code == null || code.isEmpty) ? null : code;
   }
@@ -213,7 +218,9 @@ class AppState extends ChangeNotifier {
   /// code lands. A profile already present in [_profileCountries] (even with
   /// an empty value) is done resolving, so it's not loading.
   bool isCountryLoading(String name) =>
-      _resolvingCountries && !_profileCountries.containsKey(name);
+      _resolvingCountries &&
+      countryCodeFor(name) == null &&
+      !_profileCountries.containsKey(name);
   RoutingState get routing => _routing;
   Map<String, List<PingSample>> get uptime => _uptime;
   Map<String, List<PingSample>> get serviceUptime => _serviceUptime;
@@ -289,6 +296,26 @@ class AppState extends ChangeNotifier {
       if (p.active) return p.name;
     }
     return null;
+  }
+
+  /// The country the entry routes new connections through. Keep the
+  /// configured profile so the gateway can return new flows home on recovery.
+  String? displayedCountryProfile(String? name) {
+    if (name == null) return null;
+    for (final current in _profiles) {
+      if (current.name != name || !current.countryUnavailable) continue;
+      final source = current.subscription?.id;
+      if (source == null) return name;
+      for (final candidate in _profiles) {
+        if (candidate.subscription?.id == source &&
+            candidate.country.isNotEmpty &&
+            candidate.country != current.country &&
+            !candidate.countryUnavailable) {
+          return candidate.name;
+        }
+      }
+    }
+    return name;
   }
 
   /// Stable profile ID; native engine tags belong to the backend adapter.

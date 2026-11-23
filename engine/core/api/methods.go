@@ -409,8 +409,23 @@ func (c *Core) RemoveRule(mode, category, value string) error {
 //  Profiles
 // ============================================================
 
-func (c *Core) Profiles() ([]ProfileInfo, error) { return c.profiles.List() }
-func (c *Core) ActiveProfile() (string, error)   { return c.profiles.Active() }
+func (c *Core) Profiles() ([]ProfileInfo, error) {
+	profiles, err := c.profiles.List()
+	if err != nil {
+		return nil, err
+	}
+	c.countryHealthMu.RLock()
+	defer c.countryHealthMu.RUnlock()
+	for i := range profiles {
+		p := &profiles[i]
+		if p.Country != "" && p.Subscription != nil {
+			state := c.countryHealth[p.Subscription.ID]
+			p.CountryUnavailable = p.Country == state.down && time.Now().Before(state.expires)
+		}
+	}
+	return profiles, nil
+}
+func (c *Core) ActiveProfile() (string, error) { return c.profiles.Active() }
 func (c *Core) RenameProfile(name, label string) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()

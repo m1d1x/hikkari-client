@@ -603,3 +603,37 @@ func decodeBase64Subscription(s string) (string, error) {
 	}
 	return "", fmt.Errorf("not base64")
 }
+
+// CountryDown reads the entry's confirmed country failure from the
+// subscription endpoint. No subscription keys or routing configuration change.
+func CountryDown(ctx context.Context, source string) (string, error) {
+	if !IsHikkariURL(source) {
+		return "", errors.New("country status requires a Hikkari subscription")
+	}
+	u, err := url.Parse(source)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("country-status", "1")
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := doRequest(ctx, client, req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		return "", &HTTPError{Status: resp.StatusCode}
+	}
+	switch down := resp.Header.Get("Hikkari-Country-Down"); down {
+	case "NL", "DE":
+		return strings.ToLower(down), nil
+	default:
+		return "", nil
+	}
+}
