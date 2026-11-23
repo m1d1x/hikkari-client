@@ -537,7 +537,7 @@ func healRealIPv6Rules(rules []interface{}) []interface{} {
 			if isRussianIPv6Reject(m) {
 				continue
 			}
-			if action, _ := m["action"].(string); action == "sniff" {
+			if action, _ := m["action"].(string); action == "sniff" && !isTorrentRule(m) {
 				if _, scoped := m["ip_cidr"]; scoped {
 					continue
 				}
@@ -578,7 +578,7 @@ func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[st
 		if rules, ok := route["rules"].([]interface{}); ok {
 			for i, r := range rules {
 				if m, ok := r.(map[string]interface{}); ok {
-					if action, _ := m["action"].(string); action == "sniff" {
+					if action, _ := m["action"].(string); action == "sniff" && !isTorrentRule(m) {
 						m["port"] = []interface{}{80, 443, 8080, 8443}
 						rules[i] = m
 					}
@@ -825,7 +825,7 @@ func ensureICMPDirectRule(cfg map[string]interface{}, enable bool) {
 			break
 		}
 		action, _ := m["action"].(string)
-		if action == "sniff" || action == "hijack-dns" || isRussianIPv6Reject(m) {
+		if (action == "sniff" && !isTorrentRule(m)) || action == "hijack-dns" || isRussianIPv6Reject(m) {
 			insertAt = i + 1
 			continue
 		}
