@@ -3,6 +3,7 @@ package diag
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -173,5 +174,19 @@ func TestSpeedOnAMobileNetworkDoesNotRun(t *testing.T) {
 			t.Fatalf("%q", lines)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// 1.0.95 asked for 100 << 20 bytes a request and Cloudflare refused every one
+// with 403: the round measured no download at all.
+func TestSpeedAsksCloudflareForNoMoreThanItServes(t *testing.T) {
+	if speedDownBytes >= cloudflareDownLimit {
+		t.Fatalf("a download request of %d bytes; Cloudflare refuses %d and more", speedDownBytes, cloudflareDownLimit)
+	}
+	if !strings.Contains(defaultSpeedPlan.DownURL, fmt.Sprintf("bytes=%d", speedDownBytes)) {
+		t.Fatalf("the plan asks %q", defaultSpeedPlan.DownURL)
+	}
+	if loadBytes >= cloudflareDownLimit {
+		t.Fatalf("diag:load asks %d bytes", loadBytes)
 	}
 }
