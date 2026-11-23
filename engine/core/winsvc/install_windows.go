@@ -26,7 +26,7 @@ var rootFiles = []string{"HikkariService.exe", "hikkari-updater.exe", "hikkari.e
 // %LOCALAPPDATA%\hikkari, where an unelevated GUI can write.
 var userDataFiles = []string{
 	"profiles.json", "config.json", "custom-services.json", "direct-ip.txt",
-	"geoip-cache.json", "ipqs-key.txt", "uptime-history.json",
+	"geoip-cache.json", "uptime-history.json",
 	"service-uptime-history.json",
 }
 

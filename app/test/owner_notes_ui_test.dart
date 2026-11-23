@@ -47,7 +47,6 @@ class _TestEngineCore extends NekkoboxCore {
       },
       'UptimeHistory' => <String, dynamic>{},
       'ServiceUptimeHistory' => <String, dynamic>{},
-      'ServerCleanliness' => <String, dynamic>{'running': running},
       'AutoMode' => false,
       'ProfileCountries' => <String, dynamic>{'nl-1': 'nl'},
       'UpdateStatus' => <String, dynamic>{'state': 'idle', 'installed': ''},

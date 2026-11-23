@@ -17,6 +17,7 @@ import 'package:nekkobox/screens/home_screen.dart';
 import 'package:nekkobox/theme/app_theme.dart';
 import 'package:nekkobox/widgets/service_presets.dart';
 import 'package:nekkobox/widgets/route_section.dart';
+import 'package:nekkobox/widgets/brand_header.dart';
 import 'package:nekkobox/ui/nekko_switch.dart';
 import 'package:nekkobox/ui/nekko_animated_height.dart';
 import 'package:nekkobox/widgets/service_icon.dart';
@@ -855,6 +856,32 @@ void main() {
     state.dispose();
   });
 
+  // The hub's catalog carries entries whose icon id is empty (fall-guys was
+  // released that way). The row must still draw that service's own asset, so
+  // the badge gets the service id when the icon id says nothing.
+  testWidgets('a service without an icon id draws its own asset', (
+    tester,
+  ) async {
+    final core = PresetCore(
+      customServices: [
+        {
+          'id': 'fall-guys',
+          'name': 'Fall Guys',
+          'icon': '',
+          'domains': ['fallguys.com'],
+          'ips': [],
+          'processes': {},
+          'defaultModes': ['bypass', 'proxy'],
+        },
+      ],
+    );
+    final state = await showPresets(tester, core);
+    final badge = tester.widget<ServiceIconBadge>(find.byType(ServiceIconBadge));
+    expect(badge.iconId, 'fall-guys');
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
   testWidgets('sync preference lives in settings and keeps selected groups', (
     tester,
   ) async {
@@ -1171,6 +1198,50 @@ void main() {
     }
   });
 
+  // The badge draws a bundled PNG first (service_icon.dart); the vector SVG is
+  // only a fallback for ids the app does not ship. A catalog service without
+  // its PNG shows a fake glyph, so every shipped service must have its file.
+  test('every catalog service has a bundled brand PNG', () {
+    final raw = jsonDecode(
+      File('../engine/core/presets/defaults.json').readAsStringSync(),
+    );
+    final services = (raw['services'] as List).cast<Map<String, dynamic>>();
+    // Mirrors _normalizeIconId: catalog ids that are aliases of a shipped file.
+    const aliases = <String, String>{
+      'yandex-go': 'yandex-taxi',
+      'yandexgo': 'yandex-taxi',
+      'yandextaxi': 'yandex-taxi',
+      'yandexmusic': 'yandex-music',
+      'yandexmaps': 'yandex-maps',
+      'yandexdisk': 'yandex-disk',
+      'yandexmarket': 'yandex-market',
+      'vkvideo': 'vk-video',
+      'vkplay': 'vk-play',
+      'alfabank': 'alfa',
+      'sberbank': 'sber',
+      'tinkoff': 'tbank',
+      'twitter': 'x',
+      'chatgpt': 'openai',
+    };
+    for (final service in services) {
+      final icon = (service['icon'] as String).trim().toLowerCase().replaceAll(
+        '_',
+        '-',
+      );
+      final id = aliases[icon] ?? icon;
+      final file = File('assets/services/$id.png');
+      final reason = 'service ${service['id']} has no assets/services/$id.png';
+      expect(file.existsSync(), isTrue, reason: reason);
+      final bytes = file.readAsBytesSync();
+      expect(
+        bytes.sublist(0, 8),
+        <int>[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+        reason: '$id.png is not a PNG',
+      );
+      expect(bytes.length, greaterThan(600), reason: '$id.png is empty');
+    }
+  });
+
   testWidgets(
     'preset search filters services by name, id, domains and aliases',
     (tester) async {
@@ -1270,6 +1341,32 @@ void main() {
     state.dispose();
   });
 
+  testWidgets('the whole card expands and collapses, not just the label row', (
+    tester,
+  ) async {
+    final core = PresetCore();
+    final state = await showPresets(tester, core, expand: false);
+    final card = find.byKey(const ValueKey('presets_card'));
+    expect(card, findsOneWidget);
+    // The card's own frame — the padding around the label — is the same
+    // target as the label.
+    await tester.tapAt(tester.getRect(card).topLeft + const Offset(4, 4));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('preset_search_field')), findsOneWidget);
+    // Rows keep their own taps: pressing one selects it, the card stays open.
+    await tester.tap(find.text('steam'));
+    await tester.pumpAndSettle();
+    expect(core.selected, isNotNull);
+    expect(find.byKey(const ValueKey('preset_search_field')), findsOneWidget);
+    // And the frame closes the open card the same way.
+    final expanded = tester.getRect(card);
+    await tester.tapAt(expanded.topLeft + Offset(4, expanded.height / 2));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('preset_search_field')), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
   testWidgets('catalog reveal reverses in place and ignores passing hover', (
     tester,
   ) async {
@@ -1322,6 +1419,46 @@ void main() {
     expect(tester.widget(find.text('steam')), isNot(same(widgetBefore)));
     await tester.pumpWidget(const SizedBox());
     state.dispose();
+  });
+
+  testWidgets('a mode flip leaves the closed catalog rows alone', (
+    tester,
+  ) async {
+    // The catalog body sits in the routing card, which the whole app rebuilds
+    // on every routing change. While the card is closed the body is invisible,
+    // but rebuilding it still costs ~90 ms (88 service rows) — that froze a
+    // frame on flipping the mode, and on every rule edit.
+    final core = _ModeCore();
+    final state = await showPresets(tester, core, expand: false);
+    addTearDown(state.dispose);
+    // The card keeps the closed body built, only offstage: that is why it
+    // costs anything at all.
+    final hidden = find.text('steam', skipOffstage: false);
+    final closed = tester.widget(hidden);
+    await state.setRoutingMode(RoutingMode.proxy);
+    await tester.pump();
+    expect(
+      tester.widget(hidden),
+      same(closed),
+      reason: 'the closed catalog body must not rebuild on a mode flip',
+    );
+    // Once nothing is moving, the closed body is refreshed quietly, so the
+    // card unfolds without paying for the rebuild during the reveal.
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      tester.widget(hidden),
+      isNot(same(closed)),
+      reason: 'the closed body must refresh once the flip has settled',
+    );
+    final quiet = tester.widget(hidden);
+    await tester.tap(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget(find.text('steam')),
+      same(quiet),
+      reason: 'unfolding must not rebuild the rows again',
+    );
+    await tester.pumpWidget(const SizedBox());
   });
 
   testWidgets('manual list caption explains the active mode and tab', (
@@ -1401,6 +1538,80 @@ void main() {
     expect(find.text('yandex'), findsNothing);
     expect(find.text('telegram'), findsOneWidget);
     expect(find.text('twitch'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a tap outside the card closes routing scrolled deep', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(480, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('window_manager'),
+          (_) async => false,
+        );
+    final state = AppState(
+      PresetCore(
+        customServices: [
+          for (var i = 0; i < 60; i++)
+            {
+              'id': 'service-$i',
+              'name': 'Service $i',
+              'icon': 'steam',
+              'domains': ['example$i.com'],
+              'ips': [],
+              'processes': <String, dynamic>{},
+              'defaultModes': ['bypass', 'proxy'],
+            },
+        ],
+      ),
+    );
+    addTearDown(state.dispose);
+    await state.refreshPresetState();
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(theme: buildAppTheme(), home: const HomeScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final section = find.byType(RouteSection);
+    final collapsed = tester.getSize(section).height;
+    await tester.tap(find.text('маршрутизация'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('преднастроенные'));
+    await tester.pumpAndSettle();
+    // The catalog runs past the window: the header leaves the screen and
+    // only its rows stay in view.
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getBottomLeft(find.text('маршрутизация')).dy,
+      lessThan(0),
+      reason: 'the header closed the card before, and it is now off-screen',
+    );
+    // The empty strip of the header row above the card.
+    final brand = tester.getRect(find.byType(BrandHeader));
+    await tester.tapAt(Offset(brand.left + 4, brand.center.dy));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(section).height,
+      closeTo(collapsed, .01),
+      reason: 'the card is back to its closed height',
+    );
+    // And a tap inside the card leaves it alone.
+    await tester.tap(find.text('маршрутизация'));
+    await tester.pumpAndSettle();
+    final open = tester.getSize(section).height;
+    expect(open, greaterThan(collapsed));
+    await tester.tap(find.text('ручные'));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(section).height, closeTo(open, .01));
     await tester.pumpWidget(const SizedBox());
   });
 }

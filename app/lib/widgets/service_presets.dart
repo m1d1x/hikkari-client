@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
@@ -235,6 +237,10 @@ class _ServicePresetsState extends State<ServicePresets>
   final _open = ValueNotifier<bool>(false);
   bool get _expanded => _open.value;
   final _phase = ValueNotifier<int>(0);
+  // The whole card is the collapse/expand target, not just the label row:
+  // the pointer anywhere on it turns the cursor into a hand and, while the
+  // card is closed, lights the label up as part of that target.
+  final _cardHover = ValueNotifier<bool>(false);
   // Natural height of the hidden body. It stays laid out under the clip, so
   // the key reads its full size even while collapsed — the same way the
   // routing card measures its blocks.
@@ -249,11 +255,74 @@ class _ServicePresetsState extends State<ServicePresets>
   // instead of jumping when the motion ends, and the viewport stays put.
   bool _paintOnly = false;
 
+  /// The expanded body, kept as it is while the card is closed.
+  ///
+  /// It is invisible then, but the home screen's routing section rebuilds on
+  /// every routing change, and this body is 88 service rows: about 90 ms in a
+  /// profile build. That is what made flipping the mode — or editing a rule —
+  /// freeze a frame. Handing back the same widget instance while closed makes
+  /// Flutter skip the subtree.
+  ///
+  /// A cached body that no longer matches the mode or the catalog is refreshed
+  /// only when nothing is moving: a moment after the change while the card is
+  /// closed, or once the unfold has settled. Rebuilding it on the tap that
+  /// unfolds the card just moved the freeze into the reveal.
+  Widget? _closedBody;
+  Object? _closedBodyView;
+  RoutingMode? _closedBodyMode;
+  Timer? _staleBody;
+
+  bool _bodyIsStale(Object? view, RoutingMode mode) =>
+      _closedBody != null &&
+      (view != _closedBodyView || mode != _closedBodyMode);
+
+  Widget _bodyWhileClosed(
+    NekkoTokens t,
+    AppState state,
+    RoutingPresets? catalog,
+  ) {
+    final view = catalog?.view;
+    final mode = state.routing.mode;
+    if (!_open.value && _closedBody != null) {
+      if (_bodyIsStale(view, mode)) _refreshWhenQuiet();
+      return _closedBody!;
+    }
+    final body = _body(t, state, catalog);
+    _closedBody = _open.value ? null : body;
+    _closedBodyView = _open.value ? null : view;
+    _closedBodyMode = _open.value ? null : mode;
+    return body;
+  }
+
+  void _refreshWhenQuiet() {
+    _staleBody?.cancel();
+    _staleBody = Timer(const Duration(milliseconds: 320), () {
+      if (!mounted || _open.value) return;
+      setState(() => _closedBody = null);
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _open.addListener(_onOpenChanged);
+  }
+
+  /// Opening no longer forces a rebuild on its own: while the card is
+  /// unfolded the rows carry their own animations, and rebuilding them here
+  /// froze the reveal. A stale body is swapped in once the motion settles.
+  void _onOpenChanged() {
+    if (_open.value) _staleBody?.cancel();
+  }
+
   @override
   void dispose() {
+    _staleBody?.cancel();
+    _open.removeListener(_onOpenChanged);
     _expand.dispose();
     _open.dispose();
     _phase.dispose();
+    _cardHover.dispose();
     _searchCtl.dispose();
     super.dispose();
   }
@@ -437,16 +506,41 @@ class _ServicePresetsState extends State<ServicePresets>
     final state = context.read<AppState>();
     final catalog = state.presets;
     final t = context.tokens;
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // One minimalist row stands in for the whole catalog until
-          // tapped; the search and the groups live in the expandable body.
-          _PresetsHeader(expanded: _open, onTap: _toggleExpanded),
-          _body(t, state, catalog),
-        ],
+    // Every pixel of the card is the expand/collapse target: the padding and
+    // the gaps between rows included. Rows, the search field and the header
+    // keep their own gestures — a nested tap recognizer wins the arena, so
+    // only the empty surface falls through to this one.
+    return ValueListenableBuilder<bool>(
+      valueListenable: _open,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // One row stands in for the whole catalog until tapped; the
+            // search and the groups live in the expandable body.
+            _PresetsHeader(
+              expanded: _open,
+              cardHover: _cardHover,
+            ),
+            _bodyWhileClosed(t, state, catalog),
+          ],
+        ),
+      ),
+      builder: (context, expanded, child) => MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => _cardHover.value = true,
+        onExit: (_) => _cardHover.value = false,
+        child: Semantics(
+          button: true,
+          expanded: expanded,
+          child: GestureDetector(
+            key: const ValueKey('presets_card'),
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleExpanded,
+            child: child,
+          ),
+        ),
       ),
     );
   }
@@ -588,8 +682,11 @@ class _ServicePresetsState extends State<ServicePresets>
 
 class _PresetsHeader extends StatefulWidget {
   final ValueListenable<bool> expanded;
-  final VoidCallback onTap;
-  const _PresetsHeader({required this.expanded, required this.onTap});
+
+  /// Pointer anywhere on the card; while the card is closed the whole surface
+  /// is the target, so the label lights up with it.
+  final ValueListenable<bool> cardHover;
+  const _PresetsHeader({required this.expanded, required this.cardHover});
 
   @override
   State<_PresetsHeader> createState() => _PresetsHeaderState();
@@ -601,63 +698,58 @@ class _PresetsHeaderState extends State<_PresetsHeader> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    // The tap belongs to the card surface; this row only reports hover.
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: ValueListenableBuilder<bool>(
-          valueListenable: widget.expanded,
-          builder: (context, expanded, _) => Semantics(
-            button: true,
-            expanded: expanded,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 11),
-              child: Row(
-                children: [
-                  // Balances the chevron so the label stays centered.
-                  const SizedBox(width: 22),
-                  Expanded(
-                    child: TweenAnimationBuilder<Color?>(
-                      tween: ColorTween(
-                        end: _hover ? t.primary : t.textSecondary,
-                      ),
-                      duration: AppDurations.hover,
-                      curve: AppCurves.hover,
-                      builder: (_, color, _) => Text(
-                        'преднастроенные',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: color,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  AnimatedRotation(
-                    turns: expanded ? .5 : 0,
-                    duration: AppDurations.routingDetails,
-                    curve: AppCurves.fastInSlowOut,
-                    child: TweenAnimationBuilder<Color?>(
-                      tween: ColorTween(end: _hover ? t.primary : t.textFaint),
-                      duration: AppDurations.hover,
-                      curve: AppCurves.hover,
-                      builder: (_, color, _) => Icon(
-                        Icons.keyboard_arrow_down,
-                        size: 16,
+      child: ListenableBuilder(
+        listenable: Listenable.merge([widget.expanded, widget.cardHover]),
+        builder: (context, _) {
+          final expanded = widget.expanded.value;
+          final hover = _hover || (widget.cardHover.value && !expanded);
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            child: Row(
+              children: [
+                // Balances the chevron so the label stays centered.
+                const SizedBox(width: 22),
+                Expanded(
+                  child: TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(end: hover ? t.primary : t.textSecondary),
+                    duration: AppDurations.hover,
+                    curve: AppCurves.hover,
+                    builder: (_, color, _) => Text(
+                      'преднастроенные',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
                         color: color,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 6),
+                AnimatedRotation(
+                  turns: expanded ? .5 : 0,
+                  duration: AppDurations.routingDetails,
+                  curve: AppCurves.fastInSlowOut,
+                  child: TweenAnimationBuilder<Color?>(
+                    tween: ColorTween(end: hover ? t.primary : t.textFaint),
+                    duration: AppDurations.hover,
+                    curve: AppCurves.hover,
+                    builder: (_, color, _) => Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: color,
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -748,7 +840,13 @@ class _ServiceRowState extends State<_ServiceRow>
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final (icon, brand) = resolveServiceIcon(widget.service.icon, t.textMuted);
+    // A catalog entry may arrive without an icon id («fall-guys» shipped that
+    // way): the service's own id names its asset just as well, so the row is
+    // not left with a generic glyph.
+    final iconId = widget.service.icon.isNotEmpty
+        ? widget.service.icon
+        : widget.service.id;
+    final (icon, brand) = resolveServiceIcon(iconId, t.textMuted);
     final color = widget.selected ? brand : t.textFaint;
     final rules = _rules(
       widget.service,
@@ -830,7 +928,7 @@ class _ServiceRowState extends State<_ServiceRow>
                                   curve: AppCurves.fastInSlowOut,
                                   builder: (context, tint, child) =>
                                       ServiceIconBadge(
-                                        iconId: widget.service.icon,
+                                        iconId: iconId,
                                         icon: icon,
                                         color: tint ?? color,
                                       ),

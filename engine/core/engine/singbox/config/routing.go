@@ -75,6 +75,9 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 			preserved = append(preserved, r)
 			continue
 		}
+		if isTorrentRule(m) {
+			continue
+		}
 		if action, _ := m["action"].(string); action == "sniff" || action == "hijack-dns" || isRussianIPv6Reject(m) {
 			preserved = append(preserved, m)
 			continue
@@ -100,6 +103,10 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 	// The egress probe first, ahead of every list: it measures the tunnel's
 	// exit, so through the tunnel is the only place it can ask from.
 	userRules := append(voiceProbeRules(head), egressProbeRules(head)...)
+	// Torrents go direct right after the probes, which match only their own
+	// addresses: ahead of every list, the user's included (torrents.go), no
+	// mode sends them through our exit.
+	userRules = append(userRules, torrentRules()...)
 	if state.Enabled && ruleOutbound != "" {
 		appendRule := func(key string, vals []string) {
 			if len(vals) == 0 {

@@ -24,15 +24,31 @@ import 'service_presets.dart';
 /// to the settings sheet ([RouteSettingsSection]) — this section only
 /// shows a tooltip on the header explaining whichever mode is active.
 class RouteSection extends StatefulWidget {
-  const RouteSection({super.key, this.spareHeight});
+  const RouteSection({super.key, this.spareHeight, this.controller});
 
   /// Free height the page can still give this section before it starts to
   /// scroll, as laid out right now. Without it the whole reveal is treated as
   /// visible.
   final double Function()? spareHeight;
 
+  /// Lets the page close the card from the space around it; see
+  /// [RouteSectionController].
+  final RouteSectionController? controller;
+
   @override
   State<RouteSection> createState() => _RouteSectionState();
+}
+
+/// A way into the card's open state from outside it.
+///
+/// The header is the card's own close button, and a catalog scrolled deep
+/// takes it off the screen: the empty space around the card then has to be
+/// the way out, or the window traps the user in a list they scrolled into.
+class RouteSectionController {
+  VoidCallback? _close;
+
+  /// Closes the card; no-op when it is already closed or not mounted.
+  void close() => _close?.call();
 }
 
 /// What a reveal shows on screen. Each share is the part of a block's natural
@@ -190,6 +206,7 @@ class _RouteSectionState extends State<RouteSection>
 
   @override
   void dispose() {
+    if (widget.controller?._close == _close) widget.controller?._close = null;
     _reveal.dispose();
     _presetsTail.dispose();
     _presetsEdge.dispose();
@@ -198,6 +215,22 @@ class _RouteSectionState extends State<RouteSection>
   }
 
   void _toggleOpen() => _setOpen(!_open);
+
+  void _close() => _setOpen(false);
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller?._close = _close;
+  }
+
+  @override
+  void didUpdateWidget(RouteSection old) {
+    super.didUpdateWidget(old);
+    if (old.controller == widget.controller) return;
+    if (old.controller?._close == _close) old.controller?._close = null;
+    widget.controller?._close = _close;
+  }
 
   void _setOpen(bool value) {
     if (_open == value) return;
@@ -372,60 +405,68 @@ class _RouteSectionState extends State<RouteSection>
 
     final reversedItems = items.reversed.toList();
 
-    return AnimatedBuilder(
-      animation: Listenable.merge([_reveal, _presetsEdge]),
-      builder: (context, child) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-        // The inset goes negative while the catalog's reveal carries the
-        // card's bottom edge past the window: the card then hangs below
-        // the section by that much instead of making the page scroll.
-        child: _BottomInset(
-          inset:
-              (_settled
-                  ? _bottomInset
-                  : _bottomInset - _plan.edge * _reveal.value) -
-              _presetsEdge.value,
-          child: child,
+    return GestureDetector(
+      // Taps inside the card belong to it. The page closes an open card on a
+      // tap in the empty space around it, and a label in the card is not
+      // that space: rows, fields and buttons keep their own gestures, and
+      // this catches only what nothing else claimed.
+      behavior: HitTestBehavior.opaque,
+      onTap: () {},
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_reveal, _presetsEdge]),
+        builder: (context, child) => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          // The inset goes negative while the catalog's reveal carries the
+          // card's bottom edge past the window: the card then hangs below
+          // the section by that much instead of making the page scroll.
+          child: _BottomInset(
+            inset:
+                (_settled
+                    ? _bottomInset
+                    : _bottomInset - _plan.edge * _reveal.value) -
+                _presetsEdge.value,
+            child: child,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _island(
-            t,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _head(t, s),
-                _revealed(
-                  KeyedSubtree(
-                    key: _controlsSize,
-                    child: _tabHeight(_body(t, s)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _island(
+              t,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _head(t, s),
+                  _revealed(
+                    KeyedSubtree(
+                      key: _controlsSize,
+                      child: _tabHeight(_body(t, s)),
+                    ),
+                    () => _plan.controls,
                   ),
-                  () => _plan.controls,
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          _itemsBlock(t, s, reversedItems),
-          _expandingIsland(
-            t,
-            key: const ValueKey('route_presets_surface'),
-            measurementKey: _presetsSize,
-            gap: () => _plan.presetsGap,
-            share: () => _plan.presets,
-            tail: _presetsTail,
-            child: CatalogRevealScope(
+            _itemsBlock(t, s, reversedItems),
+            _expandingIsland(
+              t,
+              key: const ValueKey('route_presets_surface'),
+              measurementKey: _presetsSize,
+              gap: () => _plan.presetsGap,
+              share: () => _plan.presets,
               tail: _presetsTail,
-              taken: _presetsEdge,
-              spare: _presetsSpare,
-              // The bottom inset, then the rounded corners and the border.
-              edge: _bottomInset + t.radiusLg + 1,
-              child: _tabHeight(_catalogs[_tab]!),
+              child: CatalogRevealScope(
+                tail: _presetsTail,
+                taken: _presetsEdge,
+                spare: _presetsSpare,
+                // The bottom inset, then the rounded corners and the border.
+                edge: _bottomInset + t.radiusLg + 1,
+                child: _tabHeight(_catalogs[_tab]!),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -929,71 +970,237 @@ class _ModeFlipButton extends StatefulWidget {
 
 class _ModeFlipButtonState extends State<_ModeFlipButton> {
   bool _hover = false;
+  bool _pressed = false;
+
+  /// The mode the user just picked, shown before the engine confirms it.
+  ///
+  /// A flip is two round-trips to the engine process and back (the command and
+  /// the refreshed snapshot), so waiting for it put the reel 20–60 ms behind
+  /// the click — the button answered late and read as sticky. The reel now
+  /// turns on the click and settles back to the engine's answer when it lands;
+  /// if the engine refuses the change, the reel rolls back to the real mode.
+  RoutingMode? _pending;
+
+  void _setPressed(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
+
+  Future<void> _flip(RoutingMode target) async {
+    if (_pending != null) return;
+    setState(() => _pending = target);
+    await widget.state.setRoutingMode(target);
+    if (!mounted) return;
+    setState(() => _pending = null);
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
     final s = widget.state;
     final dim = !s.routing.enabled;
-    final nextMode = s.routing.mode == RoutingMode.bypass
+    final shown = _pending ?? s.routing.mode;
+    final nextMode = shown == RoutingMode.bypass
         ? RoutingMode.proxy
         : RoutingMode.bypass;
-    final label = s.routing.mode == RoutingMode.bypass ? 'bypass' : 'proxy';
+    final label = shown == RoutingMode.bypass ? 'bypass' : 'proxy';
 
     // ⬇⬇⬇ ПЕСОЧНИЦА — крути эти строки, жми `r` в flutter run, смотри что вышло.
     final bg = dim
         ? Colors.transparent
-        : (_hover
-              ? t.primary.withValues(alpha: 0.40)
-              : t.primary.withValues(alpha: 0.15));
+        : (_pressed
+              ? t.primary.withValues(alpha: 0.55)
+              : (_hover
+                    ? t.primary.withValues(alpha: 0.40)
+                    : t.primary.withValues(alpha: 0.15)));
     final fg = dim ? t.textFaint : (_hover ? t.text : t.textMuted);
     // ⬆⬆⬆
 
     return Opacity(
       opacity: dim ? 0.5 : 1,
-      child: MouseRegion(
-        cursor: dim ? SystemMouseCursors.basic : SystemMouseCursors.click,
-        onEnter: (_) {
-          if (!dim) setState(() => _hover = true);
-        },
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: dim ? null : () => s.setRoutingMode(nextMode),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            height: 28,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(t.radius),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 140),
-                  transitionBuilder: (child, anim) =>
-                      FadeTransition(opacity: anim, child: child),
-                  child: Text(
-                    label,
-                    key: ValueKey(label),
-                    style: TextStyle(
-                      color: fg,
+      // Raw pointer events, not the tap recognizer's onTapDown: that one waits
+      // out the press timeout (~100 ms) before reporting, which is exactly the
+      // delay the button had. A Listener fires on the same frame as the press.
+      child: Listener(
+        onPointerDown: dim ? null : (_) => _setPressed(true),
+        onPointerUp: dim ? null : (_) => _setPressed(false),
+        onPointerCancel: dim ? null : (_) => _setPressed(false),
+        child: MouseRegion(
+          cursor: dim ? SystemMouseCursors.basic : SystemMouseCursors.click,
+          onEnter: (_) {
+            if (!dim) setState(() => _hover = true);
+          },
+          onExit: (_) => setState(() => _hover = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: dim ? null : () => _flip(nextMode),
+            child: AnimatedScale(
+              scale: _pressed ? 0.96 : 1,
+              duration: _pressed ? AppDurations.hover : AppDurations.fast,
+              curve: AppCurves.fastInSlowOut,
+              child: AnimatedContainer(
+                duration: AppDurations.hover,
+                curve: AppCurves.hover,
+                height: 28,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 0,
+                ),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(t.radius),
+                ),
+                child: TweenAnimationBuilder<Color?>(
+                  tween: ColorTween(end: fg),
+                  duration: AppDurations.hover,
+                  curve: AppCurves.hover,
+                  builder: (context, color, _) {
+                    final style = TextStyle(
+                      color: color,
                       fontSize: 12,
                       fontWeight: FontWeight.w500,
                       height: 1,
-                    ),
-                  ),
+                    );
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _ModeFlipWord(label: label, style: style),
+                        const SizedBox(width: 6),
+                        // The arrows turn over together with the reel, so the
+                        // flip is more than a word changing places.
+                        AnimatedRotation(
+                          turns: shown == RoutingMode.bypass ? .5 : 0,
+                          // Slower and symmetric than the word: the arrows are
+                          // a detail, not the state itself.
+                          duration: AppDurations.normal,
+                          curve: Curves.easeInOutCubic,
+                          child: Icon(
+                            Icons.swap_horiz,
+                            size: 16,
+                            color: color,
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
-                const SizedBox(width: 6),
-                Icon(Icons.swap_horiz, size: 16, color: fg),
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
+  }
+}
+
+/// The pill's word slot, a reel of the two mode words.
+///
+/// Both words always sit in the slot, one slot-width apart, and the reel is
+/// slid sideways: flipping to bypass pushes the words left, back to proxy
+/// pushes them right. Neither word ever fades — a word dissolving in place
+/// reads as a blink, and at 12 px the eye has nothing to follow, while the
+/// sideway travel lines up with the swap arrows next to it.
+///
+/// The slot keeps the width of the wider word, so the pill, the icon and the
+/// row's right edge hold still; a slot that follows the live label resizes on
+/// the frame of the flip, because 'bypass' is a character longer than 'proxy'.
+class _ModeFlipWord extends StatefulWidget {
+  static const _words = ['proxy', 'bypass'];
+
+  /// Travel distance in slot widths. A hair over one slot leaves a visible gap
+  /// between the leaving word and the arriving one, so a mid-flip frame reads
+  /// as two words passing, not as one glued word.
+  static const travel = 1.15;
+
+  final String label;
+  final TextStyle style;
+  const _ModeFlipWord({required this.label, required this.style});
+
+  @override
+  State<_ModeFlipWord> createState() => _ModeFlipWordState();
+}
+
+class _ModeFlipWordState extends State<_ModeFlipWord>
+    with SingleTickerProviderStateMixin {
+  /// Position on the reel: 0 is 'proxy' in the slot, 0.5 is the two words
+  /// sharing it, 1 is 'bypass'. A single scalar keeps a flip that is reversed
+  /// mid-travel continuous — the reel just turns back.
+  late final AnimationController _reel = AnimationController(
+    vsync: this,
+    // The word leaves in the click's own frame and lands softly: the curve
+    // carries the snap, the longer travel makes the ride read as motion and
+    // not as a hop.
+    duration: AppDurations.normal,
+    value: _positionOf(widget.label),
+  );
+
+  static double _positionOf(String label) {
+    final index = _ModeFlipWord._words.indexOf(label);
+    return (index < 0 ? 0 : index).toDouble();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ModeFlipWord old) {
+    super.didUpdateWidget(old);
+    if (widget.label != old.label) {
+      _reel.animateTo(
+        _positionOf(widget.label),
+        // Fast off the mark: the click must move the word on its own frame,
+        // the ease is there to land it, not to start it.
+        curve: AppCurves.fastInSlowOut,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _reel.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // The reel travels in slot steps, not in each word's own width: 'bypass'
+    // is a character wider, and letting every word travel by its own width
+    // makes the wipe boundary drift off-centre mid-flip.
+    final slot = _slotWidth(context);
+    return ClipRect(
+      child: AnimatedBuilder(
+        animation: _reel,
+        builder: (context, _) => Stack(
+          alignment: Alignment.center,
+          children: [
+            for (var i = 0; i < _ModeFlipWord._words.length; i++)
+              Transform.translate(
+                offset: Offset((i - _reel.value) * slot * _ModeFlipWord.travel, 0),
+                child: ExcludeSemantics(
+                  excluding: (i - _reel.value).abs() > .01,
+                  child: Text(
+                    _ModeFlipWord._words[i],
+                    key: ValueKey(_ModeFlipWord._words[i]),
+                    style: widget.style,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  double _slotWidth(BuildContext context) {
+    // Text merges its style onto the inherited one, and so must the measure:
+    // the family and the letter spacing live in the theme, not in the pill.
+    final inherited = DefaultTextStyle.of(context).style.merge(widget.style);
+    var widest = 0.0;
+    for (final word in _ModeFlipWord._words) {
+      final painter = TextPainter(
+        text: TextSpan(text: word, style: inherited),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout();
+      widest = widest > painter.width ? widest : painter.width;
+    }
+    return widest;
   }
 }
 

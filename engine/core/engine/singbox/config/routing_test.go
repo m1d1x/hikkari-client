@@ -56,8 +56,8 @@ func TestApplyRouting_Disabled_ClearsOurRules(t *testing.T) {
 	state := RoutingState{Enabled: false, Mode: ModeBypass}
 	ApplyRouting(cfg, state, SelectorTag)
 
-	if got, want := ruleCount(cfg), 5; got != want {
-		t.Fatalf("rules: got %d, want %d (prelude + icmp + voice probe + egress probe + Russian zone)", got, want)
+	if got, want := ruleCount(cfg), 8; got != want {
+		t.Fatalf("rules: got %d, want %d (prelude + icmp + voice probe + egress probe + 3 for torrents + Russian zone)", got, want)
 	}
 	if finalTag(cfg) != SelectorTag {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), SelectorTag)
@@ -81,12 +81,12 @@ func TestApplyRouting_BypassMode_EmitsDirectRules(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), SelectorTag)
 	}
 	rules := rulesOf(cfg)
-	// prelude + icmp + voice probe + egress probe + 3 of ours + 2 for Secure DNS + Russian zone
-	if len(rules) != 10 {
-		t.Fatalf("rules: got %d, want 10", len(rules))
+	// prelude + icmp + voice probe + egress probe + 3 for torrents + 3 of ours + 2 for Secure DNS + Russian zone
+	if len(rules) != 13 {
+		t.Fatalf("rules: got %d, want 13", len(rules))
 	}
 	for _, r := range rules[4:] {
-		if _, secureDNS := r["port"]; secureDNS {
+		if _, secureDNS := r["port"]; secureDNS || r["action"] == "sniff" {
 			continue
 		}
 		if ob, _ := r["outbound"].(string); ob != "direct" {
@@ -110,10 +110,10 @@ func TestApplyRouting_ProxyMode_PointsAtHeadAndFinalDirect(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), "direct")
 	}
 	rules := rulesOf(cfg)
-	if len(rules) != 8 { // prelude + icmp + voice probe + egress probe + 1 ours + Russian zone + 2 for Secure DNS
-		t.Fatalf("rules: got %d, want 8", len(rules))
+	if len(rules) != 11 { // prelude + icmp + voice probe + egress probe + 3 for torrents + 1 ours + Russian zone + 2 for Secure DNS
+		t.Fatalf("rules: got %d, want 11", len(rules))
 	}
-	last := rules[4]
+	last := rules[7]
 	if ob, _ := last["outbound"].(string); ob != SelectorTag {
 		t.Fatalf("rule outbound: got %q, want %q", ob, SelectorTag)
 	}

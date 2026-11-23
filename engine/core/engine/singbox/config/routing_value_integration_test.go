@@ -48,6 +48,9 @@ func TestApplyRoutingEmitsFolderRulesAndRealDNS(t *testing.T) {
 
 	var routeRegex, dnsRegex []interface{}
 	for _, r := range cfg["route"].(map[string]interface{})["rules"].([]interface{}) {
+		if m := r.(map[string]interface{}); isTorrentRule(m) {
+			continue
+		}
 		if v, ok := r.(map[string]interface{})["process_path_regex"].([]interface{}); ok {
 			routeRegex = append(routeRegex, v...)
 		}

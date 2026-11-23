@@ -23,6 +23,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   bool _logOpen = false;
   final _powerArea = GlobalKey();
+  final _routing = RouteSectionController();
 
   // The scroll body grows to its intrinsic height once that exceeds the
   // viewport, so the flexible area above routing can shrink only down to the
@@ -64,45 +65,56 @@ class _HomeScreenState extends State<HomeScreen> {
     final t = context.tokens;
     return Scaffold(
       backgroundColor: t.bg,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const WindowTitlebar(),
-          BrandHeader(onOpenLogs: _openLog),
-          AnimatedSize(
-            duration: AppDurations.expand,
-            curve: AppCurves.fastInSlowOut,
-            alignment: Alignment.topCenter,
-            clipBehavior: Clip.hardEdge,
-            child: _logOpen
-                ? LogOverlay(onClose: _closeLog)
-                : const SizedBox(width: double.infinity, height: 0),
-          ),
-          Expanded(
-            child: CustomScrollView(
-              slivers: [
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: Align(
-                          key: _powerArea,
-                          alignment: const Alignment(0, -0.22),
-                          child: const PowerToggle(),
-                        ),
-                      ),
-                      SafeArea(
-                        top: false,
-                        child: RouteSection(spareHeight: _routingSpare),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+      // Empty space anywhere on the page closes an open routing card: once a
+      // long catalog is scrolled deep, its header is off-screen and this is
+      // the only way out. Rows, fields and buttons keep their own taps — an
+      // inner gesture wins the arena.
+      body: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _routing.close,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const WindowTitlebar(),
+            BrandHeader(onOpenLogs: _openLog),
+            AnimatedSize(
+              duration: AppDurations.expand,
+              curve: AppCurves.fastInSlowOut,
+              alignment: Alignment.topCenter,
+              clipBehavior: Clip.hardEdge,
+              child: _logOpen
+                  ? LogOverlay(onClose: _closeLog)
+                  : const SizedBox(width: double.infinity, height: 0),
             ),
-          ),
-        ],
+            Expanded(
+              child: CustomScrollView(
+                slivers: [
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: Align(
+                            key: _powerArea,
+                            alignment: const Alignment(0, -0.22),
+                            child: const PowerToggle(),
+                          ),
+                        ),
+                        SafeArea(
+                          top: false,
+                          child: RouteSection(
+                            spareHeight: _routingSpare,
+                            controller: _routing,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

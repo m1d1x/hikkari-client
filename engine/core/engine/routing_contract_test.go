@@ -64,6 +64,14 @@ func TestAdaptersImplementTheSameRoutingIntent(t *testing.T) {
 					if suffixes, _ := rule["domain_suffix"].([]interface{}); len(suffixes) == len(ruzone.Domains()) && rule["ip_cidr"] != nil {
 						continue
 					}
+					// Torrents are the engine's too: direct in every mode, the
+					// user's lists notwithstanding (Э4).
+					if rule["action"] == "sniff" || rule["protocol"] != nil || rule["process_path_regex"] != nil && len(policy.Rules.Folders) == 0 {
+						if rule["action"] != "sniff" && rule["outbound"] != "direct" {
+							t.Fatal(rule)
+						}
+						continue
+					}
 					// The health probe's echo services go through the tunnel in
 					// every mode: they measure its exit.
 					if rule["domain"] != nil && rule["network"] == "tcp" {
