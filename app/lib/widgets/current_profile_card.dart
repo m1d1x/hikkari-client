@@ -31,10 +31,12 @@ class _CurrentProfileCardState extends State<CurrentProfileCard> {
     if (profiles.isEmpty) return const SizedBox.shrink();
 
     // In auto mode the stored selection is not what traffic goes through.
-    final auto = s.autoProfileName;
+    final displayed = s.displayedCountryProfile(
+      s.autoProfileName ?? s.activeProfileName,
+    );
     ProfileInfo? active;
     for (final p in profiles) {
-      if (auto != null ? p.name == auto : p.active) {
+      if (p.name == displayed) {
         active = p;
         break;
       }

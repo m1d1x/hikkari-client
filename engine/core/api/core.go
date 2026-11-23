@@ -59,12 +59,12 @@ type Core struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 
-	logger      *logging.Logger
-	routing     *routing.Store
-	profiles    *profile.Store
-	backend     engine.Backend
-	health      *health.Checker
-	uptime      *uptime.Tracker
+	logger   *logging.Logger
+	routing  *routing.Store
+	profiles *profile.Store
+	backend  engine.Backend
+	health   *health.Checker
+	uptime   *uptime.Tracker
 	// serviceUptime holds on-demand pings of arbitrary user services
 	// (YouTube, Discord, …) measured through the active profile — kept
 	// separate from the per-profile uptime tracker above.
@@ -87,6 +87,10 @@ type Core struct {
 	autoTunnel *autotunnel.List
 	// support delivers support reports, retrying until the hub takes them
 	support *supportqueue.Queue
+
+	// countryHealth describes the entry's route for new country connections.
+	countryHealthMu sync.RWMutex
+	countryHealth   map[string]countryHealth
 
 	// routed is the profile traffic goes through, kept by watchRoute.
 	routedMu sync.RWMutex
@@ -296,6 +300,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 		run(func() { c.watchNetwork(ctx) })
 		run(func() { c.watchRoute(ctx) })
 	}
+	run(func() { c.watchCountryHealth(ctx) })
 	c.workerDone = make(chan struct{})
 	workerDone := c.workerDone
 	go func() { workers.Wait(); close(workerDone) }()

@@ -8,6 +8,7 @@ package profile
 import (
 	"NekkoVPN/core/capacity"
 	"NekkoVPN/core/fsutil"
+	"NekkoVPN/core/naive"
 	"NekkoVPN/core/subscription"
 	"encoding/json"
 	"errors"
@@ -121,14 +122,16 @@ type File struct {
 
 // Info is the lightweight projection the UI renders.
 type Info struct {
-	Capacity     *capacity.Metric  `json:"capacity,omitempty"`
-	AutoEligible bool              `json:"autoEligible"`
-	Name         string            `json:"name"`
-	Label        string            `json:"label"`
-	Active       bool              `json:"active"`
-	Endpoint     string            `json:"endpoint"`
-	Protocol     string            `json:"protocol"`
-	Subscription *SubscriptionInfo `json:"subscription,omitempty"`
+	Country            string            `json:"country,omitempty"`
+	CountryUnavailable bool              `json:"countryUnavailable,omitempty"`
+	Capacity           *capacity.Metric  `json:"capacity,omitempty"`
+	AutoEligible       bool              `json:"autoEligible"`
+	Name               string            `json:"name"`
+	Label              string            `json:"label"`
+	Active             bool              `json:"active"`
+	Endpoint           string            `json:"endpoint"`
+	Protocol           string            `json:"protocol"`
+	Subscription       *SubscriptionInfo `json:"subscription,omitempty"`
 }
 
 // Store is a thin file-backed profile repository.
@@ -253,6 +256,7 @@ func (s *Store) List() ([]Info, error) {
 	out := make([]Info, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
 		out = append(out, Info{
+			Country:      p.Country(),
 			AutoEligible: p.Subscription != nil && eligible[p.Subscription.ID],
 			Capacity:     pf.CapacityFor(p, time.Now()),
 			Name:         p.Name,
@@ -803,4 +807,25 @@ func slugify(s string) string {
 		}
 	}
 	return strings.Trim(b.String(), "-")
+}
+
+// Country returns the preferred country of a Hikkari country link.
+func (p Profile) Country() string {
+	if p.Connection == nil || p.Subscription == nil {
+		return ""
+	}
+	u, err := url.Parse(p.Connection.URI)
+	if err != nil || u.Scheme != "hikkari+v1" {
+		return ""
+	}
+	link, err := naive.Parse(u)
+	if err != nil {
+		return ""
+	}
+	switch link.Egress {
+	case "nl", "de":
+		return link.Egress
+	default:
+		return ""
+	}
 }

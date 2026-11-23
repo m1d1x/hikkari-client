@@ -23,7 +23,7 @@ type Link struct {
 	Hikkari bool
 	// Dup is dup=1 on a hikkari+v1:// link: v1.02 duplicated UDP.
 	Dup bool
-	// Egress identifies a fixed country or an entry-managed Auto route.
+	// Egress identifies the preferred country. Older imports may still carry auto.
 	Egress string
 }
 
