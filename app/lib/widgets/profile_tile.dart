@@ -33,7 +33,7 @@ class ProfileTile extends StatefulWidget {
 class _ProfileTileState extends State<ProfileTile> {
   Future<void> _switchProfile() async {
     final s = context.read<AppState>();
-    if (s.busy) return;
+    if (s.busy || widget.profile.countryUnavailable) return;
     if (widget.profile.active && !s.autoMode) return;
     await s.switchProfile(widget.profile.name);
     if (!mounted) return;
@@ -61,9 +61,12 @@ class _ProfileTileState extends State<ProfileTile> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final s = context.watch<AppState>();
-    final selected = s.autoMode
-        ? s.autoProfileName == widget.profile.name
-        : widget.profile.active;
+    final unavailable = widget.profile.countryUnavailable;
+    final selected =
+        s.displayedCountryProfile(
+          s.autoMode ? s.autoProfileName : s.activeProfileName,
+        ) ==
+        widget.profile.name;
     final hist = s.uptime[widget.profile.name] ?? const <PingSample>[];
     final countryCode = s.countryCodeFor(widget.profile.name);
     final countryLoading = s.isCountryLoading(widget.profile.name);
@@ -74,33 +77,38 @@ class _ProfileTileState extends State<ProfileTile> {
     return GestureDetector(
       onSecondaryTap: () =>
           ServicePingSheet.show(context, widget.profile.label),
-      child: ProfileSummaryCard(
-        title: widget.profile.displayLabel,
-        capacity: widget.profile.capacity,
-        useProbeMetrics: widget.profile.autoEligible,
-        leading: (countryCode == null && !countryLoading)
-            ? null
-            : ProfileFlagBadge(
-                countryCode: countryCode,
-                loading: countryLoading,
-              ),
-        samples: hist,
-        selected: selected,
-        forceChecking: selected && s.isWarmingUp,
-        onTap: s.busy ? null : _switchProfile,
-        // ms и стрелочка — единая зона нажатия на разворачивание подробнос-
-        // тей (а не только сама стрелочка, чтобы было проще попасть пальцем).
-        onTrailingTap: widget.onToggleExpand,
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
-        titleFontSize: 14,
-        chartHeight: 32,
-        trailing: _ExpandButton(expanded: widget.expanded),
-        // _ExpandButton — 34×34, иначе адаптивная раскладка карточки даёт
-        // на trailing 18px и trailing вылезает за правый бордер.
-        trailingWidth: 34,
-        footer: _detail(context, t, hist),
-        footerVisible: widget.expanded,
+      child: Opacity(
+        opacity: unavailable ? 0.55 : 1,
+        child: ProfileSummaryCard(
+          title: unavailable
+              ? '${widget.profile.displayLabel} · страна недоступна'
+              : widget.profile.displayLabel,
+          capacity: widget.profile.capacity,
+          useProbeMetrics: widget.profile.autoEligible,
+          leading: (countryCode == null && !countryLoading)
+              ? null
+              : ProfileFlagBadge(
+                  countryCode: countryCode,
+                  loading: countryLoading,
+                ),
+          samples: hist,
+          selected: selected,
+          forceChecking: selected && s.isWarmingUp,
+          onTap: s.busy || unavailable ? null : _switchProfile,
+          // ms и стрелочка — единая зона нажатия на разворачивание подробнос-
+          // тей (а не только сама стрелочка, чтобы было проще попасть пальцем).
+          onTrailingTap: widget.onToggleExpand,
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
+          titleFontSize: 14,
+          chartHeight: 32,
+          trailing: _ExpandButton(expanded: widget.expanded),
+          // _ExpandButton — 34×34, иначе адаптивная раскладка карточки даёт
+          // на trailing 18px и trailing вылезает за правый бордер.
+          trailingWidth: 34,
+          footer: _detail(context, t, hist),
+          footerVisible: widget.expanded,
+        ),
       ),
     );
   }

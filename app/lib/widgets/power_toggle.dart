@@ -92,9 +92,10 @@ class _PowerToggleState extends State<PowerToggle> {
     if (status != null) _lastStatus = status;
     final statusMuted = _lastStatus.startsWith('отключ');
 
+    final displayed = s.displayedCountryProfile(s.activeProfileName);
     ProfileInfo? active;
     for (final p in s.profiles) {
-      if (p.active) {
+      if (p.name == displayed) {
         active = p;
         break;
       }
