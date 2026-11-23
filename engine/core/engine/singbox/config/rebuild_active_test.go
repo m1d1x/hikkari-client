@@ -346,11 +346,22 @@ func TestRebuildActive_HealsVoipAndDns(t *testing.T) {
 		t.Error("endpoint_independent_nat should be true for VoIP/games")
 	}
 
-	// Verify route.rules sniff port scoping
+	// Verify route.rules sniff port scoping. The torrent sniff reads every
+	// port, with sniffers that read a UDP flow's first packet only: none that
+	// waits for more (QUIC) may be among them.
 	route, _ := cfg["route"].(map[string]interface{})
 	rules, _ := route["rules"].([]interface{})
 	for _, r := range rules {
 		m, _ := r.(map[string]interface{})
+		if isTorrentRule(m) {
+			names, _ := m["sniffer"].([]interface{})
+			for _, n := range names {
+				if n == "quic" || n == "dns" || n == "sip" {
+					t.Errorf("the torrent sniff runs %v, which may hold a UDP flow", n)
+				}
+			}
+			continue
+		}
 		if action, _ := m["action"].(string); action == "sniff" {
 			ports, _ := m["port"].([]interface{})
 			if len(ports) == 0 {
