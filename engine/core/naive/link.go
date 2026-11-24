@@ -4,7 +4,9 @@
 // credential, plus a datagram channel for UDP on the same host and port. The
 // core's hikkari outbound sends TCP over Naive and UDP over the datagram
 // channel, falling back to UDP-over-TCP inside Naive. dup=1 (v1.02): the relay
-// serves duplicated UDP, and a call rides both channels at once.
+// serves duplicated UDP, and a call rides both channels at once. entries=
+// (v1.07): further entries of the cascade to the same relay, host:port by
+// commas; the core keeps a path per entry and leaves a silent one by itself.
 package naive
 
 import (
@@ -25,6 +27,9 @@ type Link struct {
 	Dup bool
 	// Egress identifies the preferred country. Older imports may still carry auto.
 	Egress string
+	// Entries are entries= on a hikkari+v1:// link (v1.07): further entries
+	// of the cascade, host:port, in the link's order after Host:Port.
+	Entries []string
 }
 
 func Parse(u *url.URL) (Link, error) {
@@ -60,7 +65,7 @@ func Parse(u *url.URL) (Link, error) {
 		return l, fmt.Errorf("naive: неверные параметры ссылки")
 	}
 	for key, values := range q {
-		known := key == "sni" || key == "hikkari-node" || (l.Hikkari && (key == "dup" || key == "egress"))
+		known := key == "sni" || key == "hikkari-node" || (l.Hikkari && (key == "dup" || key == "egress" || key == "entries"))
 		if !known || len(values) != 1 {
 			return l, fmt.Errorf("naive: неподдерживаемые параметры ссылки")
 		}
@@ -76,6 +81,14 @@ func Parse(u *url.URL) (Link, error) {
 	case "", "nl", "de", "auto":
 	default:
 		return l, fmt.Errorf("naive: неверный параметр egress")
+	}
+	if raw := q.Get("entries"); raw != "" {
+		for _, e := range strings.Split(raw, ",") {
+			if !validEntry(e) {
+				return l, fmt.Errorf("naive: неверный параметр entries")
+			}
+			l.Entries = append(l.Entries, e)
+		}
 	}
 	l.ServerName = q.Get("sni")
 	if l.ServerName == "" {
@@ -96,6 +109,15 @@ func (l Link) Outbound() map[string]interface{} {
 		}
 		if l.Dup {
 			o["udp"] = map[string]interface{}{"dup": true}
+		}
+		if len(l.Entries) > 0 {
+			entries := make([]interface{}, 0, len(l.Entries))
+			for _, e := range l.Entries {
+				host, port, _ := net.SplitHostPort(e)
+				n, _ := strconv.Atoi(port)
+				entries = append(entries, map[string]interface{}{"server": host, "server_port": n})
+			}
+			o["entries"] = entries
 		}
 		return o
 	}
@@ -126,6 +148,9 @@ func (l Link) URI() string {
 	if l.Hikkari && l.Egress != "" {
 		q.Set("egress", l.Egress)
 	}
+	if l.Hikkari && len(l.Entries) > 0 {
+		q.Set("entries", strings.Join(l.Entries, ","))
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }
@@ -149,6 +174,12 @@ func FromOutbound(o map[string]interface{}, label string) (Link, error) {
 				return l, fmt.Errorf("naive: настройки профиля не помещаются в ссылку")
 			}
 			l.Dup = dup
+		case "entries":
+			entries, err := entriesFromOutbound(o["entries"])
+			if !l.Hikkari || err != nil {
+				return l, fmt.Errorf("naive: настройки профиля не помещаются в ссылку")
+			}
+			l.Entries = entries
 		default:
 			return l, fmt.Errorf("naive: настройки профиля не помещаются в ссылку")
 		}
@@ -180,4 +211,36 @@ func FromOutbound(o map[string]interface{}, label string) (Link, error) {
 	}
 	l.Port = port
 	return l, nil
+}
+
+// validEntry reports whether e is host:port with a port a profile can use.
+func validEntry(e string) bool {
+	host, port, err := net.SplitHostPort(e)
+	if err != nil || host == "" || strings.ContainsAny(host, ",/@") {
+		return false
+	}
+	n, err := strconv.Atoi(port)
+	return err == nil && n >= 1 && n <= 65535
+}
+
+// entriesFromOutbound reads a hikkari outbound's entries back as host:port.
+func entriesFromOutbound(v interface{}) ([]string, error) {
+	list, ok := v.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("entries: not a list")
+	}
+	var out []string
+	for _, it := range list {
+		m, ok := it.(map[string]interface{})
+		if !ok || len(m) != 2 {
+			return nil, fmt.Errorf("entries: not server and server_port")
+		}
+		host, _ := m["server"].(string)
+		e := net.JoinHostPort(host, fmt.Sprint(m["server_port"]))
+		if !validEntry(e) {
+			return nil, fmt.Errorf("entries: bad entry")
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }

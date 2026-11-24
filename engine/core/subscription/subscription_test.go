@@ -28,7 +28,7 @@ func TestFetchSaysWhatThisClientCanDial(t *testing.T) {
 	}))
 	defer srv.Close()
 	_, _ = Fetch(context.Background(), srv.URL, "", func(s string) (string, error) { return s, nil })
-	if got != "amneziawg, amneziawg-3.1, relay-metrics-v2, naive, hikkari, hikkari-dup, hikkari-country-egress" {
+	if got != "amneziawg, amneziawg-3.1, relay-metrics-v2, naive, hikkari, hikkari-dup, hikkari-country-egress, hikkari-entries" {
 		t.Fatalf("Hikkari-Features = %q", got)
 	}
 }

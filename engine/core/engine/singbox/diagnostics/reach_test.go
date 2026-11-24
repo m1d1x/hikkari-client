@@ -3,6 +3,7 @@ package diag
 import (
 	"context"
 	"net"
+	"strings"
 	"testing"
 )
 
@@ -80,3 +81,41 @@ func TestReachRunsOnlyWhenAllowed(t *testing.T) {
 type discard struct{}
 
 func (discard) Logf(string, ...interface{}) {}
+
+// A Hikkari profile with further entries (v1.07) has each counted on its own
+// line part: by number and network, never by address.
+func TestReachLineCountsEveryEntry(t *testing.T) {
+	config := []byte(`{"outbounds": [{"tag": "p-hk", "type": "hikkari", "server": "127.0.0.1", "server_port": 1,
+		"entries": [{"server": "127.0.0.1", "server_port": 2}, {"server": "entry.example", "server_port": 3}]}]}`)
+	targets, err := reachTargets(config)
+	if err != nil || len(targets) != 1 {
+		t.Fatalf("targets %+v, %v", targets, err)
+	}
+	got := targets[0].Entries
+	if len(got) != 2 || got[0] != "127.0.0.1:2" || got[1] != "entry.example:3" {
+		t.Fatalf("entries %q", got)
+	}
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	target := targets[0]
+	target.Entries[0] = ln.Addr().String()
+	line := (&Runner{}).reachLine(context.Background(), target, []physIface{{Name: "eth", IP: net.ParseIP("127.0.0.1")}})
+	if !strings.Contains(line, " entry1 net=") || !strings.Contains(line, "entry1.flows[eth]=12/12") {
+		t.Fatalf("line %q", line)
+	}
+	if strings.Contains(line, "entry2") || strings.Contains(line, ln.Addr().String()) {
+		t.Fatalf("line names a name-only entry or an address: %q", line)
+	}
+}

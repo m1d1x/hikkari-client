@@ -49,6 +49,7 @@ func (s *Store) PinServerIPs(resolve Resolver) ([]PinResult, error) {
 		if !ok {
 			continue
 		}
+		results = append(results, pinEntries(ob, resolve)...)
 		host, _ := ob["server"].(string)
 		host = strings.TrimSpace(host)
 		if host == "" || net.ParseIP(host) != nil {
@@ -124,4 +125,31 @@ func keepHostname(ob map[string]interface{}, host string) {
 			headers["Host"] = host
 		}
 	}
+}
+
+// pinEntries pins the hostnames of a Hikkari outbound's further entries
+// (v1.07) as PinServerIPs pins "server": every entry is dialed past the
+// tunnel. The SNI is the relay's and already set; an entry's name never was
+// one.
+func pinEntries(ob map[string]interface{}, resolve Resolver) []PinResult {
+	entries, _ := ob["entries"].([]interface{})
+	tag, _ := ob["tag"].(string)
+	var results []PinResult
+	for i, it := range entries {
+		entry, _ := it.(map[string]interface{})
+		host, _ := entry["server"].(string)
+		host = strings.TrimSpace(host)
+		if host == "" || net.ParseIP(host) != nil {
+			continue
+		}
+		res := PinResult{Tag: fmt.Sprintf("%s entry %d", tag, i+1), Host: host}
+		if ip, err := pickIPv4(resolve, host); err != nil {
+			res.Err = err
+		} else {
+			res.IP = ip
+			entry["server"] = ip
+		}
+		results = append(results, res)
+	}
+	return results
 }

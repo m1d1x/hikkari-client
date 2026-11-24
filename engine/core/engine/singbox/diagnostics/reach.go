@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +45,8 @@ type reachTarget struct {
 	Host  string
 	Port  int
 	UDP   bool
+	// Entries are a Hikkari profile's further entries (v1.07), host:port.
+	Entries []string
 }
 
 // udpOutbounds carry no TCP at all, so a TCP flow says nothing about them.
@@ -58,7 +61,11 @@ func reachTargets(config []byte) ([]reachTarget, error) {
 			Server     string `json:"server"`
 			ServerPort int    `json:"server_port"`
 			QUIC       bool   `json:"quic"`
-			TLS        struct {
+			Entries    []struct {
+				Server     string `json:"server"`
+				ServerPort int    `json:"server_port"`
+			} `json:"entries"`
+			TLS struct {
 				Reality struct {
 					Enabled bool `json:"enabled"`
 				} `json:"reality"`
@@ -85,7 +92,11 @@ func reachTargets(config []byte) ([]reachTarget, error) {
 			if o.Transport.Type != "" {
 				proto += "-" + o.Transport.Type
 			}
-			out = append(out, reachTarget{Tag: o.Tag, Type: o.Type, Proto: proto, Host: o.Server, Port: o.ServerPort, UDP: udpOutbounds[o.Type] || (o.Type == "naive" && o.QUIC)})
+			t := reachTarget{Tag: o.Tag, Type: o.Type, Proto: proto, Host: o.Server, Port: o.ServerPort, UDP: udpOutbounds[o.Type] || (o.Type == "naive" && o.QUIC)}
+			for _, e := range o.Entries {
+				t.Entries = append(t.Entries, net.JoinHostPort(e.Server, strconv.Itoa(e.ServerPort)))
+			}
+			out = append(out, t)
 		}
 	}
 	for _, e := range cfg.Endpoints {
@@ -162,6 +173,20 @@ func (r *Runner) reachLine(ctx context.Context, t reachTarget, ifaces []physIfac
 	for _, pi := range ifaces {
 		through, med := countFlows(ctx, pi.IP, net.JoinHostPort(t.Host, fmt.Sprint(t.Port)))
 		fmt.Fprintf(&b, " flows[%s]=%d/%d med=%s", pi.Name, through, reachFlows, med)
+	}
+	// A cascade's further entries (v1.07) by number, never by address: entry
+	// 0 is the line above.
+	for i, e := range t.Entries {
+		host, _, _ := net.SplitHostPort(e)
+		ip := net.ParseIP(host)
+		if ip == nil {
+			continue
+		}
+		fmt.Fprintf(&b, " entry%d net=%s", i+1, netOf(ip))
+		for _, pi := range ifaces {
+			through, med := countFlows(ctx, pi.IP, e)
+			fmt.Fprintf(&b, " entry%d.flows[%s]=%d/%d med=%s", i+1, pi.Name, through, reachFlows, med)
+		}
 	}
 	return b.String()
 }
