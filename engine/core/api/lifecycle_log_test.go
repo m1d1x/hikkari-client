@@ -92,7 +92,7 @@ func TestLifecycleSubscriptionRuntimeChangesAndMetadataOnlyRefresh(t *testing.T)
 		t.Fatal(err)
 	}
 	log := c.logger.Tail()
-	for _, want := range []string{"reason=profiles-runtime-change running=true", "added=0 removed=0 changed=1 active_changed=false auto_changed=false", "api.(*Core).commitProfiles", "ok=true"} {
+	for _, want := range []string{"reason=profiles-runtime-change running=true", "added=0 removed=0 changed=1 active_changed=false autotunnel_changed=false", "api.(*Core).commitProfiles", "ok=true"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("missing %q:\n%s", want, log)
 		}

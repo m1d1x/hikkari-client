@@ -100,9 +100,6 @@ type Observer interface {
 	// Received is the bytes received so far per open connection through the
 	// profile.
 	Received(profileID string) (map[string]uint64, error)
-	// OwnProbe is the engine's last own measurement of the profile. known is
-	// false unless the engine is probing it anyway (auto mode).
-	OwnProbe(profileID string) (ok bool, rttMs int, known bool)
 }
 
 // Tracker is the goroutine-safe in-memory history persisted to JSON on disk.
@@ -297,8 +294,8 @@ func (t *Tracker) sweep(ctx context.Context, entries []HostEntry, probe Probe) {
 }
 
 // checkActive produces at most one sample for the profile in use, in order of
-// cost: bytes flowing (a success at the last delay measured, no network), the
-// engine's own probe (no network), then one real probe. A link carrying
+// cost: bytes flowing (a success at the last delay measured, no network), then
+// one real probe. A link carrying
 // traffic still leaves a sample: the downdetector reports from this history,
 // and a profile that works for hours would otherwise look unreported.
 func (t *Tracker) checkActive(ctx context.Context, h HostEntry, probe Probe, observer Observer) {
@@ -313,11 +310,6 @@ func (t *Tracker) checkActive(ctx context.Context, h HostEntry, probe Probe, obs
 				t.Save()
 				return
 			}
-		}
-		if ok, rtt, known := observer.OwnProbe(h.ProfileID); known {
-			t.record(h.Profile, ok, rtt, SrcTunnel)
-			t.Save()
-			return
 		}
 	}
 	ok, rtt, src := probe.Run(ctx, h)

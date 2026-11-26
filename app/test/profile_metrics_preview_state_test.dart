@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekkobox/core/nekkobox_core.dart';
 import 'package:nekkobox/state/app_state.dart';
@@ -54,7 +55,7 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await selecting;
       expect(state.profiles[1].active, isTrue);
-      expect(state.profiles[1].autoEligible, isTrue);
+      expect(state.profiles[1].hikkariSource, isTrue);
       expect(state.profiles[1].capacity!.rttMs, 112);
       final renaming = state.renameProfile('dry-frankfurt', 'проверка · демо');
       await tester.pump(const Duration(seconds: 1));

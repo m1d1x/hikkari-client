@@ -107,8 +107,7 @@ class AppState extends ChangeNotifier {
   int _routingAppliedAt = 0;
   String? _routingApplyError;
   String? get routingApplyError => _routingApplyError;
-  bool _autoMode = false;
-  String _carryingProfile = '';
+  bool _autoTunnel = false;
   String? _lastErrorValue;
 
   String? get _lastError => _lastErrorValue;
@@ -168,9 +167,8 @@ class AppState extends ChangeNotifier {
       } catch (e) {
         validationError = 'Движок $id не поддерживает текущую политику: $e';
       }
-      await File(
-        '$_baseDir/engine-selection.json',
-      ).writeAsString(jsonEncode({'engineId': id}));
+      await File('$_baseDir/engine-selection.json')
+          .writeAsString(jsonEncode({'engineId': id}));
       await start();
       if (validationError != null) _lastError = validationError;
     } catch (e) {
@@ -238,13 +236,9 @@ class AppState extends ChangeNotifier {
     return _routingApply;
   }
 
-  bool get autoMode => _autoMode;
-
-  /// The profile carrying traffic in auto mode, or null when the engine has
-  /// not picked one. Differs from [activeProfileName], which is the user's own
-  /// selection and is not what auto mode routes through.
-  String? get autoProfileName =>
-      _autoMode && _carryingProfile.isNotEmpty ? _carryingProfile : null;
+  /// The «авто» button: sites that stay silent on the direct path go through
+  /// the tunnel by themselves. Off, only the lists send traffic to the VPN.
+  bool get autoTunnel => _autoTunnel;
 
   /// Reports the server list going on or off screen, so the engine measures
   /// the other servers only while someone can see the numbers.
@@ -387,12 +381,11 @@ class AppState extends ChangeNotifier {
                     .toList() ??
                 const [],
         };
-        _autoMode = false;
       } else {
         _profiles = await _core.profiles();
         _health = await _core.health();
         _uptime = await _core.uptimeHistory();
-        _autoMode = await _core.autoMode();
+        _autoTunnel = await _core.autoTunnel();
       }
     });
     _healthTimer ??= Timer.periodic(const Duration(seconds: 1), (_) => _tick());
@@ -501,14 +494,14 @@ class AppState extends ChangeNotifier {
     if (_busy || _disposed || _switchingEngine) return;
     try {
       final profiles = await _core.profiles();
-      final autoMode = await _core.autoMode();
+      final autoTunnel = await _core.autoTunnel();
       if (_disposed || _busy || _switchingEngine) return;
       final endpoints = {for (final p in _profiles) p.name: p.endpoint};
       final topologyChanged =
           profiles.length != _profiles.length ||
           profiles.any((p) => endpoints[p.name] != p.endpoint);
       _profiles = profiles;
-      _autoMode = autoMode;
+      _autoTunnel = autoTunnel;
       if (topologyChanged) {
         _profileCountries = {
           for (final p in profiles)
@@ -747,7 +740,7 @@ class AppState extends ChangeNotifier {
       active: true,
       endpoint: 'demo.example.com:443',
       protocol: 'vless-reality',
-      autoEligible: true,
+      hikkariSource: true,
       capacity: _demoMetrics(87, 128, 0),
     ),
     ProfileInfo(
@@ -756,7 +749,7 @@ class AppState extends ChangeNotifier {
       active: false,
       endpoint: 'demo.example.com:443',
       protocol: 'hysteria2',
-      autoEligible: true,
+      hikkariSource: true,
       capacity: _demoMetrics(112, 74, 1.8),
     ),
     ProfileInfo(
@@ -765,7 +758,7 @@ class AppState extends ChangeNotifier {
       active: false,
       endpoint: 'demo.example.com:443',
       protocol: 'vless-reality',
-      autoEligible: true,
+      hikkariSource: true,
       subscription: _demoSubscription,
     ),
     ProfileInfo(
@@ -774,7 +767,7 @@ class AppState extends ChangeNotifier {
       active: false,
       endpoint: 'demo.example.com:443',
       protocol: 'vless-xhttp',
-      autoEligible: true,
+      hikkariSource: true,
       subscription: _demoSubscription,
     ),
     const ProfileInfo(
@@ -783,7 +776,7 @@ class AppState extends ChangeNotifier {
       active: false,
       endpoint: 'demo.example.com:443',
       protocol: 'vless-xhttp',
-      autoEligible: true,
+      hikkariSource: true,
     ),
   ];
 
@@ -911,9 +904,8 @@ class AppState extends ChangeNotifier {
   /// The engine log's own stamp, "2006/01/02 15:04:05.000000", in local
   /// time; null for a line without one.
   static DateTime? _logLineTime(String line) {
-    final m = RegExp(
-      r'^(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2}):(\d{2})',
-    ).firstMatch(line);
+    final m = RegExp(r'^(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2}):(\d{2})')
+        .firstMatch(line);
     if (m == null) return null;
     final p = [for (var i = 1; i <= 6; i++) int.parse(m.group(i)!)];
     return DateTime(p[0], p[1], p[2], p[3], p[4], p[5]);
@@ -933,7 +925,7 @@ class AppState extends ChangeNotifier {
                     active: true,
                     endpoint: p.endpoint,
                     protocol: p.protocol,
-                    autoEligible: p.autoEligible,
+                    hikkariSource: p.hikkariSource,
                     capacity: p.capacity,
                     subscription: p.subscription,
                   )
@@ -943,13 +935,12 @@ class AppState extends ChangeNotifier {
                     active: false,
                     endpoint: p.endpoint,
                     protocol: p.protocol,
-                    autoEligible: p.autoEligible,
+                    hikkariSource: p.hikkariSource,
                     capacity: p.capacity,
                     subscription: p.subscription,
                   ),
         ];
         _profiles = _dryProfiles;
-        _autoMode = false;
         _uptime.putIfAbsent(name, () => _seedDryUptime());
       });
       return;
@@ -960,7 +951,6 @@ class AppState extends ChangeNotifier {
         _connectedSince = DateTime.now();
       } finally {
         _profiles = await _core.profiles();
-        _autoMode = await _core.autoMode();
         _health = await _core.health();
       }
     });
@@ -980,7 +970,7 @@ class AppState extends ChangeNotifier {
                     active: p.active,
                     endpoint: p.endpoint,
                     protocol: p.protocol,
-                    autoEligible: p.autoEligible,
+                    hikkariSource: p.hikkariSource,
                     capacity: p.capacity,
                     subscription: p.subscription,
                   )
@@ -1010,28 +1000,29 @@ class AppState extends ChangeNotifier {
         await _core.deleteProfile(name);
       } finally {
         _profiles = await _core.profiles();
-        _autoMode = await _core.autoMode();
         _health = await _core.health();
       }
     });
   }
 
-  /// Toggles auto-fastest mode. The engine reload (when running) means
-  /// there's a 1-2s pause; AppState's _withBusy lock hides the spinner.
-  Future<void> setAutoMode(bool on) async {
+  /// The «авто» button. The engine reload (when running) means there's a
+  /// 1-2s pause; AppState's _withBusy lock hides the spinner.
+  Future<void> setAutoTunnel(bool on) async {
     if (_dryRun) {
-      _elog('setAutoMode: $on (simulated)');
+      _elog('setAutoTunnel: $on (simulated)');
       await _withBusy(() async {
         await Future<void>.delayed(const Duration(milliseconds: 300));
-        _autoMode = on;
+        _autoTunnel = on;
       });
       return;
     }
     await _withBusy(() async {
-      await _core.setAutoMode(on);
-      _autoMode = await _core.autoMode();
-      _profiles = await _core.profiles();
-      _health = await _core.health();
+      try {
+        await _core.setAutoTunnel(on);
+      } finally {
+        _autoTunnel = await _core.autoTunnel();
+        _health = await _core.health();
+      }
     });
   }
 
@@ -1254,7 +1245,7 @@ class AppState extends ChangeNotifier {
     final engine = engineId;
     final running = _health?.running ?? false;
     final status = _health?.status ?? 'off';
-    final autoMode = _autoMode ? 'ON' : 'OFF';
+    final autoTunnel = _autoTunnel ? 'ON' : 'OFF';
 
     ProfileInfo? activeProf;
     for (final p in _profiles) {
@@ -1321,7 +1312,7 @@ class AppState extends ChangeNotifier {
     buf.writeln('--- ENGINE & TUNNEL STATUS ---');
     buf.writeln('Active Engine: $engine');
     buf.writeln('Engine Status: $status (running: $running)');
-    buf.writeln('Auto Mode: $autoMode');
+    buf.writeln('Auto Tunnel: $autoTunnel');
     buf.writeln('Connected Since: ${_connectedSince ?? "none"}');
     if (_lastError != null) {
       buf.writeln('Recent Fatal / Error:');
@@ -1494,7 +1485,6 @@ class AppState extends ChangeNotifier {
         }
         _uptime = await _core.uptimeHistory();
         _serviceUptime = await _core.serviceUptimeHistory();
-        _carryingProfile = await _core.carryingProfile();
       });
     } finally {
       _ticking = false;

@@ -2,10 +2,10 @@ package profile
 
 import "testing"
 
-func TestRemoveSubscriptionTakesItsProfilesAndAutoWithIt(t *testing.T) {
+func TestRemoveSubscriptionTakesItsProfilesWithIt(t *testing.T) {
 	hub := "https://sub.hikkari.net/sub/token"
 	pf := &File{
-		Active: "h1", Auto: true, AutoSubscriptionID: "a",
+		Active:        "h1",
 		Subscriptions: []Subscription{{ID: "a", URL: hub}, {ID: "b", URL: "https://provider.test/sub"}},
 		Profiles: []Profile{
 			{Name: "h1", Subscription: &SubscriptionInfo{ID: "a"}},
@@ -26,9 +26,6 @@ func TestRemoveSubscriptionTakesItsProfilesAndAutoWithIt(t *testing.T) {
 	}
 	if len(pf.Profiles) != 2 || pf.Active != "o1" {
 		t.Fatalf("profiles left %+v, active %q", pf.Profiles, pf.Active)
-	}
-	if pf.Auto || pf.AutoSubscriptionID != "" {
-		t.Fatalf("auto mode outlived its only source: %v %q", pf.Auto, pf.AutoSubscriptionID)
 	}
 	RemoveSubscription(pf, "b")
 	if len(pf.Profiles) != 1 || pf.Active != "own" {

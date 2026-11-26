@@ -113,25 +113,28 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 // File is the on-disk shape of profiles.json.
 type File struct {
 	Active string `json:"active"`
-	// Auto enables failover within AutoSubscriptionID, a verified Hikkari source.
-	Auto               bool           `json:"auto,omitempty"`
-	AutoSubscriptionID string         `json:"autoSubscriptionId,omitempty"`
-	Profiles           []Profile      `json:"profiles"`
-	Subscriptions      []Subscription `json:"subscriptions,omitempty"`
+	// AutoTunnel is the "авто" button: a site that stays silent on the direct
+	// path goes through the tunnel by itself (core/autotunnel). Off, only what
+	// the routing lists send to the VPN goes there.
+	AutoTunnel    bool           `json:"autoTunnel"`
+	Profiles      []Profile      `json:"profiles"`
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 }
 
 // Info is the lightweight projection the UI renders.
 type Info struct {
-	Country            string            `json:"country,omitempty"`
-	CountryUnavailable bool              `json:"countryUnavailable,omitempty"`
-	Capacity           *capacity.Metric  `json:"capacity,omitempty"`
-	AutoEligible       bool              `json:"autoEligible"`
-	Name               string            `json:"name"`
-	Label              string            `json:"label"`
-	Active             bool              `json:"active"`
-	Endpoint           string            `json:"endpoint"`
-	Protocol           string            `json:"protocol"`
-	Subscription       *SubscriptionInfo `json:"subscription,omitempty"`
+	Country            string           `json:"country,omitempty"`
+	CountryUnavailable bool             `json:"countryUnavailable,omitempty"`
+	Capacity           *capacity.Metric `json:"capacity,omitempty"`
+	// HikkariSource: the profile came from a subscription on hikkari.net, the
+	// only one whose probe metrics the UI shows. Never inferred from titles.
+	HikkariSource bool              `json:"hikkariSource"`
+	Name          string            `json:"name"`
+	Label         string            `json:"label"`
+	Active        bool              `json:"active"`
+	Endpoint      string            `json:"endpoint"`
+	Protocol      string            `json:"protocol"`
+	Subscription  *SubscriptionInfo `json:"subscription,omitempty"`
 }
 
 // Store is a thin file-backed profile repository.
@@ -159,18 +162,15 @@ func (s *Store) Read() (*File, error) {
 	if err := json.Unmarshal(raw, &pf); err != nil {
 		return nil, fmt.Errorf("profiles.json parse: %w", err)
 	}
-	// Migrate old global auto flags to one verified source. If none remains,
-	// restore manual mode rather than routing through an unrelated provider.
-	if pf.Auto {
-		source := pf.AutoSource()
-		if source == "" {
-			pf.Auto = false
-		} else {
-			pf.AutoSubscriptionID = source
-		}
-		if len(pf.AutoProfiles()) == 0 {
-			pf.Auto = false
-		}
+	// The "авто" button used to pick the server within a Hikkari subscription
+	// and now sends sites silent on the direct path through the tunnel. A file
+	// from before that keeps the button as the person left it.
+	var legacy struct {
+		Auto       bool  `json:"auto"`
+		AutoTunnel *bool `json:"autoTunnel"`
+	}
+	if err := json.Unmarshal(raw, &legacy); err == nil && legacy.AutoTunnel == nil {
+		pf.AutoTunnel = legacy.Auto
 	}
 	return &pf, nil
 }
@@ -247,24 +247,24 @@ func (s *Store) List() ([]Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	eligible := map[string]bool{}
+	ours := map[string]bool{}
 	for _, source := range pf.Subscriptions {
 		if subscription.IsHikkariURL(source.URL) {
-			eligible[source.ID] = true
+			ours[source.ID] = true
 		}
 	}
 	out := make([]Info, 0, len(pf.Profiles))
 	for _, p := range pf.Profiles {
 		out = append(out, Info{
-			Country:      p.Country(),
-			AutoEligible: p.Subscription != nil && eligible[p.Subscription.ID],
-			Capacity:     pf.CapacityFor(p, time.Now()),
-			Name:         p.Name,
-			Label:        displayLabel(p),
-			Active:       p.Name == pf.Active,
-			Endpoint:     peerEndpointForProfile(p),
-			Protocol:     prettyProtocol(p),
-			Subscription: p.Subscription,
+			Country:       p.Country(),
+			HikkariSource: p.Subscription != nil && ours[p.Subscription.ID],
+			Capacity:      pf.CapacityFor(p, time.Now()),
+			Name:          p.Name,
+			Label:         displayLabel(p),
+			Active:        p.Name == pf.Active,
+			Endpoint:      peerEndpointForProfile(p),
+			Protocol:      prettyProtocol(p),
+			Subscription:  p.Subscription,
 		})
 	}
 	return out, nil
@@ -304,24 +304,13 @@ func (s *Store) Active() (string, error) {
 	return pf.Active, nil
 }
 
-// AutoMode returns whether auto-fastest selection is enabled.
-func (s *Store) AutoMode() (bool, error) {
+// AutoTunnel reports whether the "авто" button is on.
+func (s *Store) AutoTunnel() (bool, error) {
 	pf, err := s.Read()
 	if err != nil {
 		return false, err
 	}
-	return pf.Auto, nil
-}
-
-// SetAutoMode flips the auto-fastest flag on profiles.json. The caller is
-// responsible for triggering a config rebuild + engine reload afterwards.
-func (s *Store) SetAutoMode(on bool) error {
-	pf, err := s.Read()
-	if err != nil {
-		return err
-	}
-	pf.Auto = on
-	return s.Write(pf)
+	return pf.AutoTunnel, nil
 }
 
 // Rename sets a new human label on an existing profile.
@@ -390,7 +379,6 @@ func (s *Store) Delete(name string) error {
 	pf.Profiles = out
 	if len(out) == 0 {
 		pf.Active = ""
-		pf.Auto = false
 	} else if pf.Active == name {
 		pf.Active = out[0].Name
 	}

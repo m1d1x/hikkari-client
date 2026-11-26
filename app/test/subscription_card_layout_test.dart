@@ -23,7 +23,7 @@ class _Core extends NekkoboxCore {
         'message': '',
       },
       'UptimeHistory' || 'ServiceUptimeHistory' => <String, dynamic>{},
-      'AutoMode' => false,
+      'AutoTunnel' => false,
       'ProfileCountries' => <String, dynamic>{},
       'UpdateStatus' => <String, dynamic>{'state': 'idle', 'installed': ''},
       _ => null,

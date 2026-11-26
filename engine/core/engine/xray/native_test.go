@@ -31,51 +31,17 @@ func TestNativeVPNConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, auto := range []bool{false, true} {
-		c := engine.Configuration{Profiles: ps, ActiveProfile: "server", AutoSelect: auto, Routing: routing.DefaultRoutingState()}
-		c.Routing.Bypass.Domains = []string{"example.test"}
-		c.Routing.Bypass.IPs = []string{"192.0.2.0/24"}
-		cfg, err := CompileVPN(c, ports)
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(t.TempDir(), "xray.json")
-		writeJSON(t, path, cfg)
-		if output, err := exec.Command(bin, "run", "-test", "-c", path).CombinedOutput(); err != nil {
-			t.Fatalf("native TUN configuration rejected: %s", output)
-		}
-	}
-}
-
-func TestNativeAutoScopeDoesNotMatchUnrelatedTransports(t *testing.T) {
-	ps, err := Decode("vless://11111111-2222-3333-4444-555555555555@127.0.0.1:443#Native")
+	c := engine.Configuration{Profiles: ps, ActiveProfile: "server", Routing: routing.DefaultRoutingState()}
+	c.Routing.Bypass.Domains = []string{"example.test"}
+	c.Routing.Bypass.IPs = []string{"192.0.2.0/24"}
+	cfg, err := CompileVPN(c, ports)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ps[0].Name = "ours"
-	other := ps[0]
-	other.Name = "foreign"
-	c := engine.Configuration{Profiles: append(ps, other), ActiveProfile: "foreign", AutoSelect: true, AutoProfiles: []string{"ours"}, Routing: routing.DefaultRoutingState()}
-	cfg, err := CompileVPN(c, map[string]int{"ours": 19001, "foreign": 19002})
-	if err != nil {
-		t.Fatal(err)
-	}
-	eligible := 0
-	for _, raw := range cfg["outbounds"].([]interface{}) {
-		tag := raw.(object)["tag"].(string)
-		if strings.HasPrefix(tag, "transport-auto-") {
-			eligible++
-			if tag != "transport-auto-0" {
-				t.Fatalf("foreign transport is eligible: %s", tag)
-			}
-		}
-	}
-	if eligible != 1 {
-		t.Fatalf("wrong auto transport count: %d", eligible)
-	}
-	c.AutoProfiles = []string{}
-	if _, err := CompileVPN(c, map[string]int{"ours": 19001, "foreign": 19002}); err == nil {
-		t.Fatal("empty scope fell back to foreign profiles")
+	path := filepath.Join(t.TempDir(), "xray.json")
+	writeJSON(t, path, cfg)
+	if output, err := exec.Command(bin, "run", "-test", "-c", path).CombinedOutput(); err != nil {
+		t.Fatalf("native TUN configuration rejected: %s", output)
 	}
 }
 
@@ -240,27 +206,6 @@ func TestStandaloneXrayPolicySelectionAndProbes(t *testing.T) {
 	c.Routing.Enabled = false
 	restart()
 	fetch("other.test", "p-server")
-	// Automatic selection must reject a dead candidate without another engine.
-	_ = servers[0].Process.Kill()
-	_ = servers[0].Wait()
-	c.AutoSelect = true
-	restart()
-	var chosen string
-	for end := time.Now().Add(12 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
-		resp, e := client.Get(direct.URL)
-		if e != nil {
-			continue
-		}
-		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		chosen = string(raw)
-		if chosen == "p-server" {
-			break
-		}
-	}
-	if chosen != "p-server" {
-		t.Fatalf("native Xray failover failed: %q", chosen)
-	}
 	if !b.IsRunning() {
 		t.Fatal("standalone process not live")
 	}
@@ -273,7 +218,7 @@ func TestStandaloneXrayPolicySelectionAndProbes(t *testing.T) {
 	if b.IsRunning() {
 		t.Fatal("process survived stop")
 	}
-	t.Log("Xray only: shared domain/IP policy, bypass/proxy modes, profile selection, probes, native auto-selection and lifecycle pass")
+	t.Log("Xray only: shared domain/IP policy, bypass/proxy modes, profile selection, probes and lifecycle pass")
 }
 
 func TestXrayDoesNotImportOtherAdapters(t *testing.T) {

@@ -185,16 +185,12 @@ func ReconcileSubscription(pf *File, source *Subscription, drafts []Profile) ([]
 			pf.Active = kept[0].Name
 		}
 	}
-	if len(kept) == 0 {
-		pf.Auto = false
-	}
 	return names, nil
 }
 
 // RemoveSubscription drops one source and every profile it brought, in
 // memory; the caller owns persistence and the runtime. An active profile that
-// goes hands the selection to the first one left, none left clears it, and
-// auto mode with no source left to fail over in ends. Reports the names removed; none when the
+// goes hands the selection to the first one left, none left clears it. Reports the names removed; none when the
 // source is not there.
 func RemoveSubscription(pf *File, id string) []string {
 	index := -1
@@ -218,10 +214,6 @@ func RemoveSubscription(pf *File, id string) []string {
 		kept = append(kept, p)
 	}
 	pf.Profiles = kept
-	if pf.AutoSubscriptionID == id {
-		pf.Auto = false
-		pf.AutoSubscriptionID = ""
-	}
 	activeGone := true
 	for _, p := range kept {
 		if p.Name == pf.Active {
@@ -234,9 +226,6 @@ func RemoveSubscription(pf *File, id string) []string {
 		if len(kept) > 0 {
 			pf.Active = kept[0].Name
 		}
-	}
-	if pf.Auto && len(pf.AutoProfiles()) == 0 {
-		pf.Auto = false
 	}
 	return removed
 }

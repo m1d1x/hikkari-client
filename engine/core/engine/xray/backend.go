@@ -72,7 +72,7 @@ func New(dir string, log engine.Logger, hosts HostFactory) (engine.Backend, erro
 	return b, nil
 }
 func (b *Backend) Info() engine.Info {
-	return engine.Info{ID: "xray", Name: "Xray " + Version, Capabilities: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, ProfileProbe: true, ProcessRouting: true}}
+	return engine.Info{ID: "xray", Name: "Xray " + Version, Capabilities: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, ProfileProbe: true, ProcessRouting: true}}
 }
 func (b *Backend) Configure(c engine.Configuration) error {
 	b.mu.Lock()

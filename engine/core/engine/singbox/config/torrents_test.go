@@ -15,7 +15,7 @@ func TestTorrentsGoDirectInEveryMode(t *testing.T) {
 		// A user who sent a torrent client through the VPN on purpose: still direct.
 		{Enabled: true, Mode: ModeProxy, Proxy: RouteList{Processes: []string{"qbittorrent.exe"}}},
 	} {
-		for _, head := range []string{SelectorTag, AutoTag} {
+		for _, head := range []string{SelectorTag, "direct"} {
 			cfg := DefaultConfig()
 			ensureICMPDirectRule(cfg, true)
 			for i := 0; i < 2; i++ { // the second pass checks idempotency
@@ -59,7 +59,7 @@ func TestTorrentsGoDirectInEveryMode(t *testing.T) {
 			// than direct: they match their own addresses, no torrent's.
 			for i, r := range rules[:min(program, proto)] {
 				m := r.(map[string]interface{})
-				if m["process_name"] != nil || m["domain_suffix"] != nil || m["network"] == "udp" && m["outbound"] == AutoUDPTag {
+				if m["process_name"] != nil || m["domain_suffix"] != nil {
 					t.Fatalf("%+v: rule %d %v comes ahead of the torrent rules", state, i, m)
 				}
 			}

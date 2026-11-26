@@ -92,12 +92,6 @@ type Core struct {
 	countryHealthMu sync.RWMutex
 	countryHealth   map[string]countryHealth
 
-	// routed is the profile traffic goes through, kept by watchRoute.
-	routedMu sync.RWMutex
-	routed   string
-	// routedUDP is the profile auto mode's UDP group holds, kept by watchRoute.
-	routedUDP string
-
 	customServicesMu   sync.RWMutex
 	customServicesPath string
 	customServices     []uptime.ServiceTarget
@@ -265,7 +259,7 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 	ctx, tracker, checker, backend, reporter, tel := c.ctx, c.uptime, c.health, c.backend, c.downdetector, c.telemetry
 	var workers sync.WaitGroup
 	run := func(fn func()) { workers.Add(1); go func() { defer workers.Done(); fn() }() }
-	run(func() { tracker.Run(ctx, c.uptimeHosts, c.carryingProfile, probe, c.uptimeObserver()) })
+	run(func() { tracker.Run(ctx, c.uptimeHosts, c.resolveCarryingProfile, probe, c.uptimeObserver()) })
 	run(func() { reporter.Run(ctx) })
 	reportSender := downdetector.NewSender(
 		reporter,
@@ -285,7 +279,15 @@ func (c *Core) InitWithEngine(baseDir string, factory engine.Factory) error {
 			c.autoTunnel = autotunnel.OpenList(direct.AutoTunnelList(), c.logger.Logf)
 			c.autoTunnel.SetPublish(c.publishAutoTunnel)
 			list, logf := c.autoTunnel, c.logger.Logf
-			run(func() { autotunnel.Run(ctx, list, direct.DirectConnections, logf) })
+			// With the "авто" button off nothing is learned: the lists alone
+			// decide, and a site does not go to the VPN behind the person's back.
+			conns := func() ([]autotunnel.Conn, error) {
+				if on, err := c.profiles.AutoTunnel(); err != nil || !on {
+					return nil, err
+				}
+				return direct.DirectConnections()
+			}
+			run(func() { autotunnel.Run(ctx, list, conns, logf) })
 		}
 		run(c.measureTunnelDown)
 		run(backend.Baseline)

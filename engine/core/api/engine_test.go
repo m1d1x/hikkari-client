@@ -104,7 +104,7 @@ func initAlternate(t *testing.T, f *alternateEngine) *Core {
 }
 
 func TestApplicationUsesOnlyEngineContract(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoTunnel: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 	if c.EngineInfo().ID != "alternate" {
 		t.Fatal("adapter identity was not exposed")
@@ -148,14 +148,13 @@ func TestApplicationUsesOnlyEngineContract(t *testing.T) {
 	if err := c.AddRule("bypass", "domains", "example.test"); err != nil {
 		t.Fatal(err)
 	}
-	officialTestProfiles(t, c, first, second)
-	if err := c.SetAutoMode(true); err != nil {
+	if err := c.SetAutoTunnel(true); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	config := f.configuration
 	f.mu.Unlock()
-	if !config.AutoSelect || len(config.Routing.Bypass.Domains) != 1 || len(config.Profiles) != 2 {
+	if !config.AutoTunnel || len(config.Routing.Bypass.Domains) != 1 || len(config.Profiles) != 2 {
 		t.Fatal("shared user configuration did not reach adapter")
 	}
 	if config.Profiles[0].Config != nil || config.Profiles[0].Connection.URI != "alternate://opaque" {
@@ -186,10 +185,10 @@ func TestApplicationUsesOnlyEngineContract(t *testing.T) {
 
 func TestEngineCapabilitiesRejectUnsupportedCommands(t *testing.T) {
 	c := initAlternate(t, &alternateEngine{})
-	if err := c.SetAutoMode(true); err == nil {
-		t.Fatal("unsupported auto-select was accepted")
+	if err := c.SetAutoTunnel(true); err == nil {
+		t.Fatal("unsupported auto tunnel was accepted")
 	}
-	if on, _ := c.AutoMode(); on {
+	if on, _ := c.AutoTunnel(); on {
 		t.Fatal("unsupported command changed persisted preferences")
 	}
 	if err := c.AddRule("bypass", "processes", "example.exe"); err == nil {
@@ -286,7 +285,7 @@ func TestExplicitInitDoesNotSilentlyChangeEngine(t *testing.T) {
 
 // The log says which profile each press was about, whatever the outcome.
 func TestConnectLinesNameTheProfile(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoTunnel: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 	first, err := c.AddProfileFromURI("p-first")
 	if err != nil {

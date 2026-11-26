@@ -276,8 +276,9 @@ func TestMessagesRoundTripAndOversizeIsRefused(t *testing.T) {
 }
 
 // The contract end to end: what the GUI's config compiler actually writes
-// (configfile.RebuildActive, autotunnel rule set included) passes Sanitize,
-// and the rule set path the compiler named is replaced by the service's.
+// (configfile.RebuildActive, autotunnel rule set included while the «авто»
+// button is on) passes Sanitize, and the rule set path the compiler named is
+// replaced by the service's. With the button off there is no rule set at all.
 func TestTheCompiledConfigPassesSanitize(t *testing.T) {
 	dir := t.TempDir()
 	store := configfile.New(filepath.Join(dir, "config.json"))
@@ -285,6 +286,7 @@ func TestTheCompiledConfigPassesSanitize(t *testing.T) {
 		Tag: "p-1", Kind: "outbound",
 		Config: map[string]interface{}{"tag": "p-1", "type": "vless", "server": "1.2.3.4", "server_port": 443},
 	}}
+	svcDir := filepath.Join(dir, "svc")
 	if err := store.RebuildActive(specs, "p-1", false, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +294,24 @@ func TestTheCompiledConfigPassesSanitize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svcDir := filepath.Join(dir, "svc")
+	off, err := Sanitize(mustJSON(t, cfg), Paths{CacheFile: filepath.Join(svcDir, "cache.db"), AutoTunnelRuleSet: filepath.Join(svcDir, "auto-tunnel.json")})
+	if err != nil {
+		t.Fatalf("the compiled config with the button off was refused: %v", err)
+	}
+	var offBack map[string]interface{}
+	if err := json.Unmarshal(off, &offBack); err != nil {
+		t.Fatal(err)
+	}
+	if sets := offBack["route"].(map[string]interface{})["rule_set"]; sets != nil {
+		t.Fatalf("button off, yet rule_set: %v", sets)
+	}
+	if err := store.RebuildActive(specs, "p-1", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := Sanitize(mustJSON(t, cfg), Paths{CacheFile: filepath.Join(svcDir, "cache.db"), AutoTunnelRuleSet: filepath.Join(svcDir, "auto-tunnel.json")})
 	if err != nil {
 		t.Fatalf("the compiled config was refused: %v", err)

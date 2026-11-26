@@ -137,16 +137,9 @@ func TestChangeOfActiveProfileProbesItAtOnce(t *testing.T) {
 
 type fakeObserver struct {
 	received func() map[string]uint64
-	own      func() (bool, int, bool)
 }
 
 func (o fakeObserver) Received(string) (map[string]uint64, error) { return o.received(), nil }
-func (o fakeObserver) OwnProbe(string) (bool, int, bool) {
-	if o.own == nil {
-		return false, 0, false
-	}
-	return o.own()
-}
 
 func TestOpeningListInterruptsTrafficWindow(t *testing.T) {
 	tr := newTracker(t)
@@ -184,26 +177,6 @@ func TestWatchTrafficSeesOnlyGrowth(t *testing.T) {
 				t.Fatalf("watchTraffic = %v, %v, want %v, false", got, stop, c.want)
 			}
 		})
-	}
-}
-
-func TestOwnProbeSamplesWithoutNetwork(t *testing.T) {
-	if testing.Short() {
-		t.Skip("waits out the real traffic window")
-	}
-	tr := newTracker(t)
-	probe := &countingProbe{}
-	observer := fakeObserver{
-		received: func() map[string]uint64 { return nil },
-		own:      func() (bool, int, bool) { return true, 77, true },
-	}
-	tr.checkActive(context.Background(), threeHosts[0], probe, observer)
-	if probe.total() != 0 {
-		t.Fatalf("probed although the core had measured: %v", probe.calls)
-	}
-	got := tr.Snapshot()["a"]
-	if len(got) != 1 || got[0].RttMs != 77 || got[0].Src != SrcTunnel {
-		t.Fatalf("samples = %+v", got)
 	}
 }
 

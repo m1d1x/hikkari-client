@@ -261,10 +261,9 @@ func DefaultConfig() map[string]interface{} {
 // upstream-package dependencies — the api layer marshals this on the way
 // down.
 type ProfileSpec struct {
-	ExcludeFromAuto bool
-	Tag             string
-	Kind            string
-	Config          map[string]interface{}
+	Tag    string
+	Kind   string
+	Config map[string]interface{}
 }
 
 const (
@@ -272,16 +271,6 @@ const (
 	// profile. route.final and dns.detour point at this; switching
 	// profiles is `PUT /proxies/proxy {name: <tag>}` to the Clash API.
 	SelectorTag = "proxy"
-
-	// AutoTag is the optional `urltest` outbound that wraps the selector.
-	// When auto-fastest mode is on we make route.final point here and
-	// sing-box auto-picks the lowest-latency live profile every interval.
-	AutoTag = "auto"
-
-	// AutoUDPTag is auto mode's group for UDP: only the profiles that carry
-	// UDP as datagrams, chosen by a UDP probe (see autoUDPOutbound). Present
-	// only while auto mode is on and at least one such profile is in it.
-	AutoUDPTag = "auto-udp"
 
 	kindEndpoint = "endpoint"
 	kindOutbound = "outbound"
@@ -297,12 +286,15 @@ var systemOutboundTags = map[string]bool{
 }
 
 // managedGroupTags are the outbound tags we own and unconditionally
-// rebuild every time — selector + urltest. Anything tagged with these in
-// the existing outbounds list gets dropped on the way through.
+// rebuild every time. Anything tagged with these in the existing outbounds
+// list gets dropped on the way through, and a route pointing at one is
+// pointed at the head. "auto" and "auto-udp" are the urltest groups of the
+// server choice the "авто" button made before it became the auto tunnel: a
+// config written then still names them.
 var managedGroupTags = map[string]bool{
 	SelectorTag: true,
-	AutoTag:     true,
-	AutoUDPTag:  true,
+	"auto":      true,
+	"auto-udp":  true,
 }
 
 // RebuildActive loads every known profile into config.json under a single
@@ -315,14 +307,19 @@ var managedGroupTags = map[string]bool{
 // migrateLegacyTags is true on first run after the selector model lands —
 // any route.final / dns.detour still pointing at "awg-ep" or "proxy-out"
 // gets rewritten to SelectorTag. After migration, this should be false.
-func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, autoMode bool, legacyTags map[string]bool) error {
+func (s *Store) RebuildActive(specs []ProfileSpec, activeTag string, autoTunnel bool, legacyTags map[string]bool) error {
 	state, err := s.ReadRouting()
 	if err != nil {
 		return err
 	}
-	return s.RebuildActiveWithRouting(specs, activeTag, autoMode, legacyTags, state, HostNetwork{})
+	return s.RebuildActiveWithRouting(specs, activeTag, autoTunnel, legacyTags, state, HostNetwork{})
 }
-func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, autoMode bool, legacyTags map[string]bool, routing RoutingState, host HostNetwork) error {
+
+// RebuildActiveWithRouting is RebuildActive with the routing state and the
+// host network given. autoTunnel is the "авто" button: on, the sites proven
+// silent on the direct path go through the tunnel (core/autotunnel); off,
+// only the routing lists send traffic to the VPN.
+func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, autoTunnel bool, legacyTags map[string]bool, routing RoutingState, host HostNetwork) error {
 	cfg, err := s.Read()
 	if err != nil {
 		return err
@@ -332,18 +329,11 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 	tunnelResolvers := make([]interface{}, 0)
 	outboundBlocks := make([]interface{}, 0, len(specs))
 	profileTags := make([]interface{}, 0, len(specs))
-	autoTags := make([]interface{}, 0, len(specs))
 	hasOutbound := false
 	for _, p := range specs {
 		profileTags = append(profileTags, p.Tag)
-		if !p.ExcludeFromAuto {
-			autoTags = append(autoTags, p.Tag)
-		}
 		if p.Kind == kindOutbound {
 			healOutboundConfig(p.Config)
-			if autoMode {
-				applyAutoDialBudget(p.Config)
-			}
 			outboundBlocks = append(outboundBlocks, p.Config)
 			hasOutbound = true
 		} else {
@@ -359,7 +349,7 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 
 	// Preserve system outbounds (direct/block/...) from the existing slice;
 	// drop everything else — old profile outbounds and our own managed
-	// groups (selector + urltest) get rebuilt from scratch below.
+	// groups get rebuilt from scratch below.
 	preserved := make([]interface{}, 0)
 	if existing, ok := cfg["outbounds"].([]interface{}); ok {
 		for _, ob := range existing {
@@ -392,26 +382,14 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 			selector["default"] = activeTag
 		}
 		preserved = append(preserved, selector)
-		if autoMode {
-			if len(autoTags) == 0 {
-				return fmt.Errorf("нет доступных серверов подписки hikkari для авто")
-			}
-			preserved = append(preserved, autoOutbound(autoTags))
-			if udpTags := datagramTags(specs); len(udpTags) > 0 {
-				preserved = append(preserved, autoUDPOutbound(udpTags))
-			}
-		}
 	}
 	cfg["outbounds"] = preserved
 
-	// Re-point route.final / dns.detour at whichever group is the head —
-	// urltest when auto mode is on, the manual selector otherwise.
+	// Re-point route.final / dns.detour at the selector, or straight out when
+	// there is no profile to go through.
 	head := SelectorTag
 	if len(profileTags) == 0 {
 		head = "direct"
-	}
-	if autoMode && len(profileTags) > 0 {
-		head = AutoTag
 	}
 	rewriteRouteRefs(cfg, head, legacyTags)
 	addTunnelResolvers(cfg, tunnelResolvers)
@@ -424,7 +402,7 @@ func (s *Store) RebuildActiveWithRouting(specs []ProfileSpec, activeTag string, 
 	// Re-apply routing.json on top — owns route.rules (besides ICMP/prelude)
 	// and route.final whenever proxy-mode is on. Missing routing.json yields
 	// DefaultRoutingState which is effectively a no-op.
-	if err := s.attachAutoTunnel(cfg); err != nil {
+	if err := s.attachAutoTunnel(cfg, autoTunnel); err != nil {
 		return err
 	}
 	ApplyRouting(cfg, routing, head)
@@ -557,8 +535,8 @@ func healRealIPv6Rules(rules []interface{}) []interface{} {
 	return append(out, kept[first:]...)
 }
 
-// rewriteRouteRefs forces route.final / dns.detour onto `head` (selector
-// or urltest tag). Rewrites anything currently pointed at one of our
+// rewriteRouteRefs forces route.final / dns.detour onto `head` (the
+// selector, or "direct" with no profile). Rewrites anything currently pointed at one of our
 // managed groups OR a legacy tag, leaving unrelated values alone.
 func rewriteRouteRefs(cfg map[string]interface{}, head string, legacyTags map[string]bool) {
 	shouldRewrite := func(v string) bool {
@@ -622,100 +600,6 @@ func healOutboundConfig(cfg map[string]interface{}) {
 	if pe, _ := cfg["packet_encoding"].(string); pe == "" {
 		cfg["packet_encoding"] = "xudp"
 	}
-}
-
-// autoDialBudget caps a dial when there is another server to go to. A path that
-// went silent gives no error to react to, so this is the time the first request
-// waits before the group moves on. The core's default for a TLS handshake is 15s,
-// fair with one server and far too long with a fallback ready.
-const autoDialBudget = "5s"
-
-func applyAutoDialBudget(cfg map[string]interface{}) {
-	cfg["connect_timeout"] = autoDialBudget
-	if tls, ok := cfg["tls"].(map[string]interface{}); ok {
-		tls["handshake_timeout"] = autoDialBudget
-	}
-}
-
-// autoProbeInterval is how often the group probes the node it holds. In failover
-// mode that is one request per tick, whatever the size of the subscription. It
-// only has to catch a node dying while nothing is using it: under traffic a
-// connection left without an answer triggers a probe at once (patch 0002).
-const autoProbeInterval = "120s"
-
-// autoOutbound builds the `urltest` block behind auto mode. mode=failover holds
-// a working node instead of chasing the fastest one, so ordinary jitter never
-// changes the exit IP: the group leaves only when the node stops answering, when
-// a live dial through it times out, or when it turns at least 2x slower than a
-// neighbour and a fresh run confirms one 1.5x faster. Established connections stay on
-// their node across a move (interrupt_exist_connections stays off).
-func autoOutbound(profileTags []interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"tag":          AutoTag,
-		"type":         "urltest",
-		"mode":         "failover",
-		"outbounds":    profileTags,
-		"url":          "http://cp.cloudflare.com/generate_204",
-		"interval":     autoProbeInterval,
-		"idle_timeout": "30m",
-	}
-}
-
-// autoUDPProbe is what auto mode's UDP group probes its members with: a STUN
-// binding request through each one (core patch 0012). Cloudflare's STUN by
-// address: a member carries the probe's datagram as it is, and a name would
-// have to be resolved through the tunnel, where the core answers with a fake
-// address. The client's own voice probe (diagnostics/voice.go) asks the same
-// server.
-const autoUDPProbe = "stun://162.159.207.0:3478"
-
-// autoUDPOutbound builds auto mode's group for UDP. One group for TCP and UDP
-// chose by an HTTP probe over TCP and held profiles that carry UDP inside TCP
-// (VLESS, Naive); a call on such a profile waits for every lost segment.
-// tamila-001, 09.11: Discord's UDP followed the group onto vless-xhttp, 135
-// silences over 60 ms in 30 s against none directly. This group holds only
-// profiles with datagrams of their own and picks by a UDP probe. Failover as
-// the TCP group: a live call stays on its profile until the profile stops
-// answering, and an established flow is never moved.
-func autoUDPOutbound(profileTags []interface{}) map[string]interface{} {
-	return map[string]interface{}{
-		"tag":          AutoUDPTag,
-		"type":         "urltest",
-		"mode":         "failover",
-		"outbounds":    profileTags,
-		"url":          autoUDPProbe,
-		"interval":     autoProbeInterval,
-		"idle_timeout": "30m",
-	}
-}
-
-// datagramTags are the auto profiles that carry UDP as datagrams: WireGuard
-// and AmneziaWG endpoints, Hysteria2, TUIC, Shadowsocks, and Hikkari unless
-// its datagram channel is off (then UDP rides its Naive channel). VLESS,
-// VMess, Trojan, Naive and the rest carry UDP inside a stream.
-func datagramTags(specs []ProfileSpec) []interface{} {
-	var tags []interface{}
-	for _, p := range specs {
-		if !p.ExcludeFromAuto && carriesDatagrams(p) {
-			tags = append(tags, p.Tag)
-		}
-	}
-	return tags
-}
-
-func carriesDatagrams(p ProfileSpec) bool {
-	if p.Kind == kindEndpoint {
-		return true
-	}
-	switch p.Config["type"] {
-	case "hysteria2", "hysteria", "tuic", "shadowsocks":
-		return true
-	case "hikkari":
-		udp, _ := p.Config["udp"].(map[string]interface{})
-		disabled, _ := udp["disabled"].(bool)
-		return !disabled
-	}
-	return false
 }
 
 // NeedsSelectorMigration reports whether config.json is in the pre-selector

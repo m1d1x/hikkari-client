@@ -66,22 +66,3 @@ func TestTheVoiceProbeTakesTheVPNsPathInEveryMode(t *testing.T) {
 		}
 	}
 }
-
-// In auto mode a call's datagrams take auto mode's UDP group, so the probe's
-// datagrams go there too.
-func TestTheVoiceProbeTakesAutoModesUDPGroup(t *testing.T) {
-	cfg := freshCfg()
-	cfg["outbounds"] = []interface{}{
-		map[string]interface{}{"tag": AutoTag, "type": "urltest"},
-		map[string]interface{}{"tag": AutoUDPTag, "type": "urltest"},
-	}
-	ApplyRouting(cfg, RoutingState{Enabled: true, Mode: ModeProxy, Proxy: RouteList{Domains: []string{"discord.com"}}}, AutoTag)
-	_, at := voiceProbeRule(cfg)
-	if at < 1 {
-		t.Fatalf("no rule for the probe's address behind its UDP twin: %v", rulesOf(cfg))
-	}
-	twin := rulesOf(cfg)[at-1]
-	if !isVoiceProbeRule(twin) || twin["network"] != "udp" || twin["outbound"] != AutoUDPTag || twin["override_address"] != voiceprobe.TargetHost {
-		t.Fatalf("the probe's UDP does not go to %s: %v", AutoUDPTag, twin)
-	}
-}

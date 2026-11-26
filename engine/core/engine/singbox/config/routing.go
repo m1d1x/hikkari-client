@@ -50,8 +50,8 @@ func (s *Store) RemoveRouteRule(mode RoutingMode, category, value string) error 
 }
 
 // ApplyRouting mutates cfg in-place to reflect state. head is the
-// outbound tag that represents "via VPN" — typically AutoTag when
-// auto-fastest is on, else SelectorTag. The function:
+// outbound tag that represents "via VPN": SelectorTag, or "direct" with no
+// profile to go through (RebuildActive). The function:
 //
 //   - preserves any sniff/hijack-dns prelude rules, the ICMP/LAN→direct rules and the QUIC reject
 //   - drops every other rule (they're owned by us)
@@ -156,63 +156,12 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 
 	route["rules"] = out
 	route["final"] = finalTag
-	routeUDPByDatagrams(cfg, route, head)
 
 	var bypass RouteList
 	if ruleOutbound == "direct" {
 		bypass = list
 	}
 	applyBypassDNS(cfg, bypass)
-}
-
-// routeUDPByDatagrams sends to auto mode's UDP group the UDP that would go to
-// the auto group: every rule ending at the auto group gets a UDP twin ahead of
-// it, and UDP left over at the end goes there instead of route.final. Rules
-// sending traffic direct or refusing it stay ahead and keep UDP as before. Run
-// after the rules are compiled; the twins are dropped with them on the next
-// compile.
-func routeUDPByDatagrams(cfg, route map[string]interface{}, head string) {
-	if head != AutoTag || !hasOutbound(cfg, AutoUDPTag) {
-		return
-	}
-	rules, _ := route["rules"].([]interface{})
-	out := make([]interface{}, 0, len(rules)+2)
-	for _, r := range rules {
-		m, ok := r.(map[string]interface{})
-		if !ok || m["outbound"] != AutoTag {
-			out = append(out, r)
-			continue
-		}
-		switch m["network"] {
-		case nil:
-			twin := make(map[string]interface{}, len(m)+1)
-			for k, v := range m {
-				twin[k] = v
-			}
-			twin["network"] = "udp"
-			twin["outbound"] = AutoUDPTag
-			out = append(out, twin, m)
-		case "udp":
-			m["outbound"] = AutoUDPTag
-			out = append(out, m)
-		default:
-			out = append(out, m)
-		}
-	}
-	if route["final"] == AutoTag {
-		out = append(out, map[string]interface{}{"network": "udp", "outbound": AutoUDPTag})
-	}
-	route["rules"] = out
-}
-
-func hasOutbound(cfg map[string]interface{}, tag string) bool {
-	obs, _ := cfg["outbounds"].([]interface{})
-	for _, ob := range obs {
-		if m, _ := ob.(map[string]interface{}); m != nil && m["tag"] == tag {
-			return true
-		}
-	}
-	return false
 }
 
 // ruZoneRules send the Russian internet direct (core/ruzone): our exits refuse
@@ -275,8 +224,7 @@ func egressProbeRules(head string) []interface{} {
 	if head == "" || len(hosts) == 0 {
 		return nil
 	}
-	// TCP only: the probe is HTTPS, and a UDP-less rule gets no twin to auto
-	// mode's UDP group (routeUDPByDatagrams).
+	// TCP only: the probe is HTTPS.
 	return []interface{}{map[string]interface{}{
 		"domain":   toAnySlice(hosts),
 		"network":  "tcp",
@@ -290,9 +238,7 @@ func egressProbeRules(head string) []interface{} {
 // the probe exists to time that path, and its STUN server is not blocked, so in
 // the default mode the rules below would send it direct. One rule, because the
 // turn changes the destination to the name and a rule behind it would no longer
-// match the address. It names no network, so in auto mode routeUDPByDatagrams
-// gives it the UDP twin to auto mode's UDP group, the group a call's datagrams
-// take.
+// match the address.
 func voiceProbeRules(head string) []interface{} {
 	if head == "" {
 		return nil
@@ -311,20 +257,26 @@ func voiceProbeRules(head string) []interface{} {
 // checks the same value on the service side of the boundary.
 const AutoTunnelTag = autotunnel.Tag
 
-// attachAutoTunnel declares the rule set. The core refuses to start over a
-// file that is missing, so it is created here, before any config can name it.
-// The path is this store's own: what the service runs is a different copy,
-// rewritten to a service-owned location by svcproto.Sanitize, with the hosts
-// pushed over the control endpoint — see core/autotunnel.
-func (s *Store) attachAutoTunnel(cfg map[string]interface{}) error {
-	path := s.AutoTunnelPath()
-	if err := autotunnel.EnsureRuleSet(path); err != nil {
-		return fmt.Errorf("список автотуннеля: %w", err)
-	}
+// attachAutoTunnel declares the rule set while the "авто" button is on and
+// takes it away while it is off: escapeDirectRules sends the listed sites
+// through the tunnel only when the set is declared. The core refuses to start
+// over a file that is missing, so it is created here, before any config can
+// name it. The path is this store's own: what the service runs is a different
+// copy, rewritten to a service-owned location by svcproto.Sanitize, with the
+// hosts pushed over the control endpoint — see core/autotunnel.
+func (s *Store) attachAutoTunnel(cfg map[string]interface{}, on bool) error {
 	route, _ := cfg["route"].(map[string]interface{})
 	if route == nil {
 		route = map[string]interface{}{}
 		cfg["route"] = route
+	}
+	if !on {
+		delete(route, "rule_set")
+		return nil
+	}
+	path := s.AutoTunnelPath()
+	if err := autotunnel.EnsureRuleSet(path); err != nil {
+		return fmt.Errorf("список автотуннеля: %w", err)
 	}
 	route["rule_set"] = []interface{}{map[string]interface{}{
 		"tag": AutoTunnelTag, "type": "local", "format": "source", "path": path,
@@ -457,7 +409,8 @@ func toAnySlice(vals []string) []interface{} {
 
 // applyRoutingToConfig reads config.json, runs ApplyRouting against it,
 // writes it back. Missing config.json is tolerated — a future RebuildActive
-// will pick up the routing state from routing.json on its own.
+// will pick up the routing state from routing.json on its own. The auto tunnel
+// stays as the last RebuildActive left it: the button lives with the profiles.
 func (s *Store) applyRoutingToConfig(state RoutingState) error {
 	cfg, err := s.Read()
 	if err != nil {
@@ -466,27 +419,23 @@ func (s *Store) applyRoutingToConfig(state RoutingState) error {
 		}
 		return err
 	}
-	if err := s.attachAutoTunnel(cfg); err != nil {
+	if err := s.attachAutoTunnel(cfg, declaresAutoTunnel(cfg)); err != nil {
 		return err
 	}
-	ApplyRouting(cfg, state, currentHead(cfg))
+	// Standalone the head is the selector; RebuildActive knows the head itself.
+	ApplyRouting(cfg, state, SelectorTag)
 	return s.Write(cfg)
 }
 
-// currentHead picks the "via VPN" outbound tag by inspecting the existing
-// outbounds list: AutoTag if the urltest block is present, else SelectorTag.
-// Used when applying routing standalone (outside RebuildActive, which knows
-// the head directly).
-func currentHead(cfg map[string]interface{}) string {
-	obs, _ := cfg["outbounds"].([]interface{})
-	for _, ob := range obs {
-		m, _ := ob.(map[string]interface{})
-		if m == nil {
-			continue
-		}
-		if t, _ := m["tag"].(string); t == AutoTag {
-			return AutoTag
+// declaresAutoTunnel reports whether cfg already names the auto tunnel's rule
+// set, which RebuildActive does only while the "авто" button is on.
+func declaresAutoTunnel(cfg map[string]interface{}) bool {
+	route, _ := cfg["route"].(map[string]interface{})
+	sets, _ := route["rule_set"].([]interface{})
+	for _, set := range sets {
+		if m, _ := set.(map[string]interface{}); m != nil && m["tag"] == AutoTunnelTag {
+			return true
 		}
 	}
-	return SelectorTag
+	return false
 }

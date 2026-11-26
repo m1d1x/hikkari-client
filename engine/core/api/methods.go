@@ -59,9 +59,7 @@ func (c *Core) ValidateConfiguration() error {
 	if err != nil {
 		return err
 	}
-	return engine.ValidateConfiguration(engine.Configuration{
-		Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, AutoProfiles: pf.AutoProfiles(), AutoPreference: pf.AutoPreference(), Routing: effective,
-	}, c.backend.Info().Capabilities)
+	return engine.ValidateConfiguration(engineConfiguration(pf, effective), c.backend.Info().Capabilities)
 }
 
 // ConnectOutcome is what a press of «Подключиться» did besides the start.
@@ -487,27 +485,6 @@ func (c *Core) DeleteProfile(name string) (resultErr error) {
 func (c *Core) SwitchProfile(name string) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
-	before, err := c.profiles.Read()
-	if err != nil {
-		return err
-	}
-	if before.Auto {
-		after, err := cloneProfiles(before)
-		if err != nil {
-			return err
-		}
-		found := false
-		for _, p := range after.Profiles {
-			if p.Name == name {
-				found = true
-			}
-		}
-		if !found {
-			return fmt.Errorf("профиль не найден: %s", name)
-		}
-		after.Active, after.Auto, after.AutoSubscriptionID = name, false, ""
-		return c.commitProfiles(c.subscriptionContext(), before, after)
-	}
 	if err := c.profiles.SetActive(name); err != nil {
 		return err
 	}
@@ -720,16 +697,25 @@ func (c *Core) rebuildConfig() error {
 	return c.configureRouting(effective)
 }
 
-// AutoMode reports whether Hikkari subscription failover is enabled.
-func (c *Core) AutoMode() (bool, error) { return c.profiles.AutoMode() }
+// engineConfiguration is the user's intent in profiles.json under policy, the
+// routing that applies, for the engine adapter.
+func engineConfiguration(pf *profile.File, policy routing.RoutingState) engine.Configuration {
+	return engine.Configuration{Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoTunnel: pf.AutoTunnel, Routing: policy}
+}
 
-// SetAutoMode grants the engine selection within one verified Hikkari source.
-// Runtime and persistence use the same rollback transaction as subscription sync.
-func (c *Core) SetAutoMode(on bool) error {
+// AutoTunnel reports whether the "авто" button is on: sites that stay silent
+// on the direct path go through the tunnel by themselves (core/autotunnel).
+func (c *Core) AutoTunnel() (bool, error) { return c.profiles.AutoTunnel() }
+
+// SetAutoTunnel is the "авто" button. Off, only what the routing lists send to
+// the VPN goes there, and a site that is not listed goes direct even when its
+// provider blocks it. Runtime and persistence use the same rollback
+// transaction as subscription sync.
+func (c *Core) SetAutoTunnel(on bool) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
-	if on && !c.backend.Info().Capabilities.AutoSelect {
-		return fmt.Errorf("движок не поддерживает автоматический выбор сервера")
+	if on && !c.backend.Info().Capabilities.AutoTunnel {
+		return fmt.Errorf("движок не умеет сам находить заблокированные сайты")
 	}
 	before, err := c.profiles.Read()
 	if err != nil {
@@ -739,18 +725,7 @@ func (c *Core) SetAutoMode(on bool) error {
 	if err != nil {
 		return err
 	}
-	after.Auto, after.AutoSubscriptionID = on, ""
-	if !on && before.Auto {
-		if routed := c.resolveCarryingProfile(); routed != "" {
-			after.Active = routed
-		}
-	}
-	if on {
-		after.AutoSubscriptionID = after.AutoSource()
-		if len(after.AutoProfiles()) == 0 {
-			return fmt.Errorf("авто доступно только для подписки hikkari; добавьте или обновите её")
-		}
-	}
+	after.AutoTunnel = on
 	return c.commitProfiles(c.subscriptionContext(), before, after)
 }
 

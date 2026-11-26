@@ -11,7 +11,7 @@ import (
 func TestProfileGraphsUseProbersWhileTesterMeasurementsStayLocal(t *testing.T) {
 	c := New()
 	if err := c.InitWithEngine(manualRoutingDir(t), func(string, engine.Logger) (engine.Backend, error) {
-		return &alternateEngine{caps: engine.Capabilities{TUN: true, AutoSelect: true}}, nil
+		return &alternateEngine{caps: engine.Capabilities{TUN: true, AutoTunnel: true}}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}

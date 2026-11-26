@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
-	"sync"
 	"time"
 
 	"NekkoVPN/core/engine"
@@ -31,23 +29,19 @@ func profileTag(id string) string { return "p-" + id }
 var legacyTags = map[string]bool{"awg-ep": true, "proxy-out": true}
 
 type Backend struct {
-	preferenceMu          sync.Mutex
-	preferenceSent        string
-	preferenceUnsupported bool
-	preferenceSentAt      time.Time
-	config                *configfile.Store
-	process               vpn.Manager
-	control               *clashapi.Client
-	diagnostics           *diag.Runner
-	log                   engine.Logger
-	stoppedAt             time.Time
-	tester                func() bool // see SetTesterGate
-	active                string      // selector member the last Configure chose
-	check                 configChecker
-	compiled              *compiled
-	rejected              map[string]error  // profile name -> why the running core was started without it
-	fingerprint           string            // of what the last Configure wrote, before admit and the pins
-	pins                  map[string]string // server host -> IPv4 the running core dials (see pinServers)
+	config      *configfile.Store
+	process     vpn.Manager
+	control     *clashapi.Client
+	diagnostics *diag.Runner
+	log         engine.Logger
+	stoppedAt   time.Time
+	tester      func() bool // see SetTesterGate
+	active      string      // selector member the last Configure chose
+	check       configChecker
+	compiled    *compiled
+	rejected    map[string]error  // profile name -> why the running core was started without it
+	fingerprint string            // of what the last Configure wrote, before admit and the pins
+	pins        map[string]string // server host -> IPv4 the running core dials (see pinServers)
 }
 
 // selectActiveTimeout bounds the wait for a freshly started core's Clash API.
@@ -60,7 +54,7 @@ func NewWithProcess(baseDir string, log engine.Logger, process vpn.Manager) *Bac
 	return &Backend{config: configfile.New(filepath.Join(baseDir, "config.json")), process: process, control: clashapi.New(""), diagnostics: diag.New(log, filepath.Join(baseDir, "config.json")), log: log, check: checkWithCore(vpn.CoreBinary())}
 }
 func (b *Backend) Info() engine.Info {
-	return engine.Info{ID: "sing-box", Name: "sing-box", Capabilities: engine.Capabilities{TUN: runtime.GOOS == "darwin" || runtime.GOOS == "windows", DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: processRouting, FolderRouting: processRouting}}
+	return engine.Info{ID: "sing-box", Name: "sing-box", Capabilities: engine.Capabilities{TUN: runtime.GOOS == "darwin" || runtime.GOOS == "windows", DomainRouting: true, IPRouting: true, AutoTunnel: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: processRouting, FolderRouting: processRouting}}
 }
 
 func native(p profile.Profile) (profile.Profile, error) {
@@ -101,7 +95,7 @@ func (b *Backend) Configure(c engine.Configuration) error {
 		if b.tester != nil && b.tester() && wantsFlowRetry(n.Kind, cfg) {
 			cfg["flow_retry_delay"] = flowRetryDelay
 		}
-		specs = append(specs, configfile.ProfileSpec{Tag: tag, Kind: n.Kind, Config: cfg, ExcludeFromAuto: c.AutoProfiles != nil && !slices.Contains(c.AutoProfiles, p.Name)})
+		specs = append(specs, configfile.ProfileSpec{Tag: tag, Kind: n.Kind, Config: cfg})
 		labels[tag], names[tag] = p.Label, p.Name
 		if p.Name == c.ActiveProfile {
 			active = tag
@@ -111,7 +105,7 @@ func (b *Backend) Configure(c engine.Configuration) error {
 		active = specs[0].Tag
 	}
 	rebuild := func(specs []configfile.ProfileSpec, active string) error {
-		return b.config.RebuildActiveWithRouting(specs, active, c.AutoSelect, legacyTags, c.Routing, configfile.HostNetwork{
+		return b.config.RebuildActiveWithRouting(specs, active, c.AutoTunnel, legacyTags, c.Routing, configfile.HostNetwork{
 			DirectInterface: c.Host.DirectInterface,
 			DirectDNS:       c.Host.DirectDNS,
 		})
@@ -125,14 +119,10 @@ func (b *Backend) Configure(c engine.Configuration) error {
 	}
 	b.fingerprint = fingerprint
 	b.active = active
-	b.compiled = &compiled{specs: specs, labels: labels, names: names, auto: c.AutoSelect, rebuild: rebuild}
+	b.compiled = &compiled{specs: specs, labels: labels, names: names, rebuild: rebuild}
 	return nil
 }
 func (b *Backend) Start(ctx context.Context) error {
-	b.preferenceMu.Lock()
-	b.preferenceSent = ""
-	b.preferenceUnsupported = false
-	b.preferenceMu.Unlock()
 	if !b.stoppedAt.IsZero() {
 		remaining := 1500*time.Millisecond - time.Since(b.stoppedAt)
 		if remaining > 0 {
@@ -302,25 +292,6 @@ func (b *Backend) TunnelStalls() (boundsMS, count, ms []int64, ok bool, err erro
 	return stalls.BoundsMS, stalls.Count, stalls.MS, true, nil
 }
 
-// RoutedProfile asks the auto group which profile it holds.
-func (b *Backend) RoutedProfile() string {
-	group, err := b.control.Proxy(configfile.AutoTag)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimPrefix(group.Now, "p-")
-}
-
-// RoutedUDPProfile asks auto mode's UDP group which profile it holds; "" when
-// the config has no such group (no profile with datagrams of its own).
-func (b *Backend) RoutedUDPProfile() string {
-	group, err := b.control.Proxy(configfile.AutoUDPTag)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimPrefix(group.Now, "p-")
-}
-
 // ReceivedBytes keeps only the connections whose chain passes through the
 // profile: the core's totals also count everything routed direct, which says
 // nothing about the tunnel.
@@ -337,23 +308,6 @@ func (b *Backend) ReceivedBytes(id string) (map[string]uint64, error) {
 		}
 	}
 	return out, nil
-}
-
-// LastDelay reads the probe the auto group runs on the node it holds, so the
-// graph needs no second request for the same answer. With auto off the core does
-// not probe on its own, and the history only holds what Delay left there.
-func (b *Backend) LastDelay(id string) (bool, int, bool) {
-	if b.RoutedProfile() != id {
-		return false, 0, false
-	}
-	node, err := b.control.Proxy(profileTag(id))
-	if err != nil {
-		return false, 0, false
-	}
-	if len(node.History) == 0 {
-		return false, 0, true
-	}
-	return true, node.History[0].Delay, true
 }
 
 // Baseline snapshots the machine at engine init. When the core is already up
@@ -496,31 +450,4 @@ const processRouting = runtime.GOOS == "darwin" || runtime.GOOS == "windows" || 
 func (b *Backend) TrafficCounters() (engine.TrafficCounters, error) {
 	up, down, err := b.control.Totals()
 	return engine.TrafficCounters{UploadBytes: up, DownloadBytes: down}, err
-}
-
-func (b *Backend) SetAutoPreference(ids []string, expiresAt int64) error {
-	tags := make([]string, 0, len(ids))
-	for _, id := range ids {
-		tags = append(tags, profileTag(id))
-	}
-	if len(tags) == 0 {
-		expiresAt = 0
-	}
-	raw, _ := json.Marshal(struct {
-		Tags  []string
-		Until int64
-	}{tags, expiresAt})
-	b.preferenceMu.Lock()
-	defer b.preferenceMu.Unlock()
-	if (b.preferenceUnsupported && time.Since(b.preferenceSentAt) < 10*time.Minute) || (b.preferenceSent == string(raw) && time.Since(b.preferenceSentAt) < 30*time.Second) {
-		return nil
-	}
-	supported, err := b.control.SetPreference(tags, expiresAt)
-	if err != nil {
-		return err
-	}
-	b.preferenceUnsupported = !supported
-	b.preferenceSent = string(raw)
-	b.preferenceSentAt = time.Now()
-	return nil
 }
