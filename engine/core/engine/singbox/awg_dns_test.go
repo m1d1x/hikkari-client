@@ -53,7 +53,7 @@ func TestAwgDNSSurvivesImportAndExport(t *testing.T) {
 }
 
 // configureAwgAndVLESS writes the whole config for an Amnezia profile beside a
-// VLESS one, in auto mode, the way a stored profile goes: Decode keeps the
+// VLESS one, the way a stored profile goes: Decode keeps the
 // link, Configure parses it again.
 func configureAwgAndVLESS(t *testing.T, conf string) (*Backend, map[string]interface{}) {
 	t.Helper()
@@ -67,7 +67,7 @@ func configureAwgAndVLESS(t *testing.T, conf string) (*Backend, map[string]inter
 		decoded[0].Name = name
 		profiles = append(profiles, decoded[0])
 	}
-	if err := b.Configure(engine.Configuration{Profiles: profiles, ActiveProfile: "amnezia", AutoSelect: true, Routing: routing.DefaultRoutingState()}); err != nil {
+	if err := b.Configure(engine.Configuration{Profiles: profiles, ActiveProfile: "amnezia", Routing: routing.DefaultRoutingState()}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := b.config.Read()

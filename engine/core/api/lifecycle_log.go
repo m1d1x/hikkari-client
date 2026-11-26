@@ -93,5 +93,5 @@ func profileChangeSummary(before, after *profile.File) string {
 			delete(old, p.Name)
 		}
 	}
-	return fmt.Sprintf("profiles=%d->%d added=%d removed=%d changed=%d active_changed=%v auto_changed=%v", len(before.Profiles), len(after.Profiles), added, len(old), changed, before.Active != after.Active, before.Auto != after.Auto)
+	return fmt.Sprintf("profiles=%d->%d added=%d removed=%d changed=%d active_changed=%v autotunnel_changed=%v", len(before.Profiles), len(after.Profiles), added, len(old), changed, before.Active != after.Active, before.AutoTunnel != after.AutoTunnel)
 }

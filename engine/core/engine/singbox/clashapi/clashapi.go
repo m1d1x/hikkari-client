@@ -138,23 +138,6 @@ func (c *Client) Delay(tag, probeURL string, timeoutMs int) (int, error) {
 	return out.Delay, nil
 }
 
-// ProxyInfo is the part of GET /proxies/{name} we read. Now is set on groups;
-// History holds the outbound's last probe and is empty once a probe failed.
-type ProxyInfo struct {
-	Now     string `json:"now"`
-	History []struct {
-		Delay int `json:"delay"`
-	} `json:"history"`
-}
-
-// Proxy reads one outbound or group. A missing tag is an error, which is how
-// the auto group answers while auto mode is off.
-func (c *Client) Proxy(tag string) (ProxyInfo, error) {
-	var out ProxyInfo
-	err := c.getJSON("/proxies/"+url.PathEscape(tag), &out)
-	return out, err
-}
-
 // Connection is the part of one GET /connections entry we read. Chains lists
 // the outbounds it passes through, the leaf first.
 type Connection struct {
@@ -261,31 +244,4 @@ func (c *Client) Totals() (upload, download uint64, err error) {
 	defer cancel()
 	err = c.getJSONContext(ctx, "/connections", &out)
 	return out.Upload, out.Download, err
-}
-
-// SetPreference is optional on older cores. They keep their normal failover.
-func (c *Client) SetPreference(tags []string, expiresAt int64) (bool, error) {
-	raw, _ := json.Marshal(struct {
-		Outbounds []string `json:"outbounds"`
-		ExpiresAt int64    `json:"expiresAt"`
-	}{tags, expiresAt})
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+"/proxies/auto/hikkari-preference", bytes.NewReader(raw))
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == 404 || resp.StatusCode == 405 {
-		return false, nil
-	}
-	if resp.StatusCode != 204 {
-		return true, fmt.Errorf("local capacity advice: HTTP %d", resp.StatusCode)
-	}
-	return true, nil
 }

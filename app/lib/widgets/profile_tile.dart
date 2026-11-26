@@ -34,7 +34,7 @@ class _ProfileTileState extends State<ProfileTile> {
   Future<void> _switchProfile() async {
     final s = context.read<AppState>();
     if (s.busy || widget.profile.countryUnavailable) return;
-    if (widget.profile.active && !s.autoMode) return;
+    if (widget.profile.active) return;
     await s.switchProfile(widget.profile.name);
     if (!mounted) return;
     final error = context.read<AppState>().lastError;
@@ -63,10 +63,7 @@ class _ProfileTileState extends State<ProfileTile> {
     final s = context.watch<AppState>();
     final unavailable = widget.profile.countryUnavailable;
     final selected =
-        s.displayedCountryProfile(
-          s.autoMode ? s.autoProfileName : s.activeProfileName,
-        ) ==
-        widget.profile.name;
+        s.displayedCountryProfile(s.activeProfileName) == widget.profile.name;
     final hist = s.uptime[widget.profile.name] ?? const <PingSample>[];
     final countryCode = s.countryCodeFor(widget.profile.name);
     final countryLoading = s.isCountryLoading(widget.profile.name);
@@ -84,7 +81,7 @@ class _ProfileTileState extends State<ProfileTile> {
               ? '${widget.profile.displayLabel} · страна недоступна'
               : widget.profile.displayLabel,
           capacity: widget.profile.capacity,
-          useProbeMetrics: widget.profile.autoEligible,
+          useProbeMetrics: widget.profile.hikkariSource,
           leading: (countryCode == null && !countryLoading)
               ? null
               : ProfileFlagBadge(

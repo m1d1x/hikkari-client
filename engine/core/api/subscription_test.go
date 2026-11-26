@@ -70,15 +70,11 @@ func TestDeleteLastProfileAndImportAgain(t *testing.T) {
 	if err := c.SwitchProfile(name); err != nil {
 		t.Fatal(err)
 	}
-	officialTestProfiles(t, c, name)
-	if err := c.SetAutoMode(true); err != nil {
-		t.Fatal(err)
-	}
 	if err := c.DeleteProfile(name); err != nil {
 		t.Fatal(err)
 	}
 	pf, err := c.profiles.Read()
-	if err != nil || len(pf.Profiles) != 0 || pf.Active != "" || pf.Auto {
+	if err != nil || len(pf.Profiles) != 0 || pf.Active != "" {
 		t.Fatal("last profile state was not cleared")
 	}
 	cfg, err := readBuiltConfig(c)

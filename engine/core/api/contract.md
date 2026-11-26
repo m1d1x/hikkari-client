@@ -66,7 +66,7 @@ idempotent. Repeating `Init` with the same data directory is idempotent; a diffe
 | `StopVPN`    | —    | `null` |
 | `RestartVPN` | —    | `null` |
 | `IsRunning`  | —    | `bool` |
-| `ValidateConfiguration` | — | validates stored profiles, automatic selection and routing against selected engine capabilities |
+| `ValidateConfiguration` | — | validates stored profiles and routing against selected engine capabilities |
 
 `IsRunning` reports liveness through the selected engine adapter. It does **not** mean the tunnel is actually carrying
 traffic — use `Health` for that.
@@ -184,7 +184,7 @@ Valid `category` values: `"domains"`, `"ips"`, `"processes"`, `"folders"` (path 
   "name":     "main",          // stable id
   "label":    "Основной",      // human-readable
   "active":   true,            // manually selected
-  "autoEligible": true,         // verified Hikkari source; never inferred from display metadata
+  "hikkariSource": true,        // from a hikkari.net subscription; never inferred from display metadata
   "endpoint": "1.2.3.4:51820", // "host:port" or ""
   "protocol": "AmneziaWG",     // pretty name ("AmneziaWG", "WireGuard", "-")
   "subscription": {             // omitted for individually imported profiles
@@ -224,7 +224,7 @@ servers are added and missing servers are removed only after a complete valid
 response. Other subscriptions and standalone imports are independent. A locally
 deleted server is remembered as hidden and does not return after synchronization.
 Removing the active server selects a remaining profile (preferably from the same
-source); no remaining profiles clears auto mode and stops the engine.
+source); no remaining profiles stops the engine.
 
 Empty, malformed, partially unsupported and failed HTTP responses preserve the
 last valid server list and metadata. Errors go to logs with links redacted.
@@ -240,20 +240,17 @@ hikkari's product freshness target is 5 minutes independently of that hint;
 server throttling/backoff still takes priority. The UI computes remaining days
 from expiry and remaining traffic as max(0, total - upload - download).
 
-`AutoMode` returns whether automatic selection is enabled. `SetAutoMode` takes
-`{"on":true|false}`. Enabling requires a saved HTTPS subscription source on
-hikkari.net or its subdomains. Its opaque ID is pinned in `autoSubscriptionId`:
-the selected profile's Hikkari subscription wins; otherwise the first available
-Hikkari source is used. Other subscriptions and standalone profiles never enter
-the auto candidate set. Old global flags narrow to one verified source, or become
-manual when none is available. Provider titles and website metadata grant no access.
-`ProfileInfo.autoEligible` exposes this decision without revealing source credentials.
-
-`SwitchProfile` exits auto mode transactionally before selecting the requested
-profile, including a click on the previously selected profile. A failed application
-keeps the previous selection and auto flag. Turning auto off keeps the currently
-routed profile when the adapter can report it. In auto mode, the UI highlights
-`CarryingProfile`, rather than the stored manual selection.
+`AutoTunnel` returns whether the «авто» button is on. `SetAutoTunnel` takes
+`{"on":true|false}`. On, a site whose connections stay silent on the direct path
+(a TLS hello out, nothing back for 5 s on two connections) goes through the
+tunnel by itself for 7 days (`core/autotunnel`). Off, only what the routing lists
+send to the VPN goes there: in the default mode a site that is not listed goes
+direct, even when its provider blocks it, and nothing is learned. The flag lives
+in `profiles.json` as `autoTunnel`; a file from before keeps the button as its
+old `auto` flag left it (the button used to pick the server within a Hikkari
+subscription, decision of 26.11). Enabling needs the `autoTunnel` capability.
+Profiles are always chosen by hand; a country of the cascade that dies is
+handled by the entry.
 
 `SwitchProfile` passes an opaque profile ID to the adapter. It uses live
 selection when supported, otherwise restarts the engine. Routing policy
@@ -261,7 +258,7 @@ stays shared across profiles.
 
 `DeleteProfile` allows deleting active and last profiles. Removing the active
 profile selects the first remaining one. Removing the last profile stops the
-VPN, clears the selection and auto mode, and leaves the profile list empty.
+VPN, clears the selection, and leaves the profile list empty.
 Starting a VPN with an empty profile list returns an actionable error.
 
 HTTP(S) imports send a random installation ID in `X-Hwid`, persisted as
@@ -500,7 +497,7 @@ backwards-compatible.
 ## Engine boundary
 
 `EngineInfo` returns `id`, `name`, and `capabilities`: `tun`, `domainRouting`,
-`ipRouting`, `processRouting`, `autoSelect`, `liveProfileSwitch`, `profileProbe`.
+`ipRouting`, `processRouting`, `autoTunnel`, `liveProfileSwitch`, `profileProbe`.
 Capabilities describe the selected standalone adapter on the current OS.
 An adapter must not depend on another engine to provide its advertised features.
 
@@ -534,7 +531,7 @@ with mode 0600. Profiles, rules, subscriptions, installation identity and histor
 remain client-owned.
 
 Manual selection uses the common restart fallback (`liveProfileSwitch=false`).
-Automatic selection uses native Xray observatory/leastPing. Per-profile HTTP(S)
+The auto tunnel is sing-box only (`autoTunnel=false`). Per-profile HTTP(S)
 probes use that profile's Xray SOCKS listener, independently of the active
 selection. Unsupported protocols or non-portable legacy parameters return
 errors. There is no fallback to another engine.
@@ -558,8 +555,7 @@ Verification on **macOS 26.3 (25D125), arm64**, Xray **26.10.21**:
 - The privileged fixture used only `198.18.0.0/15`, never changed DNS or the
   default route, removed its route, and checked the restored route/DNS state.
 - Xray-only loopback tests verify bypass/proxy modes, domain/IP rules, manual
-  profile changes, probes, native automatic selection with a failed server,
-  TCP and UDP. An import-graph test forbids cross-adapter dependencies.
+  profile changes, probes, TCP and UDP. An import-graph test forbids cross-adapter dependencies.
 
 The complete GUI connection through the installed platform host and its system
 DNS changes has not been exercised. Windows builds and live subscriptions remain

@@ -18,9 +18,6 @@ func TestDeleteActiveAndLastProfiles(t *testing.T) {
 	if err := s.SetActive(first); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetAutoMode(true); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.Delete(first); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +35,7 @@ func TestDeleteActiveAndLastProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pf.Profiles) != 0 || pf.Active != "" || pf.Auto {
+	if len(pf.Profiles) != 0 || pf.Active != "" {
 		t.Fatalf("last profile state not cleared: %+v", pf)
 	}
 	if err := s.Delete("missing"); err == nil {

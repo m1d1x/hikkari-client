@@ -11,7 +11,7 @@ import (
 // A connect ends the other client's tunnel first, says so to the UI, and
 // probes the direct path afresh: the cached one ran under that tunnel.
 func TestConnectStopsForeignVPNAndReselectsHost(t *testing.T) {
-	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}}
+	f := &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoTunnel: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}}
 	c := initAlternate(t, f)
 	if _, err := c.AddProfileFromURI("p-first"); err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestConnectStopsForeignVPNAndReselectsHost(t *testing.T) {
 
 // An injected engine leaves other clients alone.
 func TestInjectedEngineDoesNotStopForeignVPN(t *testing.T) {
-	c := initAlternate(t, &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}})
+	c := initAlternate(t, &alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoTunnel: true, LiveProfileSwitch: true, ProfileProbe: true, ProcessRouting: true, FolderRouting: true}})
 	if c.stopForeignVPN != nil {
 		t.Fatal("an injected engine got the service's foreign VPN stop")
 	}

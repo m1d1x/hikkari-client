@@ -18,10 +18,12 @@ type Logger interface {
 
 // Capabilities describe the selected standalone adapter on the current OS.
 type Capabilities struct {
-	TUN               bool `json:"tun"`
-	DomainRouting     bool `json:"domainRouting"`
-	IPRouting         bool `json:"ipRouting"`
-	AutoSelect        bool `json:"autoSelect"`
+	TUN           bool `json:"tun"`
+	DomainRouting bool `json:"domainRouting"`
+	IPRouting     bool `json:"ipRouting"`
+	// AutoTunnel: the adapter sees its direct connections and follows the
+	// auto tunnel's host list (DirectTraffic).
+	AutoTunnel        bool `json:"autoTunnel"`
 	LiveProfileSwitch bool `json:"liveProfileSwitch"`
 	ProfileProbe      bool `json:"profileProbe"`
 	ProcessRouting    bool `json:"processRouting"`
@@ -39,13 +41,11 @@ type Info struct {
 type Configuration struct {
 	Profiles      []profile.Profile
 	ActiveProfile string
-	AutoSelect    bool
-	// AutoProfiles limits automatic selection to these opaque profile IDs.
-	// Nil preserves the adapter-level default; application configurations set it explicitly.
-	AutoProfiles   []string
-	AutoPreference []string
-	Routing        routing.RoutingState
-	Host           HostNetwork
+	// AutoTunnel sends the sites that stay silent on the direct path through
+	// the tunnel (core/autotunnel); off, only the routing lists decide.
+	AutoTunnel bool
+	Routing    routing.RoutingState
+	Host       HostNetwork
 }
 
 // HostNetwork adapts the core's direct (bypass) path to the machine. The
@@ -169,22 +169,9 @@ type DirectTraffic interface {
 // without sending anything over the network. Adapters without such a view leave
 // the background checks to fall back on Delay.
 type RouteObserver interface {
-	// RoutedProfile is the profile auto mode currently sends new connections
-	// through. "" when auto mode is off or the engine is not answering.
-	RoutedProfile() string
 	// ReceivedBytes is the bytes received per open connection through a profile,
 	// keyed by connection ID.
 	ReceivedBytes(profileID string) (map[string]uint64, error)
-	// LastDelay is the engine's own last probe of a profile. known is false when
-	// the engine is not probing it itself.
-	LastDelay(profileID string) (ok bool, rttMs int, known bool)
-}
-
-// UDPRouteObserver is optional: the profile auto mode sends new UDP flows
-// through, when the engine keeps a group of its own for UDP. "" when there is
-// none or the engine is not answering.
-type UDPRouteObserver interface {
-	RoutedUDPProfile() string
 }
 
 // LegacyProfileSource is optional and used once when upgrading an install
@@ -197,9 +184,6 @@ type LegacyProfileSource interface {
 // An adapter must advertise only features supported by its own implementation
 // on the current OS. Unsupported policy never silently changes engines.
 func ValidateConfiguration(c Configuration, caps Capabilities) error {
-	if c.AutoSelect && !caps.AutoSelect {
-		return fmt.Errorf("движок не поддерживает автоматический выбор сервера")
-	}
 	if !c.Routing.Enabled {
 		return nil
 	}
@@ -233,10 +217,4 @@ type TrafficCounters struct {
 }
 type TrafficObserver interface {
 	TrafficCounters() (TrafficCounters, error)
-}
-
-// AutoPreferenceUpdater receives advisory ranking separately from configuration,
-// so new hub measurements cannot restart a healthy tunnel.
-type AutoPreferenceUpdater interface {
-	SetAutoPreference(profileIDs []string, expiresAt int64) error
 }

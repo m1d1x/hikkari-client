@@ -37,7 +37,7 @@ func initHotCore(t *testing.T) (*Core, *hotEngine) {
 	t.Helper()
 	t.Setenv("HIKKARI_PRESET_CATALOG_URL", "http://127.0.0.1:1")
 	t.Setenv("HIKKARI_PRESET_EVENTS_URL", "http://127.0.0.1:1")
-	f := &hotEngine{syncEngine: syncEngine{alternateEngine: alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoSelect: true, ProcessRouting: true, FolderRouting: true}}}}
+	f := &hotEngine{syncEngine: syncEngine{alternateEngine: alternateEngine{caps: engine.Capabilities{TUN: true, DomainRouting: true, IPRouting: true, AutoTunnel: true, ProcessRouting: true, FolderRouting: true}}}}
 	c := New()
 	if err := c.InitWithEngine(manualRoutingDir(t), func(string, engine.Logger) (engine.Backend, error) { return f, nil }); err != nil {
 		t.Fatal(err)

@@ -119,21 +119,6 @@ func TestApplyRouting_ProxyMode_PointsAtHeadAndFinalDirect(t *testing.T) {
 	}
 }
 
-func TestApplyRouting_HonoursAutoModeHead(t *testing.T) {
-	cfg := freshCfg()
-	state := RoutingState{
-		Enabled: true,
-		Mode:    ModeProxy,
-		Proxy:   RouteList{Domains: []string{"x.com"}},
-	}
-	ApplyRouting(cfg, state, AutoTag)
-	rules := rulesOf(cfg)
-	last := rules[len(rules)-1]
-	if ob, _ := last["outbound"].(string); ob != AutoTag {
-		t.Fatalf("rule outbound: got %q, want %q", ob, AutoTag)
-	}
-}
-
 func TestApplyRouting_Idempotent(t *testing.T) {
 	cfg := freshCfg()
 	state := RoutingState{
@@ -385,7 +370,7 @@ func TestAutoTunnelRulesComeBeforeTheAppsAndOnlyWhenDeclared(t *testing.T) {
 	dir := t.TempDir()
 	store := New(filepath.Join(dir, "config.json"))
 	cfg := DefaultConfig()
-	if err := store.attachAutoTunnel(cfg); err != nil {
+	if err := store.attachAutoTunnel(cfg, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(store.AutoTunnelPath()); err != nil {
@@ -513,7 +498,7 @@ func TestEgressProbeGoesThroughTheTunnelInEveryMode(t *testing.T) {
 		{Enabled: false, Mode: ModeProxy},
 	} {
 		cfg := freshCfg()
-		ApplyRouting(cfg, state, AutoTag)
+		ApplyRouting(cfg, state, SelectorTag)
 		rules := rulesOf(cfg)
 		probe := -1
 		for i, r := range rules {
@@ -526,7 +511,7 @@ func TestEgressProbeGoesThroughTheTunnelInEveryMode(t *testing.T) {
 			t.Fatalf("%s: no egress probe rule in %v", state.Mode, rules)
 		}
 		r := rules[probe]
-		if r["outbound"] != AutoTag || r["network"] != "tcp" {
+		if r["outbound"] != SelectorTag || r["network"] != "tcp" {
 			t.Fatalf("%s: probe rule %v", state.Mode, r)
 		}
 		hosts, _ := r["domain"].([]interface{})

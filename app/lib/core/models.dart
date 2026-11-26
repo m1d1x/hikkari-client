@@ -33,7 +33,7 @@ class HealthInfo {
 class ProfileInfo {
   final String country;
   final bool countryUnavailable;
-  final bool autoEligible;
+  final bool hikkariSource;
   final RelayCapacity? capacity;
   final String name;
   final String label;
@@ -57,14 +57,14 @@ class ProfileInfo {
     this.subscription,
     this.country = '',
     this.countryUnavailable = false,
-    this.autoEligible = false,
+    this.hikkariSource = false,
     this.capacity,
   });
 
   factory ProfileInfo.fromJson(Map<String, dynamic> j) => ProfileInfo(
     country: j['country'] as String? ?? '',
     countryUnavailable: j['countryUnavailable'] as bool? ?? false,
-    autoEligible: j['autoEligible'] as bool? ?? false,
+    hikkariSource: j['hikkariSource'] as bool? ?? false,
     capacity: j['capacity'] is Map<String, dynamic>
         ? RelayCapacity.fromJson(j['capacity'] as Map<String, dynamic>)
         : null,
@@ -394,7 +394,7 @@ class EngineInfo {
   final bool tun;
   final bool domainRouting;
   final bool ipRouting;
-  final bool autoSelect;
+  final bool autoTunnel;
   final bool liveProfileSwitch;
   final bool profileProbe;
   final bool processRouting;
@@ -404,7 +404,7 @@ class EngineInfo {
     required this.tun,
     required this.domainRouting,
     required this.ipRouting,
-    required this.autoSelect,
+    required this.autoTunnel,
     required this.liveProfileSwitch,
     required this.profileProbe,
     required this.processRouting,
@@ -417,7 +417,7 @@ class EngineInfo {
       tun: caps['tun'] as bool? ?? false,
       domainRouting: caps['domainRouting'] as bool? ?? false,
       ipRouting: caps['ipRouting'] as bool? ?? false,
-      autoSelect: caps['autoSelect'] as bool? ?? false,
+      autoTunnel: caps['autoTunnel'] as bool? ?? false,
       liveProfileSwitch: caps['liveProfileSwitch'] as bool? ?? false,
       profileProbe: caps['profileProbe'] as bool? ?? false,
       processRouting: caps['processRouting'] as bool? ?? false,

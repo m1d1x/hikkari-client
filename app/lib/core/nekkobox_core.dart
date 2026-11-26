@@ -274,16 +274,13 @@ abstract class NekkoboxCore {
       (await _callAsync('ProfileCountries') as Map<String, dynamic>)
           .cast<String, String>();
 
-  /// Whether auto-fastest mode (urltest group) is on.
-  Future<bool> autoMode() async => await _callAsync('AutoMode') as bool;
+  /// Whether the «авто» button is on: sites silent on the direct path go
+  /// through the tunnel by themselves.
+  Future<bool> autoTunnel() async => await _callAsync('AutoTunnel') as bool;
 
-  /// Toggles auto-fastest mode. Reloads the engine if it was running.
-  Future<void> setAutoMode(bool on) => _callAsync('SetAutoMode', {'on': on});
-
-  /// The profile traffic goes through: in auto mode the core's own choice.
-  /// Empty while the engine is off.
-  Future<String> carryingProfile() async =>
-      await _callAsync('CarryingProfile') as String? ?? '';
+  /// The «авто» button. Reloads the engine if it was running.
+  Future<void> setAutoTunnel(bool on) =>
+      _callAsync('SetAutoTunnel', {'on': on});
 
   // ----- uptime -----
 
@@ -374,9 +371,8 @@ abstract class NekkoboxCore {
 }
 
 List<DiscoveredApp> _decodeApps(String raw) {
-  final data = Envelope.fromJson(
-    jsonDecode(raw) as Map<String, dynamic>,
-  ).unwrap();
+  final data = Envelope.fromJson(jsonDecode(raw) as Map<String, dynamic>)
+      .unwrap();
   if (data == null) return [];
   return (data as List)
       .cast<Map<String, dynamic>>()

@@ -72,14 +72,13 @@ type compiled struct {
 	specs   []configfile.ProfileSpec
 	labels  map[string]string // tag -> profile label
 	names   map[string]string // tag -> profile name
-	auto    bool
 	rebuild func(specs []configfile.ProfileSpec, active string) error
 }
 
 // admit checks the written config with the core and leaves out every profile
 // the core refuses, until the core takes the config. The active profile is not
-// left out unless the selection is automatic: the user asked for that server,
-// and starting another one would hide why it does not work.
+// left out: the user asked for that server, and starting another one would
+// hide why it does not work.
 func (b *Backend) admit(ctx context.Context) error {
 	// Kept until the next start: a profile switch rewrites the config with every
 	// profile, but the running core still lacks the ones left out.
@@ -107,7 +106,7 @@ func (b *Backend) admit(ctx context.Context) error {
 		refusal := fmt.Errorf("профиль «%s» не принят ядром: %s", label, rejected.detail)
 		b.log.Logf("sing-box: profile %s left out, the core refused it: %s", tag, rejected.detail)
 		b.rejected[b.compiled.names[tag]] = refusal
-		if tag == b.active && !b.compiled.auto {
+		if tag == b.active {
 			return refusal
 		}
 		kept := make([]configfile.ProfileSpec, 0, len(b.compiled.specs)-1)

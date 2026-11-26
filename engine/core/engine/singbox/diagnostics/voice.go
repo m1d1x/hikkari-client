@@ -159,7 +159,7 @@ func (r *Runner) voiceLines(ctx context.Context, ifaces []physIface) []string {
 }
 
 // voiceProfile names the profile the tunnel runs on now: the selector's choice,
-// followed through groups (an auto group's own choice), with its protocol.
+// followed through groups, with its protocol.
 func (r *Runner) voiceProfile() (tag, proto string) {
 	var px struct {
 		Proxies map[string]struct {

@@ -18,27 +18,11 @@ func (c *Core) routeObserver() engine.RouteObserver {
 	return observer
 }
 
-// carryingProfile is the profile traffic actually goes through. In auto mode that
-// is the core's choice rather than the stored selection. "" while the engine is
-// off. The answer comes from watchRoute, not from a call of its own: the UI asks
-// for it on every poll.
-func (c *Core) carryingProfile() string {
-	c.routedMu.RLock()
-	defer c.routedMu.RUnlock()
-	return c.routed
-}
-
-// resolveCarryingProfile asks the engine directly.
+// resolveCarryingProfile is the profile traffic goes through, "" while the
+// engine is off.
 func (c *Core) resolveCarryingProfile() string {
 	if !c.backend.IsRunning() {
 		return ""
-	}
-	if auto, err := c.profiles.AutoMode(); err == nil && auto {
-		if observer := c.routeObserver(); observer != nil {
-			if routed := observer.RoutedProfile(); routed != "" {
-				return routed
-			}
-		}
 	}
 	return c.activeProfileProvider()
 }
@@ -48,46 +32,19 @@ func (c *Core) resolveCarryingProfile() string {
 func (c *Core) watchRoute(ctx context.Context) {
 	ticker := time.NewTicker(routeWatchInterval)
 	defer ticker.Stop()
+	previous := ""
 	for {
 		current := c.resolveCarryingProfile()
-		if current != "" {
-			c.updateAutoPreference()
-		}
-		c.routedMu.Lock()
-		previous := c.routed
-		c.routed = current
-		c.routedMu.Unlock()
 		if current != previous {
-			if previous != "" && current != "" {
-				c.logger.Logf("[route] auto moved %q -> %q", previous, current)
-			}
+			previous = current
 			c.health.RecheckEgress()
 			c.uptime.Nudge()
 		}
-		c.watchUDPRoute()
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
-	}
-}
-
-// watchUDPRoute logs the moves of auto mode's UDP group, which carries calls
-// apart from the TCP group; only the log follows it.
-func (c *Core) watchUDPRoute() {
-	current := ""
-	if observer, ok := c.backend.(engine.UDPRouteObserver); ok && c.backend.IsRunning() {
-		if auto, err := c.profiles.AutoMode(); err == nil && auto {
-			current = observer.RoutedUDPProfile()
-		}
-	}
-	c.routedMu.Lock()
-	previous := c.routedUDP
-	c.routedUDP = current
-	c.routedMu.Unlock()
-	if current != previous && previous != "" && current != "" {
-		c.logger.Logf("[route] auto-udp moved %q -> %q", previous, current)
 	}
 }
 
@@ -113,23 +70,4 @@ type uptimeObserverAdapter struct{ engine.RouteObserver }
 
 func (a uptimeObserverAdapter) Received(profileID string) (map[string]uint64, error) {
 	return a.ReceivedBytes(profileID)
-}
-
-func (a uptimeObserverAdapter) OwnProbe(profileID string) (bool, int, bool) {
-	return a.LastDelay(profileID)
-}
-
-func (c *Core) updateAutoPreference() {
-	updater, ok := c.backend.(engine.AutoPreferenceUpdater)
-	if !ok {
-		return
-	}
-	snapshot, err := c.profiles.Read()
-	if err != nil || !snapshot.Auto {
-		return
-	}
-	// No external request: this only passes cached hub advice to the local core.
-	if err := updater.SetAutoPreference(snapshot.AutoPreference(), snapshot.AutoPreferenceExpires()); err != nil {
-		c.logger.Logf("[route] capacity advice not applied: %v", err)
-	}
 }

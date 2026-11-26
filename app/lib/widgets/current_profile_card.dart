@@ -30,10 +30,7 @@ class _CurrentProfileCardState extends State<CurrentProfileCard> {
     final profiles = s.profiles;
     if (profiles.isEmpty) return const SizedBox.shrink();
 
-    // In auto mode the stored selection is not what traffic goes through.
-    final displayed = s.displayedCountryProfile(
-      s.autoProfileName ?? s.activeProfileName,
-    );
+    final displayed = s.displayedCountryProfile(s.activeProfileName);
     ProfileInfo? active;
     for (final p in profiles) {
       if (p.name == displayed) {
@@ -58,7 +55,7 @@ class _CurrentProfileCardState extends State<CurrentProfileCard> {
           title: label.toLowerCase(),
           samples: hist,
           capacity: active?.capacity,
-          useProbeMetrics: active?.autoEligible ?? false,
+          useProbeMetrics: active?.hikkariSource ?? false,
           selected: active != null,
           forceChecking: s.isWarmingUp,
           onTap: s.busy ? null : () => ProfilesSheet.show(context),

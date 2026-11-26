@@ -113,9 +113,7 @@ class _ProfilesSheetState extends State<ProfilesSheet>
     //   3  dead
     // Inside each tier we sub-sort by recent rtt so the fastest survives
     // at the top.
-    final displayed = s.displayedCountryProfile(
-      s.autoMode ? s.autoProfileName : active,
-    );
+    final displayed = s.displayedCountryProfile(active);
     (int, int) qualityKey(ProfileInfo p) {
       if (p.name == displayed) return (0, 0);
       if (p.countryUnavailable) return (4, 0);
@@ -372,21 +370,22 @@ class _ProfilesSheetState extends State<ProfilesSheet>
     );
   }
 
-  // Auto mode owns routing until a manual profile selection disables it.
+  // «авто» is the auto tunnel: a site that does not open directly goes
+  // through the VPN by itself. Off, only what the lists send goes there.
   Widget _autoChip(NekkoTokens t, AppState s) {
-    final on = s.autoMode;
-    final eligible = s.profiles.any((p) => p.autoEligible);
+    final on = s.autoTunnel;
+    final eligible = s.profiles.isNotEmpty;
     return Tooltip(
       message: on
-          ? 'Выбор сервера вручную выключит авто'
-          : eligible
-          ? 'Автовыбор внутри подписки hikkari'
-          : 'Доступно с подпиской hikkari',
+          ? 'сайты, которые не открываются напрямую, сами идут через vpn'
+          : 'через vpn идёт только то, что в списке',
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(t.radius),
         child: InkWell(
-          onTap: s.busy || (!on && !eligible) ? null : () => s.setAutoMode(!on),
+          onTap: s.busy || (!on && !eligible)
+              ? null
+              : () => s.setAutoTunnel(!on),
           borderRadius: BorderRadius.circular(t.radius),
           mouseCursor: SystemMouseCursors.click,
           hoverColor: t.primary.withValues(alpha: 0.10),

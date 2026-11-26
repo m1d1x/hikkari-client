@@ -41,11 +41,11 @@ func finka() profile.Profile {
 	}}
 }
 
-func admitBackend(t *testing.T, check configChecker, active string, auto bool) (*Backend, *recordLog) {
+func admitBackend(t *testing.T, check configChecker, active string) (*Backend, *recordLog) {
 	t.Helper()
 	log := &recordLog{}
 	b := &Backend{config: configfile.New(filepath.Join(t.TempDir(), "config.json")), log: log, check: check}
-	err := b.Configure(engine.Configuration{Profiles: []profile.Profile{brokenAwg(), finka()}, ActiveProfile: active, AutoSelect: auto, Routing: routing.DefaultRoutingState()})
+	err := b.Configure(engine.Configuration{Profiles: []profile.Profile{brokenAwg(), finka()}, ActiveProfile: active, Routing: routing.DefaultRoutingState()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestRefusedProfileIsLeftOutAndTheRestStart(t *testing.T) {
 		}
 		return nil
 	}
-	b, _ := admitBackend(t, check, "finka", false)
+	b, _ := admitBackend(t, check, "finka")
 	if err := b.admit(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -111,27 +111,10 @@ func TestRefusedProfileIsLeftOutAndTheRestStart(t *testing.T) {
 // The user asked for this server: starting another one instead would hide why
 // it does not work.
 func TestRefusedActiveProfileFailsTheStartWithTheCoresReason(t *testing.T) {
-	b, _ := admitBackend(t, refusesEndpoint0, "amnezia", false)
+	b, _ := admitBackend(t, refusesEndpoint0, "amnezia")
 	err := b.admit(context.Background())
 	if err == nil || err.Error() != `профиль «Amnezia Premium» не принят ядром: endpoints[0].unknown: json: unknown field "unknown"` {
 		t.Fatalf("start: %v", err)
-	}
-}
-
-// Automatic selection has no server the user asked for: the rest start.
-func TestRefusedActiveProfileIsLeftOutUnderAutoSelect(t *testing.T) {
-	check := func(ctx context.Context, path string) error {
-		if endpoints, _ := writtenAt(t, path); contains(endpoints, "p-amnezia") {
-			return refusesEndpoint0(ctx, path)
-		}
-		return nil
-	}
-	b, _ := admitBackend(t, check, "amnezia", true)
-	if err := b.admit(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if b.active != "p-finka" {
-		t.Fatalf("active %q", b.active)
 	}
 }
 
@@ -140,7 +123,7 @@ func TestRefusalOfNoProfileIsReported(t *testing.T) {
 	check := func(context.Context, string) error {
 		return &rejectedConfig{detail: `dns.servers[0].x: json: unknown field "x"`}
 	}
-	b, _ := admitBackend(t, check, "finka", false)
+	b, _ := admitBackend(t, check, "finka")
 	err := b.admit(context.Background())
 	if err == nil || err.Error() != `ядро не приняло конфиг: dns.servers[0].x: json: unknown field "x"` {
 		t.Fatalf("start: %v", err)
@@ -154,7 +137,7 @@ func TestRefusalOfNoProfileIsReported(t *testing.T) {
 // other one is what the core then takes.
 func TestRealCoreRefusalLeavesOnlyTheBrokenProfileOut(t *testing.T) {
 	core := realCore(t)
-	b, log := admitBackend(t, checkWithCore(core), "finka", false)
+	b, log := admitBackend(t, checkWithCore(core), "finka")
 	if err := b.admit(context.Background()); err != nil {
 		t.Fatalf("%v\n%v", err, log.lines)
 	}

@@ -20,7 +20,7 @@ func compiled(t *testing.T, link string) map[string]interface{} {
 	}
 	ps[0].Name = "server"
 	cfg, err := xray.CompileVPN(engine.Configuration{
-		Profiles: ps, ActiveProfile: "server", AutoSelect: true, Routing: routing.DefaultRoutingState(),
+		Profiles: ps, ActiveProfile: "server", Routing: routing.DefaultRoutingState(),
 	}, map[string]int{"server": 20808})
 	if err != nil {
 		t.Fatal(err)

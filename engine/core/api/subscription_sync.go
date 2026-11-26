@@ -110,7 +110,7 @@ func ensureSubscription(pf *profile.File, sourceURL string, drafts []profile.Pro
 
 // Runtime equality ignores presentation/provider metadata and list order.
 func sameProfileRuntime(a, b *profile.File) bool {
-	if a.Active != b.Active || a.Auto != b.Auto || !reflect.DeepEqual(a.AutoProfiles(), b.AutoProfiles()) || len(a.Profiles) != len(b.Profiles) {
+	if a.Active != b.Active || a.AutoTunnel != b.AutoTunnel || len(a.Profiles) != len(b.Profiles) {
 		return false
 	}
 	specs := func(pf *profile.File) map[string]interface{} {
@@ -145,7 +145,7 @@ func (c *Core) commitProfiles(ctx context.Context, before, after *profile.File) 
 		return err
 	}
 	configuration := func(pf *profile.File) engine.Configuration {
-		return engine.Configuration{Profiles: pf.Profiles, ActiveProfile: pf.Active, AutoSelect: pf.Auto, AutoProfiles: pf.AutoProfiles(), AutoPreference: pf.AutoPreference(), Routing: policy}
+		return engineConfiguration(pf, policy)
 	}
 	next, old := configuration(after), configuration(before)
 	if err := engine.ValidateConfiguration(next, c.backend.Info().Capabilities); err != nil {
@@ -295,7 +295,7 @@ func (c *Core) syncSubscriptions(ctx context.Context, urgent, broken bool) bool 
 			return handledBroken
 		}
 		now := time.Now().Unix()
-		accelerated := urgent || (broken && (pf.Auto || source.ID == activeSource))
+		accelerated := urgent || (broken && source.ID == activeSource)
 		if !subscriptionRefreshDue(source, now, c.health.Probe().TunnelOK, accelerated) {
 			continue
 		}
@@ -313,7 +313,7 @@ func (c *Core) syncSubscriptions(ctx context.Context, urgent, broken bool) bool 
 			// Outside operationMu: the preset commit takes it itself.
 			c.adoptTesterFlag(source.URL, imported.Metadata)
 		}
-		if broken && (pf.Auto || source.ID == activeSource) {
+		if broken && source.ID == activeSource {
 			handledBroken = true
 		}
 	}
