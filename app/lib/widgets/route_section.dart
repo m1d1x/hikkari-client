@@ -8,8 +8,10 @@ import '../core/models.dart';
 import '../state/app_state.dart';
 import '../theme/tokens.dart';
 import '../ui/nekko_animated_height.dart';
+import '../ui/nekko_context_menu.dart';
 import '../ui/nekko_dialog.dart';
 import '../ui/nekko_segmented.dart';
+import '../ui/nekko_switch.dart';
 import '../ui/nekko_text_field.dart';
 import '../ui/nekko_toast.dart';
 import 'app_picker_dialog.dart';
@@ -357,6 +359,10 @@ class _RouteSectionState extends State<RouteSection>
 
   Future<void> _remove(String v) async {
     await context.read<AppState>().removeRule(_tab, v);
+  }
+
+  Future<void> _setOn(String v, bool on) async {
+    await context.read<AppState>().setRuleEnabled(_tab, v, on);
   }
 
   Future<void> _pickApp() async {
@@ -835,7 +841,13 @@ class _RouteSectionState extends State<RouteSection>
               ),
             for (var i = 0; i < items.length; i++) ...[
               if (i > 0) Divider(height: 1, thickness: 1, color: t.border),
-              _ItemRow(value: items[i], onRemove: () => _remove(items[i])),
+              _ItemRow(
+                key: ValueKey('manual_rule_${items[i]}'),
+                value: items[i],
+                on: !s.routing.active.isOff(_tab, items[i]),
+                onChanged: (on) => _setOn(items[i], on),
+                onRemove: () => _remove(items[i]),
+              ),
             ],
           ],
         ),
@@ -1073,11 +1085,7 @@ class _ModeFlipButtonState extends State<_ModeFlipButton> {
                           // a detail, not the state itself.
                           duration: AppDurations.normal,
                           curve: Curves.easeInOutCubic,
-                          child: Icon(
-                            Icons.swap_horiz,
-                            size: 16,
-                            color: color,
-                          ),
+                          child: Icon(Icons.swap_horiz, size: 16, color: color),
                         ),
                       ],
                     );
@@ -1171,7 +1179,10 @@ class _ModeFlipWordState extends State<_ModeFlipWord>
           children: [
             for (var i = 0; i < _ModeFlipWord._words.length; i++)
               Transform.translate(
-                offset: Offset((i - _reel.value) * slot * _ModeFlipWord.travel, 0),
+                offset: Offset(
+                  (i - _reel.value) * slot * _ModeFlipWord.travel,
+                  0,
+                ),
                 child: ExcludeSemantics(
                   excluding: (i - _reel.value).abs() > .01,
                   child: Text(
@@ -1348,54 +1359,64 @@ class _AddButtonState extends State<_AddButton> {
   }
 }
 
-class _ItemRow extends StatefulWidget {
+/// One manual rule: the switch turns it off and back on without losing it,
+/// removal sits in the row's context menu (right click, long press).
+class _ItemRow extends StatelessWidget {
   final String value;
+  final bool on;
+  final ValueChanged<bool> onChanged;
   final VoidCallback onRemove;
-  const _ItemRow({required this.value, required this.onRemove});
+  const _ItemRow({
+    super.key,
+    required this.value,
+    required this.on,
+    required this.onChanged,
+    required this.onRemove,
+  });
 
-  @override
-  State<_ItemRow> createState() => _ItemRowState();
-}
-
-class _ItemRowState extends State<_ItemRow> {
-  bool _removeHovered = false;
+  void _menu(BuildContext context, Offset at) {
+    NekkoContextMenu.show(context, at, [
+      NekkoMenuItem(label: 'удалить', destructive: true, onTap: onRemove),
+    ]);
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              widget.value,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: t.text,
-                fontFamily: t.monoFamily,
-                fontSize: 13,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (d) => _menu(context, d.globalPosition),
+      onLongPressStart: (d) => _menu(context, d.globalPosition),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: AnimatedDefaultTextStyle(
+                duration: AppDurations.fast,
+                curve: AppCurves.fastInSlowOut,
+                style: TextStyle(
+                  color: on ? t.text : t.textFaint,
+                  fontFamily: t.monoFamily,
+                  fontSize: 13,
+                ),
+                child: Text(value, overflow: TextOverflow.ellipsis),
               ),
             ),
-          ),
-          IconButton(
-            onPressed: widget.onRemove,
-            onHover: (hovered) => setState(() => _removeHovered = hovered),
-            icon: AnimatedContainer(
-              duration: AppDurations.fast,
-              curve: AppCurves.fastInSlowOut,
-              child: Icon(
-                Icons.close,
-                size: 16,
-                color: _removeHovered ? t.text : t.textMuted,
+            const SizedBox(width: 12),
+            // The row keeps the height the close button gave it.
+            SizedBox(
+              height: 28,
+              child: Center(
+                child: NekkoSwitch(
+                  dense: true,
+                  value: on,
+                  onChanged: onChanged,
+                ),
               ),
             ),
-            highlightColor: Colors.transparent,
-            splashColor: Colors.transparent,
-            hoverColor: Colors.transparent,
-            visualDensity: VisualDensity.compact,
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

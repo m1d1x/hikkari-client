@@ -395,6 +395,16 @@ func (c *Core) RemoveRule(mode, category, value string) error {
 	})
 }
 
+// SetRuleEnabled switches a manual rule off or back on; the rule stays in
+// the list either way.
+func (c *Core) SetRuleEnabled(mode, category, value string, on bool) error {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	return c.changeManualRouting(func(state *routing.RoutingState) error {
+		return state.SetRuleOn(RoutingMode(mode), category, value, on)
+	})
+}
+
 // ============================================================
 //  Profiles
 // ============================================================

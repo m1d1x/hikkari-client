@@ -167,8 +167,9 @@ class AppState extends ChangeNotifier {
       } catch (e) {
         validationError = 'Движок $id не поддерживает текущую политику: $e';
       }
-      await File('$_baseDir/engine-selection.json')
-          .writeAsString(jsonEncode({'engineId': id}));
+      await File(
+        '$_baseDir/engine-selection.json',
+      ).writeAsString(jsonEncode({'engineId': id}));
       await start();
       if (validationError != null) _lastError = validationError;
     } catch (e) {
@@ -904,8 +905,9 @@ class AppState extends ChangeNotifier {
   /// The engine log's own stamp, "2006/01/02 15:04:05.000000", in local
   /// time; null for a line without one.
   static DateTime? _logLineTime(String line) {
-    final m = RegExp(r'^(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2}):(\d{2})')
-        .firstMatch(line);
+    final m = RegExp(
+      r'^(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2}):(\d{2})',
+    ).firstMatch(line);
     if (m == null) return null;
     final p = [for (var i = 1; i <= 6; i++) int.parse(m.group(i)!)];
     return DateTime(p[0], p[1], p[2], p[3], p[4], p[5]);
@@ -1148,6 +1150,14 @@ class AppState extends ChangeNotifier {
   Future<void> removeRule(String category, String value) {
     final mode = _routing.mode;
     return _routingCommand(() => _core.removeRule(mode, category, value));
+  }
+
+  /// Switches a manual rule off or back on; it stays in the list either way.
+  Future<void> setRuleEnabled(String category, String value, bool on) {
+    final mode = _routing.mode;
+    return _routingCommand(
+      () => _core.setRuleEnabled(mode, category, value, on),
+    );
   }
 
   Future<void> setRoutingEnabled(bool on) =>

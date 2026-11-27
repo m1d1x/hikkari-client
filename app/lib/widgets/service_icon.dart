@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:simple_icons/simple_icons.dart';
 
+import '../theme/tokens.dart';
 import 'brand_icons.dart';
 
 export 'brand_icons.dart' show resolveBrandSvg;
@@ -67,8 +68,7 @@ export 'brand_icons.dart' show resolveBrandSvg;
   // Rows that are a category rather than one brand: no logo to show, so the
   // pictogram says what the group is instead of the generic «apps» grid.
   'news' => (Icons.newspaper_outlined, const Color(0xFF8A8F98)),
-  'privacy' ||
-  'tor' => (Icons.shield_outlined, const Color(0xFF7D4CDB)),
+  'privacy' || 'tor' => (Icons.shield_outlined, const Color(0xFF7D4CDB)),
   'vk' => (SimpleIcons.vk, const Color(0xFF0077FF)),
   'vk-video' ||
   'vkvideo' => (Icons.video_collection_outlined, const Color(0xFF0077FF)),
@@ -156,6 +156,9 @@ String _normalizeIconId(String raw) {
   };
 }
 
+/// Catalog icon id of the adult-sites group, drawn as an «18+» plate.
+const adultIconId = 'adult';
+
 /// Unified "service icon" badge: a rounded, brand-tinted container with the
 /// authentic corporate brand asset centered inside.
 ///
@@ -198,6 +201,33 @@ class ServiceIconBadge extends StatelessWidget {
 
     if (id != null) {
       final normalized = _normalizeIconId(id);
+      // Adult sites get no brand mark: the row says what it is, the list does
+      // not wear anyone's logo, and nothing is fetched from those sites.
+      if (normalized == adultIconId) {
+        return Container(
+          width: size,
+          height: size,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(size * 8 / 30),
+          ),
+          child: Text(
+            '18+',
+            maxLines: 1,
+            style: TextStyle(
+              color: color,
+              fontFamily: Theme.of(
+                context,
+              ).extension<NekkoTokens>()?.monoFamily,
+              fontSize: size * 11 / 30,
+              fontWeight: FontWeight.w700,
+              height: 1,
+              letterSpacing: -0.3,
+            ),
+          ),
+        );
+      }
       return ClipRRect(
         borderRadius: BorderRadius.circular(size * 8 / 30),
         child: Container(

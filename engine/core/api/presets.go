@@ -46,6 +46,7 @@ func (c *Core) configureRouting(policy routing.RoutingState) error {
 }
 
 func (c *Core) effectiveRouting(policy routing.RoutingState) (routing.RoutingState, error) {
+	policy = policy.Active()
 	if c.presets != nil {
 		s := c.presetState
 		return presets.Effective(policy, s.Catalog, s.Choices)
