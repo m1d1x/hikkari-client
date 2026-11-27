@@ -107,10 +107,26 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 	// addresses: ahead of every list, the user's included (torrents.go), no
 	// mode sends them through our exit.
 	userRules = append(userRules, torrentRules()...)
+	// Proxy mode with a profile: the lists go through the tunnel and
+	// everything else goes direct, where it must see the network exactly as
+	// without the VPN (UDP 443 and real DNS answers included).
+	tunnelled := state.Enabled && ruleOutbound != "" && ruleOutbound != "direct" && finalTag == "direct"
 	if state.Enabled && ruleOutbound != "" {
 		appendRule := func(key string, vals []string) {
 			if len(vals) == 0 {
 				return
+			}
+			// Through the tunnel QUIC is refused, the app retries over TCP:
+			// each tunnelled list carries its own reject, the way the
+			// autotunnel and Secure DNS rules do, so the global one below
+			// never has to catch what goes direct.
+			if tunnelled {
+				userRules = append(userRules, map[string]interface{}{
+					key:       toAnySlice(vals),
+					"network": "udp",
+					"port":    []interface{}{443},
+					"action":  "reject",
+				})
 			}
 			userRules = append(userRules, map[string]interface{}{
 				key:        toAnySlice(vals),
@@ -135,18 +151,29 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 	if state.Enabled && ruleOutbound != "" && finalTag == "direct" {
 		userRules = append(userRules, escapeDirectRules(route, head)...)
 	}
+	// What is left in proxy mode goes direct, UDP 443 too: the final
+	// outbound would be direct anyway, but the global QUIC reject sits in
+	// between. Before this a game nobody listed lost all UDP 443 in the
+	// default mode (dima-002, Helldivers 2, 27.11). A port list, so
+	// isQUICReject does not mistake it for the reject.
+	if finalTag == "direct" {
+		userRules = append(userRules, map[string]interface{}{
+			"network":  "udp",
+			"port":     []interface{}{443},
+			"outbound": "direct",
+		})
+	}
 
-	// Direct rules go ahead of the QUIC reject: an app the user sent direct
-	// must see the network exactly as without the VPN. Behind the reject a
-	// bypassed game still lost all UDP 443 — EOS / PlayFab traffic among it.
-	// With the tunnel as the default every compiled rule is a direct one.
+	// Our rules go ahead of the QUIC reject: an app the user sent direct must
+	// see the network exactly as without the VPN. Behind the reject a bypassed
+	// game still lost all UDP 443 — EOS / PlayFab traffic among it. Tunnelled
+	// lists carry their own reject; with the tunnel as the default, the global
+	// one catches what falls to it.
 	insertAt := len(preserved)
-	if finalTag != "direct" {
-		for i, r := range preserved {
-			if m, ok := r.(map[string]interface{}); ok && isQUICReject(m) {
-				insertAt = i
-				break
-			}
+	for i, r := range preserved {
+		if m, ok := r.(map[string]interface{}); ok && isQUICReject(m) {
+			insertAt = i
+			break
 		}
 	}
 	out := make([]interface{}, 0, len(preserved)+len(userRules))
@@ -162,6 +189,101 @@ func ApplyRouting(cfg map[string]interface{}, state RoutingState, head string) {
 		bypass = list
 	}
 	applyBypassDNS(cfg, bypass)
+	_, autoTunnel := route["rule_set"]
+	applyProxyModeDNS(cfg, tunnelled, list.Domains, autoTunnel)
+}
+
+// applyProxyModeDNS gives fake addresses only to the names that go through the
+// tunnel in proxy mode — the list's domains, the sites autotunnel moved there,
+// browsers' Secure DNS — and real answers to the rest, which goes direct. A
+// fake 198.18.x.x address there broke games: a QoS beacon or a peer address
+// the game resolved came back as a fake one (dima-002, Helldivers 2, 27.11),
+// which is what applyBypassDNS already fixes for the bypass list. Apps sent
+// through by process alone resolve through the system and get real answers;
+// their names still reach the exit, the sniffed SNI routes them.
+//
+// The rules sit right before the catch-all fake rule of canonicalDNS, after
+// the empty answer for non-A/AAAA queries and realAddressRule, and are dropped
+// and re-added on every compile; with on=false (any other mode) only dropped.
+func applyProxyModeDNS(cfg map[string]interface{}, on bool, domains []string, autoTunnel bool) {
+	dns, _ := cfg["dns"].(map[string]interface{})
+	if dns == nil {
+		return
+	}
+	rules, _ := dns["rules"].([]interface{})
+	if !on {
+		kept := make([]interface{}, 0, len(rules))
+		for _, r := range rules {
+			if m, ok := r.(map[string]interface{}); ok && isProxyModeDNSRule(m) {
+				continue
+			}
+			kept = append(kept, r)
+		}
+		dns["rules"] = kept
+		return
+	}
+	ours := []interface{}{map[string]interface{}{
+		"domain_suffix": toAnySlice(secureDNSDomains),
+		"server":        "fakeip-dns",
+	}}
+	if len(domains) > 0 {
+		ours = append(ours, map[string]interface{}{
+			"domain_suffix": toAnySlice(domains),
+			"server":        "fakeip-dns",
+		})
+	}
+	if autoTunnel {
+		ours = append(ours, map[string]interface{}{
+			"rule_set": []interface{}{AutoTunnelTag},
+			"server":   "fakeip-dns",
+		})
+	}
+	ours = append(ours, map[string]interface{}{
+		"inbound": []interface{}{"tun-in"},
+		"server":  "dns-direct",
+	})
+	kept := make([]interface{}, 0, len(rules)+len(ours))
+	placed := false
+	for _, r := range rules {
+		m, ok := r.(map[string]interface{})
+		if ok && isProxyModeDNSRule(m) {
+			continue
+		}
+		if ok && !placed && isFakeIPCatchAll(m) {
+			kept = append(kept, ours...)
+			placed = true
+		}
+		kept = append(kept, r)
+	}
+	if !placed {
+		kept = append(kept, ours...)
+	}
+	dns["rules"] = kept
+}
+
+// isFakeIPCatchAll is canonicalDNS's last rule: every TUN query to fakeip.
+func isFakeIPCatchAll(m map[string]interface{}) bool {
+	if m["server"] != "fakeip-dns" || len(m) != 2 {
+		return false
+	}
+	_, has := m["inbound"]
+	return has
+}
+
+// isProxyModeDNSRule recognises the rules applyProxyModeDNS owns: a named
+// fakeip rule (canonicalDNS's own fakeip rule names no domain or rule set) and
+// the TUN catch-all to dns-direct.
+func isProxyModeDNSRule(m map[string]interface{}) bool {
+	switch m["server"] {
+	case "fakeip-dns":
+		_, suffix := m["domain_suffix"]
+		_, set := m["rule_set"]
+		return suffix || set
+	case "dns-direct":
+		_, in := m["inbound"]
+		return in && len(m) == 2
+	}
+	return false
 }
 
 // ruZoneRules send the Russian internet direct (core/ruzone): our exits refuse

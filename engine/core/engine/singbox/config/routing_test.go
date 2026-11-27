@@ -110,10 +110,15 @@ func TestApplyRouting_ProxyMode_PointsAtHeadAndFinalDirect(t *testing.T) {
 		t.Fatalf("final: got %q, want %q", finalTag(cfg), "direct")
 	}
 	rules := rulesOf(cfg)
-	if len(rules) != 11 { // prelude + icmp + voice probe + egress probe + 3 for torrents + 1 ours + Russian zone + 2 for Secure DNS
-		t.Fatalf("rules: got %d, want 11", len(rules))
+	// prelude + icmp + voice probe + egress probe + 3 for torrents + the list's QUIC reject and route
+	// + Russian zone + 2 for Secure DNS + UDP 443 direct
+	if len(rules) != 13 {
+		t.Fatalf("rules: got %d, want 13", len(rules))
 	}
-	last := rules[7]
+	if !isListQUICReject(rules[7], "domain_suffix") {
+		t.Fatalf("rule 7: want the list's own QUIC reject, got %v", rules[7])
+	}
+	last := rules[8]
 	if ob, _ := last["outbound"].(string); ob != SelectorTag {
 		t.Fatalf("rule outbound: got %q, want %q", ob, SelectorTag)
 	}
@@ -189,9 +194,12 @@ func TestStore_RoutingRoundTrip(t *testing.T) {
 	if len(rules) == 0 {
 		t.Fatal("compiled: no rules")
 	}
-	last := rules[len(rules)-1]
-	if ob, _ := last["outbound"].(string); ob != SelectorTag {
-		t.Fatalf("compiled rule outbound: %s", ob)
+	tunnelled := indexOf(rules, func(r map[string]interface{}) bool {
+		_, ips := r["ip_cidr"]
+		return ips && r["action"] == nil && r["outbound"] == SelectorTag
+	})
+	if tunnelled < 0 {
+		t.Fatalf("compiled: no ip rule to %s: %v", SelectorTag, rules)
 	}
 }
 
