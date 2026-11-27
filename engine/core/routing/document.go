@@ -306,7 +306,9 @@ func union(base, more []string) []string {
 
 // ManualDocument adapts existing local policy without changing its disk format.
 // Legacy unscoped processes and folders belong to the OS of the installation reading them.
+// Rules the person switched off are not part of the document: it says what is routed.
 func ManualDocument(state RoutingState, platform string) Document {
+	state = state.Active()
 	rules := func(list RouteList) Rules {
 		r := Rules{Domains: append([]string{}, list.Domains...), IPs: append([]string{}, list.IPs...), Processes: map[string][]string{platform: append([]string{}, list.Processes...)}}
 		if len(list.Folders) > 0 {

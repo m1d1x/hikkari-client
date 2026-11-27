@@ -2,11 +2,18 @@ import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
 
-/// iOS-style toggle. 46×28 track, 24×24 knob.
+/// iOS-style toggle. 46×28 track, 24×24 knob; [dense] is the 30×18 one with
+/// a 14×14 knob that sits inside a list row without growing it.
 class NekkoSwitch extends StatelessWidget {
   final bool value;
   final ValueChanged<bool>? onChanged;
-  const NekkoSwitch({super.key, required this.value, required this.onChanged});
+  final bool dense;
+  const NekkoSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.dense = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -21,8 +28,8 @@ class NekkoSwitch extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 250),
           curve: AppCurves.fastInSlowOut,
-          width: 46,
-          height: 28,
+          width: dense ? 30 : 46,
+          height: dense ? 18 : 28,
           padding: const EdgeInsets.all(2),
           decoration: BoxDecoration(
             color: value ? t.primary : t.borderStrong,
@@ -33,8 +40,8 @@ class NekkoSwitch extends StatelessWidget {
             curve: AppCurves.fastInSlowOut,
             alignment: value ? Alignment.centerRight : Alignment.centerLeft,
             child: Container(
-              width: 24,
-              height: 24,
+              width: dense ? 14 : 24,
+              height: dense ? 14 : 24,
               decoration: BoxDecoration(
                 color: value ? Colors.white : const Color(0xFFDDDDDD),
                 shape: BoxShape.circle,

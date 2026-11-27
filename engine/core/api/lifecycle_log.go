@@ -71,8 +71,18 @@ func routingChangeSummary(previous, next routing.RoutingState) string {
 				changed = append(changed, fmt.Sprintf("%s.%s:%d->%d", pair.name, field.name, len(field.a), len(field.b)))
 			}
 		}
+		if offCount(pair.a) != offCount(pair.b) || !reflect.DeepEqual(pair.a.Off, pair.b.Off) {
+			changed = append(changed, fmt.Sprintf("%s.off:%d->%d", pair.name, offCount(pair.a), offCount(pair.b)))
+		}
 	}
 	return "changed=" + strings.Join(changed, ",")
+}
+
+func offCount(list routing.RouteList) int {
+	if list.Off == nil {
+		return 0
+	}
+	return len(list.Off.Domains) + len(list.Off.IPs) + len(list.Off.Processes) + len(list.Off.Folders)
 }
 
 // Use the same runtime comparison as commitProfiles, but report only counts.

@@ -221,23 +221,31 @@ class RouteList {
   final List<String> ips;
   final List<String> processes;
 
+  /// The entries of this list the person switched off: they stay in the list
+  /// and are not routed. Null when nothing is off.
+  final RouteList? off;
+
   const RouteList({
     required this.domains,
     required this.ips,
     required this.processes,
+    this.off,
   });
 
   const RouteList.empty()
     : domains = const [],
       ips = const [],
-      processes = const [];
+      processes = const [],
+      off = null;
 
   factory RouteList.fromJson(Map<String, dynamic>? j) {
     if (j == null) return const RouteList.empty();
+    final off = j['off'] as Map<String, dynamic>?;
     return RouteList(
       domains: _strList(j['domains']),
       ips: _strList(j['ips']),
       processes: _strList(j['processes']),
+      off: off == null ? null : RouteList.fromJson(off),
     );
   }
 
@@ -249,7 +257,19 @@ class RouteList {
     domains: domains ?? this.domains,
     ips: ips ?? this.ips,
     processes: processes ?? this.processes,
+    off: off,
   );
+
+  /// Whether [value] in [category] is switched off. Case-insensitive, as
+  /// the Go side compares.
+  bool isOff(String category, String value) {
+    final list = switch (category) {
+      'domains' => off?.domains,
+      'ips' => off?.ips,
+      _ => off?.processes,
+    };
+    return list?.any((v) => v.toLowerCase() == value.toLowerCase()) ?? false;
+  }
 
   /// Returns a new list with [value] appended to the given [category],
   /// deduped case-insensitively. Same semantics as the Go side.

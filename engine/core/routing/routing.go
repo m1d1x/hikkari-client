@@ -27,11 +27,125 @@ func NewMemory() *Store {
 }
 
 func (state RoutingState) Clone() RoutingState {
-	clone := func(list RouteList) RouteList {
-		return RouteList{Domains: append([]string{}, list.Domains...), IPs: append([]string{}, list.IPs...), Processes: append([]string{}, list.Processes...), Folders: append([]string{}, list.Folders...)}
-	}
-	state.Bypass, state.Proxy = clone(state.Bypass), clone(state.Proxy)
+	state.Bypass, state.Proxy = state.Bypass.clone(), state.Proxy.clone()
 	return state
+}
+
+func (list RouteList) clone() RouteList {
+	out := RouteList{Domains: append([]string{}, list.Domains...), IPs: append([]string{}, list.IPs...), Processes: append([]string{}, list.Processes...), Folders: append([]string{}, list.Folders...)}
+	if list.Off != nil {
+		off := list.Off.clone()
+		out.Off = &off
+	}
+	return out
+}
+
+// Active is the policy that is routed: each list without the rules the person
+// switched off. Everything that builds an engine config reads this, never
+// the stored lists directly.
+func (state RoutingState) Active() RoutingState {
+	state.Bypass, state.Proxy = state.Bypass.active(), state.Proxy.active()
+	return state
+}
+
+func (list RouteList) active() RouteList {
+	out := list.clone()
+	if list.Off == nil {
+		return out
+	}
+	keep := func(values, off []string) []string {
+		kept := make([]string, 0, len(values))
+		for _, v := range values {
+			if !containsCI(off, v) {
+				kept = append(kept, v)
+			}
+		}
+		return kept
+	}
+	out.Domains = keep(list.Domains, list.Off.Domains)
+	out.IPs = keep(list.IPs, list.Off.IPs)
+	out.Processes = keep(list.Processes, list.Off.Processes)
+	out.Folders = keep(list.Folders, list.Off.Folders)
+	out.Off = nil
+	return out
+}
+
+// SetRuleOn switches a stored rule off or back on without removing it: the
+// rule keeps its place in the list and comes back exactly as it was.
+func (state *RoutingState) SetRuleOn(mode RoutingMode, category, value string, on bool) error {
+	normalized, err := NormalizeValue(category, value)
+	if err != nil {
+		return err
+	}
+	list, err := pickList(state, mode)
+	if err != nil {
+		return err
+	}
+	values, err := categoryValues(list, category)
+	if err != nil {
+		return err
+	}
+	if !containsCI(values, normalized) {
+		return fmt.Errorf("правила %q нет в списке", value)
+	}
+	if on {
+		if list.Off != nil {
+			if err := removeFromList(list.Off, category, normalized); err != nil {
+				return err
+			}
+		}
+	} else {
+		if list.Off == nil {
+			list.Off = &RouteList{}
+		}
+		if err := addToList(list.Off, category, normalized); err != nil {
+			return err
+		}
+	}
+	list.compactOff()
+	return nil
+}
+
+func categoryValues(list *RouteList, category string) ([]string, error) {
+	switch category {
+	case "domains":
+		return list.Domains, nil
+	case "ips":
+		return list.IPs, nil
+	case "processes":
+		return list.Processes, nil
+	case "folders":
+		return list.Folders, nil
+	}
+	return nil, fmt.Errorf("неизвестная категория: %s", category)
+}
+
+// compactOff keeps Off a subset of the list it belongs to, and nil when empty,
+// so a file without switched-off rules looks exactly as it did before.
+func (list *RouteList) compactOff() {
+	if list.Off == nil {
+		return
+	}
+	sub := func(off, values []string) []string {
+		out := []string{}
+		for _, v := range off {
+			if containsCI(values, v) && !containsCI(out, v) {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	off := RouteList{
+		Domains:   sub(list.Off.Domains, list.Domains),
+		IPs:       sub(list.Off.IPs, list.IPs),
+		Processes: sub(list.Off.Processes, list.Processes),
+		Folders:   sub(list.Off.Folders, list.Folders),
+	}
+	if len(off.Domains)+len(off.IPs)+len(off.Processes)+len(off.Folders) == 0 {
+		list.Off = nil
+		return
+	}
+	list.Off = &off
 }
 
 // ChangeRule is the common command operation used before persistence.
@@ -45,9 +159,19 @@ func (state *RoutingState) ChangeRule(mode RoutingMode, category, value string, 
 		return err
 	}
 	if remove {
-		return removeFromList(list, category, normalized)
+		err = removeFromList(list, category, normalized)
+	} else {
+		// Adding a rule that is there but switched off switches it back on:
+		// the person asked for it to work.
+		if list.Off != nil {
+			err = removeFromList(list.Off, category, normalized)
+		}
+		if err == nil {
+			err = addToList(list, category, normalized)
+		}
 	}
-	return addToList(list, category, normalized)
+	list.compactOff()
+	return err
 }
 
 // RoutingMode is what the list in RoutingState means:
@@ -69,6 +193,10 @@ type RouteList struct {
 	IPs       []string `json:"ips"`
 	Processes []string `json:"processes"`
 	Folders   []string `json:"folders,omitempty"`
+	// Off holds the entries of this list the person switched off: they stay
+	// in the list, in their place, and are not routed (see Active). Always a
+	// subset of the list, nil when nothing is off; never has an Off of its own.
+	Off *RouteList `json:"off,omitempty"`
 }
 
 // RoutingState is the authoritative split-routing config. Persisted to
@@ -128,6 +256,16 @@ func sanitizeList(l RouteList) RouteList {
 	l.IPs = keepValid("ips", l.IPs)
 	l.Processes = keepValid("processes", l.Processes)
 	l.Folders = keepValid("folders", l.Folders)
+	if l.Off != nil {
+		off := RouteList{
+			Domains:   keepValid("domains", l.Off.Domains),
+			IPs:       keepValid("ips", l.Off.IPs),
+			Processes: keepValid("processes", l.Off.Processes),
+			Folders:   keepValid("folders", l.Off.Folders),
+		}
+		l.Off = &off
+		l.compactOff()
+	}
 	return l
 }
 

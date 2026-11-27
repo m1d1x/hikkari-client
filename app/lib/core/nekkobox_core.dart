@@ -230,6 +230,18 @@ abstract class NekkoboxCore {
         'value': value,
       });
 
+  Future<void> setRuleEnabled(
+    RoutingMode mode,
+    String category,
+    String value,
+    bool on,
+  ) => _callAsync('SetRuleEnabled', {
+    'mode': mode.wire,
+    'category': category,
+    'value': value,
+    'on': on,
+  });
+
   // ----- profiles -----
 
   /// Lifecycle hint; synchronization and throttling remain in the engine.
@@ -371,8 +383,9 @@ abstract class NekkoboxCore {
 }
 
 List<DiscoveredApp> _decodeApps(String raw) {
-  final data = Envelope.fromJson(jsonDecode(raw) as Map<String, dynamic>)
-      .unwrap();
+  final data = Envelope.fromJson(
+    jsonDecode(raw) as Map<String, dynamic>,
+  ).unwrap();
   if (data == null) return [];
   return (data as List)
       .cast<Map<String, dynamic>>()
